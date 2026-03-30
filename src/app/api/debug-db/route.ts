@@ -14,6 +14,8 @@ export async function GET() {
       status: "connected",
       databaseUrl: dbUrl ? dbUrl.split('@')[0] : "not set", // Redact sensitive parts
       hasAuthToken: hasToken,
+      hasAuthSecret: !!process.env.AUTH_SECRET,
+      nextAuthUrl: process.env.NEXTAUTH_URL || "not set",
       userCount: userCount,
       timestamp: new Date().toISOString()
     });
