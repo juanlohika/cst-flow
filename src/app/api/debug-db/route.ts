@@ -8,8 +8,17 @@ export async function GET() {
     const hasToken = !!process.env.DATABASE_AUTH_TOKEN;
     
     // 2. Try a simple query
-    const userCount = await prisma.user.count();
+    const users = await prisma.user.findMany({
+      select: { email: true }
+    });
     
+    // Redact emails for safety
+    const redactedUsers = users.map(u => {
+      const parts = (u.email || "").split('@');
+      if (parts.length < 2) return "invalid";
+      return `${parts[0].slice(0, 2)}***@${parts[1]}`;
+    });
+
     // 3. Read canary version
     let deployedVersion = "unknown";
     try {
@@ -27,7 +36,8 @@ export async function GET() {
       hasAuthToken: hasToken,
       hasAuthSecret: !!process.env.AUTH_SECRET,
       nextAuthUrl: process.env.NEXTAUTH_URL || "not set",
-      userCount: userCount,
+      users: redactedUsers,
+      userCount: users.length,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
