@@ -98,7 +98,7 @@ function ErrorContent() {
         </div>
 
         <div className="mt-12 opacity-30 text-[10px] font-medium tracking-tight">
-          CST FlowDesk Production Stability v5
+          CST FlowDesk Production Stability v6
         </div>
       </div>
     </div>
