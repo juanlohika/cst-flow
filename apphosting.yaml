@@ -1,0 +1,16 @@
+# Firebase App Hosting configuration
+# This file bridges environment variables from the console/secrets to the application runtime.
+kind: "AppHostingYaml"
+schemaVersion: "v1"
+
+environmentVariables:
+  - variable: DATABASE_URL
+    secret: DATABASE_URL
+  - variable: DATABASE_AUTH_TOKEN
+    secret: DATABASE_AUTH_TOKEN
+  - variable: AUTH_SECRET
+    secret: AUTH_SECRET
+  - variable: DEV_PASSWORD
+    secret: DEV_PASSWORD
+  - variable: NEXTAUTH_URL
+    value: "https://cst-flow--cst-flowdesk.asia-east1.hosted.app"
