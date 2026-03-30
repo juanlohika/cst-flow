@@ -2,9 +2,10 @@
 
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { AlertCircle, ArrowLeft, RefreshCcw } from "lucide-react";
+import { AlertCircle, ArrowLeft, RefreshCcw, RefreshCw } from "lucide-react";
+import { Suspense } from "react";
 
-export default function AuthErrorPage() {
+function AuthErrorContent() {
   const searchParams = useSearchParams();
   const error = searchParams.get("error");
 
@@ -51,5 +52,17 @@ export default function AuthErrorPage() {
         CST FlowDesk Production Stability v4
       </div>
     </div>
+  );
+}
+
+export default function AuthErrorPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <RefreshCw className="animate-spin text-muted-foreground" size={24} />
+      </div>
+    }>
+      <AuthErrorContent />
+    </Suspense>
   );
 }

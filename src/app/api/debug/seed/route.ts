@@ -5,19 +5,18 @@ export async function GET() {
   try {
     console.log("Web Seeding: Creating mock admin...");
     
-    const admin = await prisma.user.upsert({
-      where: { email: "admin@cst.com" },
-      update: {},
-      create: {
+    const data = {
         id: "mock-admin-id",
         name: "CST Admin (Mock)",
         email: "admin@cst.com",
         role: "admin",
         status: "approved",
-        canAccessTimeline: true,
-        canAccessArchitect: true,
-        canAccessBRD: true,
-      },
+    } as any;
+
+    const admin = await prisma.user.upsert({
+      where: { email: "admin@cst.com" },
+      update: {},
+      create: data,
     });
 
     return NextResponse.json({ 
