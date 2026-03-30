@@ -13,7 +13,7 @@ export default function Loading() {
       .catch(() => setSettings({}));
   }, []);
 
-  const logoUrl = settings?.company_logo || "/tarkie-full-dark.png";
+  const logoUrl = settings?.company_logo || "/tarkie-logo.svg";
   const brandName = settings?.company_name || settings?.app_name || "Tarkie";
 
   return (

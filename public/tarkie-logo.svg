@@ -1,0 +1,7 @@
+<svg width="200" height="50" viewBox="0 0 200 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="200" height="50" rx="8" fill="#0F172A"/>
+  <path d="M25 15H45V19H37V35H33V19H25V15Z" fill="white"/>
+  <text x="50" y="32" fill="white" style="font-family: sans-serif; font-weight: bold; font-size: 18px;">Tarkie</text>
+  <circle cx="170" cy="25" r="8" fill="#3B82F6"/>
+  <path d="M167 25L170 28L175 22" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

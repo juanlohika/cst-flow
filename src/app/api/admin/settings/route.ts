@@ -4,24 +4,21 @@ import { auth } from "@/auth";
 
 export async function GET() {
   try {
-    const globalSetting = (prisma as any).globalSetting;
-    let settings: any[] = [];
-    
-    if (globalSetting) {
-      settings = await globalSetting.findMany();
-    } else {
-      console.warn("GlobalSetting model missing in Prisma client, falling back to raw SQL");
-      settings = await prisma.$queryRawUnsafe(`SELECT * FROM GlobalSetting`) as any[];
-    }
-    
-    const config: Record<string, string> = {};
+    const settings = await prisma.$queryRawUnsafe(`SELECT * FROM GlobalSetting`) as any[];
+    const config: Record<string, string> = {
+      app_name: "CST FlowDesk",
+      company_name: "Tarkie",
+      company_logo: "/tarkie-logo.svg"
+    };
     settings.forEach((s: any) => {
       config[s.key] = s.value;
     });
     return NextResponse.json(config);
   } catch (error: any) {
-    console.error("GET /api/admin/settings error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({
+      app_name: "CST FlowDesk",
+      company_name: "Tarkie"
+    });
   }
 }
 

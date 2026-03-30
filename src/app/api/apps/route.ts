@@ -4,15 +4,23 @@ import { auth } from "@/auth";
 
 export const dynamic = "force-dynamic";
 
+const DEFAULT_APPS = [
+  { name: "BRD Maker", slug: "brd", description: "Generate PRD / BRD documents via AI.", icon: "ClipboardList", href: "/brd", isActive: 1, sortOrder: 0 },
+  { name: "Roadmap", slug: "timeline", description: "Project scheduling and Gantt visualization.", icon: "Clock", href: "/timeline", isActive: 1, sortOrder: 1 },
+  { name: "Architect", slug: "architect", description: "Map and automate operational flows.", icon: "Workflow", href: "/architect", isActive: 1, sortOrder: 2 },
+  { name: "Task Control", slug: "tasks", description: "Daily task tracking and reporting.", icon: "Zap", href: "/tasks", isActive: 1, sortOrder: 3 },
+];
+
 export async function GET() {
   try {
     const apps = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, name, slug, description, icon, href, isActive, isBuiltIn, sortOrder, provider
+      `SELECT id, name, slug, description, icon, href, isActive, isBuiltIn, sortOrder
        FROM App ORDER BY sortOrder ASC, name ASC`
     );
-    return NextResponse.json(apps);
+    return NextResponse.json(apps.length > 0 ? apps : DEFAULT_APPS);
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Fetch apps error:", error);
+    return NextResponse.json(DEFAULT_APPS);
   }
 }
 
