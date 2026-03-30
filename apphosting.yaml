@@ -30,3 +30,5 @@ environmentVariables:
     value: "https://cst-flow--cst-flowdesk.asia-east1.hosted.app"
   - variable: AUTH_URL
     value: "https://cst-flow--cst-flowdesk.asia-east1.hosted.app"
+  - variable: AUTH_TRUST_HOST
+    value: "true"
