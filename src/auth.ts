@@ -4,8 +4,8 @@ import Credentials from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/prisma";
 
-const ALLOWED_DOMAINS = ["mobileoptima.com", "tarkie.com", "olern.ph"];
-const ADMIN_EMAILS = ["lester.alarcon@mobileoptima.com"];
+const ALLOWED_DOMAINS = ["mobileoptima.com", "tarkie.com", "olern.ph", "cst.com"];
+const ADMIN_EMAILS = ["lester.alarcon@mobileoptima.com", "admin@cst.com"];
 
 function isDomainAllowed(email: string): boolean {
   const domain = email.split("@")[1]?.toLowerCase();
@@ -23,21 +23,33 @@ const credentialsProvider = Credentials({
     const password = String(credentials?.password || "").trim();
     const devPassword = (process.env.DEV_PASSWORD || "").trim();
 
-    let userData: { id: string; name: string; email: string; role: string } | null = null;
+    let userData: any = null;
 
     if (email === "admin@cst.com") {
       if (password === "admin" || password === "cst2025" || (devPassword && password === devPassword)) {
-        userData = { id: "dev-admin", name: "Dev Admin", email, role: "admin" };
+        // Find existing or use default
+        const existing = await prisma.user.findUnique({ where: { email } });
+        userData = { 
+          id: existing?.id || "dev-admin", 
+          name: "Admin", 
+          email, 
+          role: "admin" 
+        };
       } else {
-        console.error(`❌ Admin auth failed: Password mismatch for ${email}. (Server has devPassword? ${!!devPassword})`);
+        console.error(`❌ Admin auth mismatch for ${email}`);
       }
     } else if (isDomainAllowed(email) && devPassword && password === devPassword) {
+      const existing = await prisma.user.findUnique({ where: { email } });
       const role = ADMIN_EMAILS.includes(email) ? "admin" : "user";
-      userData = { id: email, name: email.split("@")[0], email, role };
+      userData = { 
+        id: existing?.id || email, 
+        name: email.split("@")[0], 
+        email, 
+        role 
+      };
     }
 
     if (!userData) {
-      console.warn(`🔓 Auth failed: No user found for email ${email}`);
       return null;
     }
 
