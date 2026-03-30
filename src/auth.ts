@@ -57,6 +57,11 @@ const googleProvider = Google({
   allowDangerousEmailAccountLinking: true,
 });
 
+// FORCE TRUST: NextAuth v5 requires AUTH_TRUST_HOST=true in environments with proxies like Firebase.
+if (!process.env.AUTH_TRUST_HOST) {
+  process.env.AUTH_TRUST_HOST = "true";
+}
+
 if (process.env.AUTH_URL) {
   console.log("✅ AUTH_URL detected:", process.env.AUTH_URL);
 }
