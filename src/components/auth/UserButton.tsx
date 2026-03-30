@@ -21,7 +21,16 @@ export default function UserButton() {
     return <div className="h-8 w-8 bg-surface-muted animate-pulse rounded-full" />;
   }
 
-  if (!session?.user) return null;
+  if (!session?.user) {
+    return (
+      <button 
+        onClick={() => (window.location.href = "/auth/signin")}
+        className="px-4 py-2 bg-primary text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-primary/90 transition-all flex items-center gap-2"
+      >
+        Sign In
+      </button>
+    );
+  }
 
   const name = session.user.name || session.user.email || "User";
   const email = session.user.email || "";

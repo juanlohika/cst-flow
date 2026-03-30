@@ -9,6 +9,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <div className="page-shell">
       {session && <LeftNav />}
       <div className={session ? "page-content" : "page-content-full"}>
+        <GlobalBar />
         {children}
       </div>
     </div>

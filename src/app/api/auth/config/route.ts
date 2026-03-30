@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   let dbStatus = false;
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await prisma.user.count();
     dbStatus = true;
   } catch (e) {
     dbStatus = false;
