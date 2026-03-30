@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSession } from "next-auth/react";
-import GlobalBar from "@/components/layout/GlobalBar";
+import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import AuthGuard from "@/components/auth/AuthGuard";
 import SmartMic from "@/components/ui/SmartMic";
 import {
@@ -57,6 +57,9 @@ export default function MockupPage() {
 
 function MockupContent() {
   const { data: session } = useSession();
+
+  // STABILITY: Integrated Central Navigation
+  useBreadcrumbs([{ label: "Mockup Maker", href: "/mockup" }]);
 
   // Chat state
   const [prompt, setPrompt] = useState("");
@@ -335,7 +338,6 @@ function MockupContent() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <GlobalBar breadcrumbs={[{ label: "Mockup Maker", href: "/mockup" }]} />
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── Left panel ─────────────────────────────────────────── */}

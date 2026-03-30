@@ -2,7 +2,7 @@
 
 import React, { Suspense, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
-import GlobalBar from "@/components/layout/GlobalBar";
+import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import TaskDashboard from "@/components/tasks/TaskDashboard";
 import PersonalDashboard from "@/components/tasks/PersonalDashboard";
 
@@ -14,6 +14,12 @@ function TasksContent() {
   // No project param → show Personal Dashboard
   const showPersonalDashboard = !projectParam;
   const projectId = projectParam || "ALL";
+
+  // STABILITY: Integrated Central Navigation
+  useBreadcrumbs([
+    { label: "Tasks", href: "/tasks" },
+    { label: showPersonalDashboard ? "My Dashboard" : (projectName || "All Projects") }
+  ]);
 
   useEffect(() => {
     if (projectId !== "ALL") {
@@ -34,7 +40,6 @@ function TasksContent() {
   if (showPersonalDashboard) {
     return (
       <div className="flex flex-col h-screen overflow-hidden bg-white">
-        <GlobalBar breadcrumbs={[{ label: "Tasks", href: "/tasks" }, { label: "My Dashboard" }]} />
         <div className="flex-1 overflow-hidden flex flex-col">
           <PersonalDashboard />
         </div>
@@ -42,14 +47,8 @@ function TasksContent() {
     );
   }
 
-  const breadcrumbs = [
-    { label: "Tasks", href: "/tasks" },
-    { label: projectName || "All Projects" },
-  ];
-
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-white">
-      <GlobalBar breadcrumbs={breadcrumbs} />
       <div className="flex-1 overflow-hidden">
         <TaskDashboard projectId={projectId} />
       </div>

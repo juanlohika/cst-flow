@@ -11,10 +11,10 @@ import {
   FolderOpen, ExternalLink, Clock, Users, Paintbrush, Download,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
-import GlobalBar from "@/components/layout/GlobalBar";
 import { useSearchParams } from "next/navigation";
 import { useToast } from "@/components/ui/ToastContext";
 import { formatRef } from "@/lib/utils/format";
+import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 
 
 const WorkflowCanvas = dynamic(() => import("@/components/flow/WorkflowCanvas"), { ssr: false });
@@ -240,16 +240,18 @@ function MeetingPrepContent() {
 
   const isEditing = !!editingProfile;
 
+  // STABILITY: Integrated Central Navigation
+  useBreadcrumbs(
+    [
+      { label: "AI Apps", href: "#" },
+      { label: "Accounts", href: "/accounts" },
+      ...(view === "form" ? [{ label: isEditing ? "Edit Account" : "New Account", href: "#" }] : []),
+      ...(view === "profile-detail" && selectedProfile ? [{ label: selectedProfile.companyName, href: "#" }] : []),
+    ]
+  );
+
   return (
     <div className="flex flex-col h-full bg-white overflow-hidden">
-      <GlobalBar
-        breadcrumbs={[
-          { label: "AI Apps", href: "#" },
-          { label: "Accounts", href: "/accounts" },
-          ...(view === "form" ? [{ label: isEditing ? "Edit Account" : "New Account", href: "#" }] : []),
-          ...(view === "profile-detail" && selectedProfile ? [{ label: selectedProfile.companyName, href: "#" }] : []),
-        ]}
-      />
 
       {view === "list" && (
         <>

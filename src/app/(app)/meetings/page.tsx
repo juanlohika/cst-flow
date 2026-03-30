@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import QRCode from "qrcode";
 import AuthGuard from "@/components/auth/AuthGuard";
-import GlobalBar from "@/components/layout/GlobalBar";
+import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import { useToast } from "@/components/ui/ToastContext";
 import { formatRef } from "@/lib/utils/format";
 import StitchTimePicker from "@/components/ui/StitchTimePicker";
@@ -116,9 +116,11 @@ function MeetingHubContent() {
     else { setSortKey(key); setSortDir("asc"); }
   };
 
+  // STABILITY: Integrated Central Navigation
+  useBreadcrumbs([{ label: "AI Apps", href: "#" }, { label: "Meetings", href: "/meetings" }]);
+
   return (
     <div className="flex flex-col h-full bg-white overflow-hidden">
-      <GlobalBar breadcrumbs={[{ label: "AI Apps", href: "#" }, { label: "Meetings", href: "/meetings" }]} />
       
       {/* ── Tabs Bar (40px) ────────────────────────────────────────────────── */}
       <div className="h-[40px] flex-shrink-0 flex items-center justify-between border-b border-border-default px-4 bg-white">

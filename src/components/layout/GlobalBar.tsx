@@ -3,13 +3,23 @@
 import React from "react";
 import { Bell } from "lucide-react";
 import UserButton from "@/components/auth/UserButton";
+import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 
 interface GlobalBarProps {
   breadcrumbs?: { label: string; href?: string }[];
   actions?: React.ReactNode;
 }
 
-export default function GlobalBar({ breadcrumbs, actions }: GlobalBarProps) {
+export default function GlobalBar({ 
+  breadcrumbs: propBreadcrumbs, 
+  actions: propActions 
+}: GlobalBarProps) {
+  const { breadcrumbs: contextBreadcrumbs, actions: contextActions } = useBreadcrumbs();
+  
+  // Use props if provided, otherwise context
+  const breadcrumbs = propBreadcrumbs || contextBreadcrumbs;
+  const actions = propActions || contextActions;
+
   return (
     <div className="nav-bar sticky top-0 z-40">
       {/* Left: Breadcrumb */}

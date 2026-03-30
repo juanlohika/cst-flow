@@ -62,6 +62,23 @@ export async function POST(req: Request) {
       specialConsiderations,
     } = body;
 
+    // STABILITY: Ensure the user record exists before creating profile (prevents FK error)
+    try {
+      await prisma.user.upsert({
+        where: { id: session.user.id },
+        update: {},
+        create: { 
+          id: session.user.id, 
+          email: session.user.email || `unknown_${Date.now()}@cst.com`,
+          name: session.user.name || "CST User",
+          role: (session.user as any).role || "user",
+          status: "approved"
+        }
+      });
+    } catch (e) {
+      console.warn("Profiles: User upsert failed (non-critical):", e);
+    }
+
     if (!companyName?.trim()) {
       return NextResponse.json(
         { error: "Company name is required" },

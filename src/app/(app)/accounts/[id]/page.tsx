@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
-import GlobalBar from "@/components/layout/GlobalBar";
+import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import { AccountHub } from "@/app/(app)/meeting-prep/page";
 
 export default function AccountDetailPage() {
@@ -15,6 +15,12 @@ export default function AccountDetailPage() {
   const [profile, setProfile] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // STABILITY: Integrated Central Navigation
+  useBreadcrumbs([
+    { label: "Accounts", href: "/accounts" },
+    { label: loading ? "Loading..." : (profile ? profile.companyName : "Not Found") }
+  ]);
+
   useEffect(() => {
     async function loadProfile() {
       try {
@@ -23,8 +29,6 @@ export default function AccountDetailPage() {
           const data = await res.json();
           setProfile(data);
         } else {
-          // If not found as account, maybe it's a project ID? 
-          // But usually we link by account ID.
           console.error("Account not found");
         }
       } catch (err) {
@@ -39,7 +43,6 @@ export default function AccountDetailPage() {
   if (loading) {
     return (
       <div className="flex flex-col h-screen bg-surface-subtle">
-        <GlobalBar breadcrumbs={[{ label: "Accounts", href: "/accounts" }, { label: "Loading..." }]} />
         <div className="flex-1 flex items-center justify-center">
           <Loader2 className="w-6 h-6 text-primary animate-spin" />
         </div>
@@ -50,7 +53,6 @@ export default function AccountDetailPage() {
   if (!profile) {
     return (
       <div className="flex flex-col h-screen bg-surface-subtle">
-        <GlobalBar breadcrumbs={[{ label: "Accounts", href: "/accounts" }, { label: "Not Found" }]} />
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <p className="text-text-secondary">Account not found.</p>
           <button 
@@ -67,12 +69,6 @@ export default function AccountDetailPage() {
   return (
     <AuthGuard>
       <div className="flex flex-col h-screen bg-surface-subtle">
-        <GlobalBar 
-          breadcrumbs={[
-            { label: "Accounts", href: "/accounts" }, 
-            { label: profile.companyName }
-          ]} 
-        />
         <div className="flex-1 overflow-hidden">
           <AccountHub 
             profile={profile} 

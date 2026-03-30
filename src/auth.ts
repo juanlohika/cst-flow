@@ -49,15 +49,19 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   session: { strategy: "jwt" },
   callbacks: {
     async signIn({ user, account }) {
-      if (account?.provider === "google") {
-        const email = user.email?.toLowerCase().trim();
-        if (email) {
-          const role = ADMIN_EMAILS.includes(email) ? "admin" : "user";
+      const email = user.email?.toLowerCase().trim();
+      const isAdmin = email && ADMIN_EMAILS.includes(email);
+      
+      if (account?.provider === "google" && email) {
+        try {
           await prisma.user.upsert({
             where: { email },
-            update: { role, name: user.name },
-            create: { id: user.id || `user_${Date.now()}`, name: user.name, email, role }
+            update: { role: isAdmin ? "admin" : undefined, name: user.name },
+            create: { id: user.id || `user_${Date.now()}`, name: user.name, email, role: isAdmin ? "admin" : "user" }
           });
+        } catch (err) {
+          console.error("Auth: signIn DB error (likely table missing):", err);
+          // Fail-safe: allow sign-in even if DB fails so user can visit diagnostic config
         }
       }
       return true;
@@ -65,14 +69,29 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.role = (user as any).role || (ADMIN_EMAILS.includes(user.email || "") ? "admin" : "user");
+      }
+      
+      // STABILITY: Re-verify Admin status on every token refresh
+      const email = token.email?.toLowerCase().trim();
+      const isAdmin = email && ADMIN_EMAILS.includes(email);
+      
+      if (isAdmin) {
+        token.role = "admin";
+      } else if (user) {
+        // Only fetch from DB on first sign in if not a hardcoded admin
+        try {
+          const dbUser = await prisma.user.findUnique({ where: { email: email as string } });
+          token.role = dbUser?.role || "user";
+        } catch {
+          token.role = "user";
+        }
       }
       return token;
     },
-    async session({ session, token }) {
-      if (session.user) {
-        (session.user as any).id = token.id;
-        (session.user as any).role = token.role;
+    async session({ session, token }: { session: any; token: any }) {
+      if (session.user && token) {
+        session.user.id = token.id;
+        session.user.role = token.role;
       }
       return session;
     }

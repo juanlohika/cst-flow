@@ -12,6 +12,7 @@ import Walkthrough from "@/components/timeline/Walkthrough";
 import StitchLoading from "@/components/timeline/StitchLoading";
 import { PremiumSpinner } from "@/components/ui/PremiumSpinner";
 import { useToast } from "@/components/ui/ToastContext";
+import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 
 export default function TimelinePage() {
   return (
@@ -52,6 +53,9 @@ function TimelineApp() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [projectName, setProjectName] = useState("");
+
+  // STABILITY: Integrated Central Navigation
+  useBreadcrumbs([{ label: "Timeline", href: "/timeline" }, { label: projectName || "New Roadmap" }]);
   const [startDate, setStartDate] = useState(new Date().toISOString().split("T")[0]);
   const [customInstructions, setCustomInstructions] = useState("");
   
@@ -368,7 +372,6 @@ function TimelineApp() {
 
   return (
     <div className={`flex flex-col h-full overflow-hidden transition-opacity duration-1000 ${isLaunched ? 'opacity-100' : 'opacity-0'}`}>
-      <GlobalBar breadcrumbs={[{ label: "Timeline", href: "/timeline" }, { label: projectName || "New Roadmap" }]} />
       <div className="flex flex-1 overflow-hidden bg-surface-subtle">
 
       {/* Sidebar: Project Setup Form - Compact */}

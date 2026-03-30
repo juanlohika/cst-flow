@@ -70,10 +70,10 @@ export async function PATCH(req: Request) {
         create: { key, value: String(value) },
       });
     } else {
+      // Corrected raw SQL for SQLite parameter handling
       await prisma.$executeRawUnsafe(
-        `INSERT INTO GlobalSetting (id, [key], value) VALUES (?, ?, ?) 
-         ON CONFLICT([key]) DO UPDATE SET value = excluded.value`,
-        Math.random().toString(36).substring(7), key, String(value)
+        `INSERT INTO GlobalSetting (id, [key], value) VALUES ('${Math.random().toString(36).substring(7)}', '${key}', '${String(value)}') 
+         ON CONFLICT([key]) DO UPDATE SET value = excluded.value`
       );
       setting = { key, value };
     }
