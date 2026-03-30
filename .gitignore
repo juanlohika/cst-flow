@@ -1,0 +1,7 @@
+node_modules
+.env*
+.next
+*.db
+*.db-journal
+src/generated/client
+config.json

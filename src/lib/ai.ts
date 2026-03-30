@@ -1,0 +1,352 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk";
+import Anthropic from "@anthropic-ai/sdk";
+import fs from "fs/promises";
+import path from "path";
+
+const SETTINGS_FILE = path.join(process.cwd(), "config.json");
+
+// ─── Config types ─────────────────────────────────────────────────────────────
+
+export interface AIConfig {
+  primaryProvider: "ollama" | "groq" | "gemini" | "claude";
+  ollamaEndpoint: string;
+  ollamaModel: string;
+  groqApiKey: string;
+  geminiApiKey: string;
+  anthropicApiKey: string;
+  // legacy single-key field (kept for backwards compat)
+  apiKey?: string;
+}
+
+export async function readAIConfig(): Promise<AIConfig> {
+  // 1. Try Environment Variables first (Standard Production Practice)
+  if (process.env.PRIMARY_AI_PROVIDER) {
+    return {
+      primaryProvider: process.env.PRIMARY_AI_PROVIDER as any,
+      ollamaEndpoint: process.env.OLLAMA_ENDPOINT || "http://localhost:11434",
+      ollamaModel: process.env.OLLAMA_MODEL || "llama3.2",
+      groqApiKey: process.env.GROQ_API_KEY || "",
+      geminiApiKey: process.env.GEMINI_API_KEY || "",
+      anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
+    };
+  }
+
+  // 2. Fall back to config.json (Local Dev)
+  try {
+    const data = await fs.readFile(SETTINGS_FILE, "utf-8");
+    const raw = JSON.parse(data);
+
+    // Backwards compat: if only legacy apiKey exists, detect provider from it
+    if (!raw.primaryProvider && raw.apiKey) {
+      const provider = raw.apiKey.startsWith("gsk_") ? "groq" : "gemini";
+      return {
+        primaryProvider: provider,
+        ollamaEndpoint: "http://localhost:11434",
+        ollamaModel: "llama3.2",
+        groqApiKey: provider === "groq" ? raw.apiKey : "",
+        geminiApiKey: provider === "gemini" ? raw.apiKey : "",
+        anthropicApiKey: "",
+        apiKey: raw.apiKey,
+      };
+    }
+
+    return {
+      primaryProvider: raw.primaryProvider || "groq",
+      ollamaEndpoint: raw.ollamaEndpoint || "http://localhost:11434",
+      ollamaModel: raw.ollamaModel || "llama3.2",
+      groqApiKey: raw.groqApiKey || "",
+      geminiApiKey: raw.geminiApiKey || raw.apiKey || "",
+      anthropicApiKey: raw.anthropicApiKey || "",
+      apiKey: raw.apiKey,
+    };
+  } catch {
+    return {
+      primaryProvider: "groq",
+      ollamaEndpoint: "http://localhost:11434",
+      ollamaModel: "llama3.2",
+      groqApiKey: "",
+      geminiApiKey: "",
+      anthropicApiKey: "",
+    };
+  }
+}
+
+/** Legacy helper — reads primary key for server-side routes */
+export async function getStoredApiKey(): Promise<string> {
+  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+  const config = await readAIConfig();
+  if (config.primaryProvider === "groq") return config.groqApiKey;
+  if (config.primaryProvider === "gemini") return config.geminiApiKey;
+  if (config.primaryProvider === "claude") return config.anthropicApiKey;
+  return ""; // ollama needs no key
+}
+
+// ─── Unified AI model ─────────────────────────────────────────────────────────
+
+/**
+ * Returns the primary configured model adapter.
+ * All adapters expose: await model.generateContent(promptOrObject)
+ *                       → { response: { text() } }
+ */
+export async function getGeminiModel(apiKeyOverride?: string) {
+  // If a key override is provided (from x-gemini-key header)
+  if (apiKeyOverride && apiKeyOverride.length > 10) {
+    if (apiKeyOverride.startsWith("gsk_")) return buildGroqAdapter(apiKeyOverride);
+    return buildGeminiAdapter(apiKeyOverride);
+  }
+
+  const config = await readAIConfig();
+
+  switch (config.primaryProvider) {
+    case "ollama":
+      return buildOllamaAdapter(config.ollamaEndpoint, config.ollamaModel);
+    case "groq":
+      if (!config.groqApiKey) throw new Error("Groq API key not set. Go to Admin → Settings.");
+      return buildGroqAdapter(config.groqApiKey);
+    case "claude":
+      if (!config.anthropicApiKey) throw new Error("Anthropic API key not set. Go to Admin → Settings.");
+      return buildClaudeAdapter(config.anthropicApiKey);
+    case "gemini":
+    default:
+      if (!config.geminiApiKey) throw new Error("Gemini API key not set. Go to Admin → Settings.");
+      return buildGeminiAdapter(config.geminiApiKey);
+  }
+}
+
+/**
+ * Returns a Claude adapter specifically.
+ * Used by routes that benefit from Claude's superior instruction-following (e.g. Mockup Maker).
+ * Falls back to the primary provider if no Anthropic key is configured.
+ */
+export async function getClaudeModel() {
+  const config = await readAIConfig();
+  if (config.anthropicApiKey) {
+    return buildClaudeAdapter(config.anthropicApiKey);
+  }
+  return getGeminiModel();
+}
+
+/**
+ * Returns the AI model configured for a specific app slug.
+ * Reads the app's `provider` field from the DB; falls back to the global primary provider.
+ * Usage: const model = await getModelForApp("brd")
+ */
+export async function getModelForApp(slug: string) {
+  // Dynamically import prisma to avoid circular deps at module load time
+  const { prisma } = await import("./prisma");
+  const config = await readAIConfig();
+
+  let provider: string | null = null;
+  try {
+    const app = await (prisma as any).app.findUnique({ where: { slug } });
+    provider = app?.provider ?? null;
+  } catch {
+    // If DB lookup fails, fall through to global default
+  }
+
+  // Resolve which provider to use: app override → global default
+  const resolved = provider || config.primaryProvider;
+
+  switch (resolved) {
+    case "claude":
+      if (!config.anthropicApiKey) throw new Error(`Claude API key not set. Go to Admin → Settings.`);
+      return buildClaudeAdapter(config.anthropicApiKey);
+    case "gemini":
+      if (!config.geminiApiKey) throw new Error(`Gemini API key not set. Go to Admin → Settings.`);
+      return buildGeminiAdapter(config.geminiApiKey);
+    case "groq":
+      if (!config.groqApiKey) throw new Error(`Groq API key not set. Go to Admin → Settings.`);
+      return buildGroqAdapter(config.groqApiKey);
+    case "ollama":
+      return buildOllamaAdapter(config.ollamaEndpoint, config.ollamaModel);
+    default:
+      return getGeminiModel();
+  }
+}
+
+// ─── Ollama adapter ───────────────────────────────────────────────────────────
+
+function buildOllamaAdapter(endpoint: string, model: string) {
+  const base = endpoint.replace(/\/$/, "");
+  console.log(`[AI] Provider: Ollama  Endpoint: ${base}  Model: ${model}`);
+
+  return {
+    generateContent: async (input: string | any) => {
+      const messages: { role: string; content: string }[] = [];
+
+      if (typeof input === "string") {
+        messages.push({ role: "user", content: input });
+      } else {
+        if (input.systemInstruction) {
+          const parts = input.systemInstruction.parts as any[];
+          messages.push({ role: "system", content: parts.map((p: any) => p.text).join("\n") });
+        }
+        if (input.contents) {
+          for (const c of input.contents) {
+            const text = c.parts.map((p: any) => p.text ?? "").join("\n");
+            messages.push({ role: c.role === "model" ? "assistant" : "user", content: text });
+          }
+        }
+        if (messages.length === 0 && input.prompt) {
+          messages.push({ role: "user", content: String(input.prompt) });
+        }
+      }
+
+      const res = await fetch(`${base}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, messages, stream: false }),
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`Ollama error: ${err}`);
+      }
+
+      const data = await res.json();
+      const content: string = data.message?.content ?? "";
+      return { response: { text: () => content } };
+    },
+  };
+}
+
+// ─── Groq adapter ─────────────────────────────────────────────────────────────
+
+function buildGroqAdapter(apiKey: string) {
+  const groq = new Groq({ apiKey });
+  const MODEL = "llama-3.3-70b-versatile";
+  console.log(`[AI] Provider: Groq  Model: ${MODEL}`);
+
+  return {
+    generateContent: async (input: string | any) => {
+      const messages: Groq.Chat.ChatCompletionMessageParam[] = [];
+
+      if (typeof input === "string") {
+        messages.push({ role: "user", content: input });
+      } else {
+        if (input.systemInstruction) {
+          const parts = input.systemInstruction.parts as any[];
+          messages.push({ role: "system", content: parts.map((p: any) => p.text).join("\n") });
+        }
+        if (input.contents) {
+          for (const c of input.contents) {
+            const text = c.parts.map((p: any) => p.text ?? "").join("\n");
+            messages.push({ role: c.role === "model" ? "assistant" : "user", content: text });
+          }
+        }
+        if (messages.length === 0 && input.prompt) {
+          messages.push({ role: "user", content: String(input.prompt) });
+        }
+      }
+
+      const completion = await groq.chat.completions.create({
+        model: MODEL,
+        messages,
+        temperature: input?.generationConfig?.temperature ?? 0.7,
+      });
+
+      const content = completion.choices[0]?.message?.content ?? "";
+      return { response: { text: () => content } };
+    },
+  };
+}
+
+// ─── Gemini adapter ───────────────────────────────────────────────────────────
+
+function buildGeminiAdapter(apiKey: string) {
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+  console.log("[AI] Provider: Gemini  Model: gemini-2.0-flash");
+  return model;
+}
+
+// ─── Claude adapter ───────────────────────────────────────────────────────────
+
+function buildClaudeAdapter(apiKey: string) {
+  const client = new Anthropic({ apiKey });
+  const MODEL = "claude-sonnet-4-6";
+  console.log(`[AI] Provider: Claude  Model: ${MODEL}`);
+
+  return {
+    generateContent: async (input: string | any) => {
+      let system: string | undefined;
+      const messages: Anthropic.MessageParam[] = [];
+
+      if (typeof input === "string") {
+        messages.push({ role: "user", content: input });
+      } else {
+        // Extract system instruction
+        if (input.systemInstruction) {
+          const parts = input.systemInstruction.parts as any[];
+          system = parts.map((p: any) => p.text).join("\n");
+        }
+
+        // Convert Gemini-format contents to Claude message params
+        if (input.contents) {
+          for (const c of input.contents) {
+            const role: "user" | "assistant" = c.role === "model" ? "assistant" : "user";
+
+            // Build Claude content blocks from Gemini parts
+            const contentBlocks: Anthropic.ContentBlockParam[] = [];
+            for (const part of c.parts as any[]) {
+              if (part.text) {
+                contentBlocks.push({ type: "text", text: part.text });
+              } else if (part.inlineData) {
+                const { mimeType, data } = part.inlineData;
+                if (mimeType.startsWith("image/")) {
+                  contentBlocks.push({
+                    type: "image",
+                    source: {
+                      type: "base64",
+                      media_type: mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+                      data,
+                    },
+                  });
+                } else if (mimeType === "application/pdf") {
+                  // Claude supports PDFs as document blocks
+                  contentBlocks.push({
+                    type: "document",
+                    source: {
+                      type: "base64",
+                      media_type: "application/pdf",
+                      data,
+                    },
+                  } as any);
+                }
+                // Other mime types (docx etc) are pre-converted to text before reaching here
+              }
+            }
+
+            // Simplify to plain string if only one text block (cleaner for Claude)
+            const content =
+              contentBlocks.length === 1 && contentBlocks[0].type === "text"
+                ? contentBlocks[0].text
+                : contentBlocks;
+
+            messages.push({ role, content });
+          }
+        }
+
+        // Fallback for simple prompt input
+        if (messages.length === 0 && input.prompt) {
+          messages.push({ role: "user", content: String(input.prompt) });
+        }
+      }
+
+      const response = await client.messages.create({
+        model: MODEL,
+        max_tokens: 8096,
+        ...(system ? { system } : {}),
+        messages,
+      });
+
+      const text = response.content
+        .filter((b): b is Anthropic.TextBlock => b.type === "text")
+        .map((b) => b.text)
+        .join("");
+
+      return { response: { text: () => text } };
+    },
+  };
+}

@@ -1,0 +1,499 @@
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ─── NextAuth Models ───────────────────────────────────────────
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  role          String    @default("user") // "user" | "admin"
+  isSuperAdmin  Boolean   @default(false)
+  status        String    @default("pending") // "pending" | "approved" | "blocked"
+  
+  // App Permissions
+  canAccessArchitect Boolean @default(false)
+  canAccessBRD       Boolean @default(false)
+  canAccessTimeline  Boolean @default(false)
+  canAccessTasks     Boolean @default(true)
+  canAccessCalendar  Boolean @default(true)
+  canAccessMeetings  Boolean @default(false)
+  canAccessAccounts  Boolean @default(false)
+  canAccessSolutions Boolean @default(false)
+
+  // Functional role (from Roles masterfile, e.g. "Project Manager", "Developer")
+  profileRole String?
+
+  // Invite tracking
+  inviteToken String?   @unique
+  invitedBy   String?   // userId of who sent the invite
+  invitedAt   DateTime?
+
+  accounts      Account[]
+  sessions      Session[]
+  savedWorks    SavedWork[]
+  projects      Project[]
+  dailyTasks    DailyTask[]
+  clientProfiles ClientProfile[]
+  meetingPrepSessions MeetingPrepSession[]
+  tarkieMeetings TarkieMeeting[]
+  taskAssignments TaskAssignment[]
+  meetingAssignments MeetingAssignment[]
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Application Models ────────────────────────────────────────
+model SavedWork {
+  id              String   @id @default(cuid())
+  userId          String
+  appType         String   // "architect" | "brd" | "timeline" | "mockup"
+  title           String
+  data            String   // JSON blob (nodes/edges for architect, markdown for BRD, milestones JSON for timeline, HTML for mockup)
+  clientProfileId String?  // optional link to Account (ClientProfile)
+  flowCategory    String?  // "as-is" | "to-be" — for architect flows only
+  status          String   @default("open") // "open" | "for_approval" | "approved" | "rejected"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientProfile ClientProfile? @relation(fields: [clientProfileId], references: [id])
+}
+
+// ─── Project Management ────────────────────────────────────────
+model Project {
+  id               String   @id @default(cuid())
+  userId           String
+  name             String
+  companyName      String
+  clientProfileId  String?  // optional link to Account (ClientProfile)
+  externalContact  String?
+  internalInCharge String?
+  startDate        DateTime
+  status           String   @default("active") // "active" | "completed" | "on-hold"
+  templateId       String?
+  createdBy        String?  // userId of the creator
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  template      TimelineTemplate? @relation(fields: [templateId], references: [id])
+  clientProfile ClientProfile?    @relation(fields: [clientProfileId], references: [id])
+  timelineItems TimelineItem[]
+  meetings      TarkieMeeting[]
+  kanbanBoard   KanbanBoard?
+}
+
+// ─── Timeline Templates (Admin-Managed) ────────────────────────
+model TimelineTemplate {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  restDays    String   @default("Saturday,Sunday")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks    TemplateTask[]
+  projects Project[]
+}
+
+model TemplateTask {
+  id              String @id @default(cuid())
+  templateId      String
+  taskCode        String   // e.g. "CST-CORE-TASK-TEMPLATE-0001"
+  subject         String
+  defaultDuration Float    @default(8) // in hours
+  sortOrder       Int
+
+  template TimelineTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+}
+
+// ─── Timeline Items (Project-Specific Instances) ───────────────
+model TimelineItem {
+  id            String    @id @default(cuid())
+  projectId     String
+  clientProfileId String? // account-level scoping
+  taskCode      String
+  subject       String
+  plannedStart  DateTime
+  plannedEnd    DateTime
+  actualStart   DateTime?
+  actualEnd     DateTime?
+  durationHours Float     @default(8)
+  owner         String?
+  assignedTo    String?   // userId of the assigned team member
+  description   String?
+  status        String    @default("pending") // "pending" | "in-progress" | "completed"
+  sortOrder     Int       @default(0)
+  archived      Boolean   @default(false)
+
+  // Hierarchy
+  parentId      String?
+  parent        TimelineItem?  @relation("TaskHierarchy", fields: [parentId], references: [id])
+  subtasks      TimelineItem[] @relation("TaskHierarchy")
+
+  // Recurring
+  recurringFrequency   String?   // 'weekly'|'monthly'|'quarterly'|'yearly'
+  recurringUntil       String?   // ISO date string OR null (indefinite)
+  isRecurringTemplate  Boolean   @default(false)
+  recurringParentId    String?
+  recurringParent      TimelineItem?  @relation("RecurringInstances", fields: [recurringParentId], references: [id])
+  recurringInstances   TimelineItem[] @relation("RecurringInstances")
+
+  // Kanban
+  kanbanLaneId String?
+  kanbanLane   KanbanLane? @relation(fields: [kanbanLaneId], references: [id], onDelete: SetNull)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  project    Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dailyTasks DailyTask[]
+  history    TaskHistory[]
+  assignments TaskAssignment[]
+}
+
+model TaskAssignment {
+  id             String       @id @default(cuid())
+  timelineItemId String
+  userId         String
+  timelineItem   TimelineItem @relation(fields: [timelineItemId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([timelineItemId, userId])
+}
+
+model UserCapacity {
+  id         String   @id @default(cuid())
+  owner      String   @unique
+  dailyHours Float    @default(8)
+  restDays   String   @default("Saturday,Sunday")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model TaskHistory {
+  id             String   @id @default(cuid())
+  timelineItemId String
+  type           String   // "SCHEDULE_CHANGE" | "STATUS_CHANGE" | "ARCHIVE" | "COMMENT"
+  oldValue       String?
+  newValue       String?
+  comment        String?
+  changedBy      String
+  createdAt      DateTime @default(now())
+
+  timelineItem TimelineItem @relation(fields: [timelineItemId], references: [id], onDelete: Cascade)
+}
+
+// ─── Daily Tasks (SOD/EOD Activity Engine) ──────────────────────────
+model DailyTask {
+  id              String    @id @default(cuid())
+  userId          String
+  title           String
+  description     String?
+  date            DateTime
+  startTime       DateTime? // Planned Start (SOD)
+  endTime         DateTime? // Planned End (SOD)
+  allottedHours   Float     @default(1)
+  actualHours     Float?    // Recorded at EOD
+  status          String    @default("todo") // "todo" | "in-progress" | "done"
+  timelineItemId  String?   // Link to roadmap parent
+  isMaintenance   Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  timelineItem TimelineItem? @relation(fields: [timelineItemId], references: [id])
+}
+
+// ─── Recurring Maintenance (Account Management) ──────────────────────
+model MaintenanceTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  frequency   String   // "monthly" | "quarterly" | "bi-annual"
+  duration    Float    @default(1) // hours per occurrence
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── MEETING PREP APP (Phase 0) ────────────────────────────────────
+// Stores client profiles and prepares facilitators for meetings
+model ClientProfile {
+  id                  String   @id @default(cuid())
+  userId              String
+  companyName         String
+  industry            String   // "retail" | "logistics" | "manufacturing" | "healthcare" | "financial-services" | "food-and-beverage" | "general"
+  companySize         String?  // "small" | "medium" | "large"
+  modulesAvailed      String   // JSON array of module names: ["module-a", "module-b"]
+  engagementStatus    String   @default("confirmed") // "confirmed" | "pending" | "exploratory"
+  primaryContact      String?
+  primaryContactEmail String?
+  specialConsiderations String? // free-form notes
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  meetingPrepSessions MeetingPrepSession[]
+  projects            Project[]
+  tarkieMeetings      TarkieMeeting[]
+  savedWorks          SavedWork[]
+}
+
+model MeetingPrepSession {
+  id                String   @id @default(cuid())
+  userId            String
+  clientProfileId   String
+  meetingType       String   // "kickoff" | "requirements-deep-dive" | "follow-up" | "feedback-review" | "optimization"
+  status            String   @default("in-preparation") // "in-preparation" | "ready" | "completed"
+  
+  // Generated content
+  agendaContent     String?  // JSON: array of agenda items
+  questionnaireContent String? // JSON: array of questions organized by topic
+  discussionGuide   String?  // Markdown format discussion guide
+  preparationChecklist String? // JSON: array of checklist items
+  anticipatedRequirements String? // JSON: array of predicted requirements
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientProfile  ClientProfile  @relation(fields: [clientProfileId], references: [id], onDelete: Cascade)
+  meeting        TarkieMeeting? // One to one optional relationship
+}
+
+// ─── TARKIE MEETING HUB (Phase 1) ─────────────────────────────────
+// Central orchestrator for meetings and attendees
+model TarkieMeeting {
+  id                   String   @id @default(cuid())
+  userId               String
+  meetingPrepSessionId String?  @unique
+  clientProfileId      String?  // direct link to Account (ClientProfile)
+  title                String
+  meetingType          String   // "kickoff" | "requirements-deep-dive" | "follow-up" | "feedback-review" | "optimization"
+
+  // Meeting details
+  companyName          String?
+  scheduledAt          DateTime
+  durationMinutes      Int      @default(60)
+  zoomLink             String?
+
+  // Attendance
+  qrCode               String?  // Unique QR code for this meeting
+  recordingEnabled     Boolean  @default(true)
+  recordingLink        String?
+
+  // Active apps (dynamic list of enabled app slugs)
+  activeApps           String   @default("[]")
+
+  // Manual Agenda Input
+  customAgenda         String?
+
+  // Project linkage (optional — ties meeting outputs to a task project)
+  projectId            String?
+  project              Project? @relation(fields: [projectId], references: [id])
+
+  // Collaboration
+  createdBy            String?  // userId of meeting creator
+  facilitatorId        String?  // userId assigned to facilitate
+
+  // Status
+  status               String   @default("scheduled") // "scheduled" | "in-progress" | "completed" | "cancelled"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  meetingPrepSession MeetingPrepSession? @relation(fields: [meetingPrepSessionId], references: [id])
+  clientProfile      ClientProfile?      @relation(fields: [clientProfileId], references: [id])
+  attendees          MeetingAttendee[]
+  transcript         MeetingTranscript?
+  assignments        MeetingAssignment[]
+}
+
+model MeetingAssignment {
+  id             String        @id @default(cuid())
+  meetingId      String
+  userId         String
+  meeting        TarkieMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([meetingId, userId])
+}
+
+model MeetingAttendee {
+  id          String   @id @default(cuid())
+  meetingId   String
+  fullName    String
+  position    String?
+  companyName String?
+  mobileNumber String?
+  email       String?
+  
+  // Attendance tracking
+  registrationType String @default("qr-scan") // "pre-registered" | "qr-scan"
+  attendanceStatus String @default("expected") // "expected" | "confirmed" | "attended" | "absent"
+  consentGiven    Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+
+  meeting TarkieMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+}
+
+// ─── LIVE TRANSCRIPTION & MINUTES ─────────────────────────────
+model MeetingTranscript {
+  id          String   @id @default(cuid())
+  meetingId   String   @unique
+
+  // Raw transcript in original mixed language
+  rawTranscript String  // Full transcript as spoken (may be mixed English/Filipino)
+
+  // Processed outputs (professional English)
+  minutesOfMeeting String? // MD format minutes
+  generatedBRD     String? // MD format BRD
+  generatedTasks   String? // JSON: extracted action items
+  aiQuestions      String  @default("[]") // JSON: live clarification questions
+
+  // Language metadata
+  primaryLanguage  String  @default("en") // detected primary language
+  hasCodeSwitching Boolean @default(false) // if mixed English/Filipino
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  meeting TarkieMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+}
+
+// ─── SKILLS (AI Knowledge Base) ────────────────────────────────────────────
+// Editable prompt/context blocks loaded into AI calls across all apps.
+// Replaces the filesystem-based skills/*.md approach so admins can manage
+// skills through the UI without needing to redeploy.
+model Skill {
+  id          String   @id @default(cuid())
+  name        String
+  description String   @default("")
+
+  // category maps to the app that uses this skill:
+  //   "meeting-prep" | "brd" | "architect" | "tasks" | "timeline" | "general"
+  category    String
+
+  // subcategory for meeting-prep skills: "industry" | "meeting-type" | "module"
+  // for other categories: optional grouping
+  subcategory String?
+
+  // slug key used when looking up a skill (e.g. "retail", "kickoff", "brd-live")
+  // meeting-prep/industry skills: slug = industry name (e.g. "retail")
+  // meeting-prep/meeting-type: slug = meetingType (e.g. "kickoff")
+  slug        String?
+
+  content     String   // Markdown — injected into AI prompts as knowledge base
+
+  isActive    Boolean  @default(true)
+  isSystem    Boolean  @default(false) // system skills cannot be deleted via UI
+
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── App Registry (App Builder) ────────────────────────────────
+// Each App entry represents one AI app available in the system.
+// slug matches Skill.category so skills are implicitly linked (no join table).
+model App {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique  // matches Skill.category AND nav route segment
+  description String?
+  icon        String?           // lucide icon name as string
+  href        String            // e.g. "/brd", "/architect"
+  isActive    Boolean  @default(true)
+  isBuiltIn   Boolean  @default(false)  // built-in apps cannot be deleted
+  sortOrder   Int      @default(0)
+  provider    String?                   // null = global default; "groq"|"gemini"|"claude"|"ollama"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── Kanban ─────────────────────────────────────────────────────
+model KanbanBoard {
+  id        String   @id @default(cuid())
+  projectId String   @unique
+  name      String   @default("Kanban Board")
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  lanes   KanbanLane[]
+}
+
+model KanbanLane {
+  id           String   @id @default(cuid())
+  boardId      String
+  name         String
+  position     Int      @default(0)
+  mappedStatus String   @default("pending")
+  color        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  board KanbanBoard    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  tasks TimelineItem[]
+}
+
+// ─── Settings: Generic Roles Masterfile ────────────────────────
+// Generic role labels (e.g. Client, QA, Dev) for task assignment
+model Role {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+}
+
+// ─── Global Settings ───────────────────────────────────────────
+model GlobalSetting {
+
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

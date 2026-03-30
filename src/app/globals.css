@@ -1,0 +1,58 @@
+/* Import Tarkie Design System (semantic tokens + CSS utilities) */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import './design-system.css';
+
+/* Override Tailwind defaults with design system tokens */
+@layer base {
+  :root {
+    /* Maintain backward compatibility with existing components */
+    --background: #FAFAFA;
+    --foreground: var(--color-text-primary);
+    --card: white;
+    --card-foreground: var(--color-text-primary);
+    --popover: white;
+    --popover-foreground: var(--color-text-primary);
+    --primary: var(--color-blue-500);
+    --primary-foreground: white;
+    --secondary: var(--color-gray-100);
+    --secondary-foreground: var(--color-text-primary);
+    --muted: var(--color-gray-100);
+    --muted-foreground: var(--color-text-secondary);
+    --accent: var(--color-blue-50);
+    --accent-foreground: var(--color-primary);
+    --destructive: #EF4444;
+    --destructive-foreground: white;
+    --border: var(--color-border-default);
+    --input: var(--color-gray-200);
+    --ring: var(--color-blue-500);
+    --radius: 0.375rem; /* 6px = --radius-md */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-surface-default text-text-primary font-sans antialiased;
+  }
+}
+
+/* Custom Tailwind extensions for design system colors */
+@layer components {
+  .btn-primary {
+    @apply bg-primary text-white px-4 py-2 rounded-md font-medium hover:bg-primary-hover transition-colors;
+  }
+  
+  .btn-secondary {
+    @apply bg-surface-default text-text-primary border border-border-default px-4 py-2 rounded-md font-medium hover:bg-surface-subtle transition-colors;
+  }
+
+  /* Mobile-optimised input for public-facing pages (QR scan, attend) */
+  .input-mobile {
+    @apply w-full px-4 py-3 border border-slate-200 rounded-xl text-[14px] focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-500 bg-white placeholder:text-slate-300;
+  }
+}
