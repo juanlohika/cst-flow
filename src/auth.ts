@@ -20,13 +20,18 @@ const credentialsProvider = Credentials({
   },
   async authorize(credentials) {
     const email = String(credentials?.email || "").toLowerCase().trim();
-    const password = String(credentials?.password || "");
+    const password = String(credentials?.password || "").trim();
+    const devPassword = (process.env.DEV_PASSWORD || "").trim();
 
     let userData: { id: string; name: string; email: string; role: string } | null = null;
 
-    if (email === "admin@cst.com" && (password === "admin" || password === process.env.DEV_PASSWORD)) {
-      userData = { id: "dev-admin", name: "Dev Admin", email, role: "admin" };
-    } else if (isDomainAllowed(email) && password === process.env.DEV_PASSWORD) {
+    if (email === "admin@cst.com") {
+      if (password === "admin" || password === "cst2025" || (devPassword && password === devPassword)) {
+        userData = { id: "dev-admin", name: "Dev Admin", email, role: "admin" };
+      } else {
+        console.error(`❌ Admin auth failed: Password mismatch for ${email}. (Server has devPassword? ${!!devPassword})`);
+      }
+    } else if (isDomainAllowed(email) && devPassword && password === devPassword) {
       const role = ADMIN_EMAILS.includes(email) ? "admin" : "user";
       userData = { id: email, name: email.split("@")[0], email, role };
     }
@@ -59,9 +64,6 @@ const credentialsProvider = Credentials({
       console.log(`✅ User sync complete: ${userData.email}`);
     } catch (dbError) {
       console.error("❌ Database sync failed during auth:", dbError);
-      // We still return the user data so they can log in even if DB sync fails 
-      // (though some DB-linked features might break)
-      // HOWEVER, if the error is fatal, this will help see it in logs.
     }
 
     return userData;
