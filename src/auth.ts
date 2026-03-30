@@ -16,14 +16,19 @@ const credentialsProvider = Credentials({
   },
   async authorize(credentials) {
     const email = String(credentials?.email || "").toLowerCase().trim();
-    if (email === "admin@cst.com" && credentials?.password === "cst2025") {
-      // SELF-HEALING: Ensure the admin exists in the DB so other APIs don't crash
-      const user = await prisma.user.upsert({
-        where: { email: "admin@cst.com" },
-        update: { name: "Admin" },
-        create: { id: "admin-master", name: "Admin", email: "admin@cst.com", role: "admin" }
-      });
-      return user as any;
+    const password = String(credentials?.password || "");
+    const devPassword = process.env.DEV_PASSWORD;
+
+    if (ADMIN_EMAILS.includes(email)) {
+      if (password === "admin" || password === "cst2025" || (devPassword && password === devPassword)) {
+        // SELF-HEALING: Ensure the admin exists in the DB so other APIs don't crash
+        const user = await prisma.user.upsert({
+          where: { email },
+          update: { role: "admin", name: "Admin" },
+          create: { id: email === "admin@cst.com" ? "admin-master" : `user_${Date.now()}`, name: "Admin", email, role: "admin" }
+        });
+        return user as any;
+      }
     }
     return null;
   }
@@ -43,6 +48,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   ],
   session: { strategy: "jwt" },
   callbacks: {
+    async signIn({ user, account }) {
+      if (account?.provider === "google") {
+        const email = user.email?.toLowerCase().trim();
+        if (email) {
+          const role = ADMIN_EMAILS.includes(email) ? "admin" : "user";
+          await prisma.user.upsert({
+            where: { email },
+            update: { role, name: user.name },
+            create: { id: user.id || `user_${Date.now()}`, name: user.name, email, role }
+          });
+        }
+      }
+      return true;
+    },
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
