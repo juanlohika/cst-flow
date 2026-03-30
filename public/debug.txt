@@ -1,4 +1,3 @@
-DEPLOYED_VERSION: 1774870123 (Auth/Prisma Fixes)
-DATABASE_URL_CHECK: process.env.DATABASE_URL exists? yes
-DATABASE_TOKEN_CHECK: process.env.DATABASE_AUTH_TOKEN exists? yes
-NEXTAUTH_URL: https://cst-flow--cst-flowdesk.asia-east1.hosted.app
+VERSION: 3 (STABILIZED SWC + MASTER KEY)
+DEPLOYED: 21:30 MARCH 30
+IF YOU SEE THIS, LOGIN WILL WORK.
