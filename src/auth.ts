@@ -51,26 +51,21 @@ if (!process.env.AUTH_GOOGLE_ID || !process.env.AUTH_GOOGLE_SECRET) {
   console.warn("⚠️ AUTH_GOOGLE_ID or AUTH_GOOGLE_SECRET is MISSING in environment variables.");
 }
 
-if (!process.env.AUTH_GOOGLE_ID || !process.env.AUTH_GOOGLE_SECRET) {
-  console.warn("⚠️ AUTH_GOOGLE_ID or AUTH_GOOGLE_SECRET is MISSING in environment variables.");
-} else {
-  console.log("✅ Google Auth variables detected. ID ends in ...", process.env.AUTH_GOOGLE_ID?.slice(-5));
-}
+const googleProvider = Google({
+  clientId: process.env.AUTH_GOOGLE_ID,
+  clientSecret: process.env.AUTH_GOOGLE_SECRET,
+  allowDangerousEmailAccountLinking: true,
+});
 
-const googleProvider =
-  process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET
-    ? Google({
-        clientId: process.env.AUTH_GOOGLE_ID,
-        clientSecret: process.env.AUTH_GOOGLE_SECRET,
-        allowDangerousEmailAccountLinking: true,
-      })
-    : null;
+if (process.env.AUTH_URL) {
+  console.log("✅ AUTH_URL detected:", process.env.AUTH_URL);
+}
 
 const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
   adapter: PrismaAdapter(prisma),
   providers: [
-    ...(googleProvider ? [googleProvider] : []),
+    googleProvider,
     credentialsProvider,
   ],
   session: { strategy: "jwt" },
