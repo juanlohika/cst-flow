@@ -103,11 +103,24 @@ export async function POST(req: Request) {
       }
     }
 
-    const user = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, name, email, role, status, inviteToken, invitedAt FROM User WHERE id = ?`, id
+    const userRows = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT * FROM User WHERE id = ?`, id
     );
+    const createdUser = userRows[0] || {};
 
-    return NextResponse.json({ user: user[0], emailSent, emailError }, { status: 201 });
+    return NextResponse.json({
+      user: {
+        id: createdUser.id,
+        name: createdUser.name,
+        email: createdUser.email,
+        role: createdUser.role || "user",
+        status: createdUser.status || "approved",
+        inviteToken: createdUser.inviteToken || null,
+        invitedAt: createdUser.invitedAt || null,
+      },
+      emailSent,
+      emailError,
+    }, { status: 201 });
   } catch (error: any) {
     console.error("POST /api/users error:", error);
     return NextResponse.json(

@@ -72,7 +72,7 @@ export default function AccountDetailPage() {
         <div className="flex-1 overflow-hidden">
           <AccountHub 
             profile={profile} 
-            onEdit={() => router.push(`/meeting-prep?editId=${profile.id}`)} 
+            onEdit={() => router.push(`/accounts`)} 
             onBack={() => router.push("/accounts")} 
           />
         </div>

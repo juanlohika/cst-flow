@@ -5,20 +5,13 @@ import path from "path";
 import { prisma } from "./prisma";
 
 const SETTINGS_FILE = path.join(process.cwd(), "config.json");
-const APP_URL = process.env.NEXTAUTH_URL || "http://localhost:3000";
+const APP_URL = process.env.AUTH_URL || process.env.NEXTAUTH_URL || "https://cst-flow--cst-flowdesk.asia-east1.hosted.app";
 
 /* ─── Global Settings ────────────────────────────────────────── */
 async function getGlobalSettings() {
   try {
-    const globalSetting = (prisma as any).globalSetting;
-    let settings: any[] = [];
-    
-    if (globalSetting) {
-      settings = await globalSetting.findMany();
-    } else {
-      console.warn("GlobalSetting model missing in Prisma client (email helper), falling back to raw SQL");
-      settings = await prisma.$queryRawUnsafe(`SELECT * FROM GlobalSetting`) as any[];
-    }
+    // Always use raw SQL to avoid Prisma ORM schema-mismatch on Turso
+    const settings = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM GlobalSetting`);
     
     const config: Record<string, string> = {};
     settings.forEach((s: any) => {
@@ -26,12 +19,12 @@ async function getGlobalSettings() {
     });
     
     return {
-      appName: config.app_name || "Team OS",
+      appName: config.app_name || "CST FlowDesk",
       logoUrl: config.bottom_logo_url || ""
     };
   } catch (error) {
     console.error("error fetching global settings for email:", error);
-    return { appName: "Team OS", logoUrl: "" };
+    return { appName: "CST FlowDesk", logoUrl: "" };
   }
 }
 
