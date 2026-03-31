@@ -142,10 +142,12 @@ export async function getModelForApp(slug: string) {
 
   let provider: string | null = null;
   try {
-    const app = await (prisma as any).app.findUnique({ where: { slug } });
-    provider = app?.provider ?? null;
-  } catch {
-    // If DB lookup fails, fall through to global default
+    const rows = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT provider FROM App WHERE slug = ? LIMIT 1`, slug
+    );
+    provider = rows[0]?.provider ?? null;
+  } catch (err) {
+    console.error(`AI Model App lookup failed for ${slug}:`, err);
   }
 
   // Resolve which provider to use: app override → global default
