@@ -5,3 +5,4 @@ node_modules
 *.db-journal
 src/generated/client
 config.json
+.babelrc
