@@ -50,7 +50,12 @@ export default function LeftNav() {
   useEffect(() => {
     fetch("/api/apps")
       .then(r => r.ok ? r.json() : [])
-      .then(data => { if (Array.isArray(data)) setAiApps(data.filter((a: any) => a.isActive && a.slug !== "meeting-prep")); })
+      .then(data => { 
+        if (Array.isArray(data)) {
+          // Filter out meeting-prep and the redundant tasks link
+          setAiApps(data.filter((a: any) => a.isActive && !["meeting-prep", "tasks"].includes(a.slug))); 
+        }
+      })
       .catch(() => {});
 
     // Load global settings
