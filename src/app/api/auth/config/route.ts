@@ -62,13 +62,17 @@ export async function GET() {
       { table: "Project", column: "clientProfileId", type: "TEXT" },
       { table: "TimelineTemplate", column: "type", type: "TEXT DEFAULT 'project'" },
       { table: "TimelineTemplate", column: "restDays", type: "TEXT DEFAULT 'Saturday,Sunday'" },
+      { table: "TimelineTemplate", column: "createdAt", type: "TEXT DEFAULT (datetime('now'))" },
+      { table: "TimelineTemplate", column: "updatedAt", type: "TEXT DEFAULT (datetime('now'))" },
       { table: "TemplateTask", column: "defaultDuration", type: "REAL DEFAULT 8" },
+      { table: "TemplateTask", column: "sortOrder", type: "INTEGER DEFAULT 0" },
       { table: "TimelineItem", column: "durationHours", type: "REAL DEFAULT 8" },
       { table: "TimelineItem", column: "archived", type: "INTEGER DEFAULT 0" },
       { table: "TimelineItem", column: "kanbanLaneId", type: "TEXT" },
       { table: "TimelineItem", column: "recurringParentId", type: "TEXT" },
       { table: "Skill", column: "isSystem", type: "INTEGER DEFAULT 0" },
       { table: "Skill", column: "sortOrder", type: "INTEGER DEFAULT 0" },
+      { table: "Role", column: "createdAt", type: "TEXT DEFAULT (datetime('now'))" },
     ];
 
     for (const r of repairs) {

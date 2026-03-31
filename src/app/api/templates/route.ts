@@ -27,7 +27,8 @@ export async function GET() {
     console.error("Template Fetch Error:", err);
     return NextResponse.json({ 
       error: err.message, 
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined 
+      hint: "Run /api/auth/config to repair the database schema.",
+      stack: err.stack 
     }, { status: 500 });
   }
 }
