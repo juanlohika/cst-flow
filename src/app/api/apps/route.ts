@@ -5,10 +5,12 @@ import { auth } from "@/auth";
 export const dynamic = "force-dynamic";
 
 const DEFAULT_APPS = [
-  { name: "BRD Maker", slug: "brd", description: "Generate PRD / BRD documents via AI.", icon: "ClipboardList", href: "/brd", isActive: 1, sortOrder: 0 },
-  { name: "Roadmap", slug: "timeline", description: "Project scheduling and Gantt visualization.", icon: "Clock", href: "/timeline", isActive: 1, sortOrder: 1 },
-  { name: "Architect", slug: "architect", description: "Map and automate operational flows.", icon: "Workflow", href: "/architect", isActive: 1, sortOrder: 2 },
-  { name: "Task Control", slug: "tasks", description: "Daily task tracking and reporting.", icon: "Zap", href: "/tasks", isActive: 1, sortOrder: 3 },
+  { name: "Architect", slug: "architect", description: "Map and automate operational flows.", icon: "Workflow", href: "/architect", isActive: 1, sortOrder: 0 },
+  { name: "BRD Maker", slug: "brd", description: "Generate PRD / BRD documents via AI.", icon: "ClipboardList", href: "/brd", isActive: 1, sortOrder: 1 },
+  { name: "Roadmap", slug: "timeline", description: "Project scheduling and Gantt visualization.", icon: "Clock", href: "/timeline", isActive: 1, sortOrder: 2 },
+  { name: "Mockup Builder", slug: "mockup", description: "Build and preview UI prototypes.", icon: "Paintbrush", href: "/mockup", isActive: 1, sortOrder: 3 },
+  { name: "Daily Tasks", slug: "tasks", description: "Daily task tracking and reporting.", icon: "Zap", href: "/tasks", isActive: 1, sortOrder: 4 },
+  { name: "Meetings Hub", slug: "meetings", description: "Centralized meeting and transcription management.", icon: "Users", href: "/meetings", isActive: 1, sortOrder: 5 },
 ];
 
 export async function GET() {

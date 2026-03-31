@@ -43,40 +43,67 @@ export async function GET() {
     console.error("Bootstrap Error:", e);
   }
 
-  // SEEDING: Ensure the App registry is populated
-  try {
-    const apps = [
-      { name: "AI Solutions Architect", slug: "architect", href: "/architect", icon: "Boxes", isBuiltIn: true, sortOrder: 1 },
-      { name: "Product Documenter (BRD)", slug: "brd", href: "/brd", icon: "FileText", isBuiltIn: true, sortOrder: 2 },
-      { name: "Roadmap Maker (Timeline)", slug: "timeline", href: "/timeline", icon: "Calendar", isBuiltIn: true, sortOrder: 3 },
-      { name: "AI Mockup Builder", slug: "mockup", href: "/mockup", icon: "Paintbrush", isBuiltIn: true, sortOrder: 4 },
-      { name: "Personal Task Board", slug: "tasks", href: "/tasks", icon: "Layout", isBuiltIn: true, sortOrder: 5 },
+    // 2. COLUMN MIGRATION: Ensure User table and others reach parity with schema
+    const migrations = [
+      `ALTER TABLE User ADD COLUMN status TEXT DEFAULT "approved"`,
+      `ALTER TABLE User ADD COLUMN isSuperAdmin INTEGER DEFAULT 0`,
+      `ALTER TABLE User ADD COLUMN canAccessArchitect INTEGER DEFAULT 0`,
+      `ALTER TABLE User ADD COLUMN canAccessBRD INTEGER DEFAULT 0`,
+      `ALTER TABLE User ADD COLUMN canAccessTimeline INTEGER DEFAULT 0`,
+      `ALTER TABLE User ADD COLUMN canAccessTasks INTEGER DEFAULT 1`,
+      `ALTER TABLE User ADD COLUMN canAccessCalendar INTEGER DEFAULT 1`,
+      `ALTER TABLE User ADD COLUMN canAccessMeetings INTEGER DEFAULT 0`,
+      `ALTER TABLE User ADD COLUMN canAccessAccounts INTEGER DEFAULT 0`,
+      `ALTER TABLE User ADD COLUMN canAccessSolutions INTEGER DEFAULT 0`,
+      `CREATE TABLE IF NOT EXISTS SavedWork (id TEXT PRIMARY KEY, userId TEXT, appType TEXT, title TEXT, data TEXT, clientProfileId TEXT, flowCategory TEXT, status TEXT, createdAt TEXT, updatedAt TEXT)`,
+      `CREATE TABLE IF NOT EXISTS GlobalSetting (id TEXT PRIMARY KEY, [key] TEXT UNIQUE, value TEXT)`,
+      `CREATE TABLE IF NOT EXISTS Role (id TEXT PRIMARY KEY, name TEXT UNIQUE, createdAt TEXT)`,
+      `CREATE TABLE IF NOT EXISTS UserAccount (id TEXT PRIMARY KEY, userId TEXT, name TEXT, role TEXT, createdAt TEXT, updatedAt TEXT)`
     ];
-    for (const app of apps) {
-      await prisma.app.upsert({
-        where: { slug: app.slug },
-        update: app,
-        create: app,
-      });
+
+    for (const sql of migrations) {
+      try {
+        await prisma.$executeRawUnsafe(sql);
+      } catch (e) {
+        // Safe skip if table/column exists
+      }
     }
 
-    const ADMIN_EMAILS = ["lester.alarcon@mobileoptima.com", "admin@cst.com"];
-    for (const email of ADMIN_EMAILS) {
-      await prisma.user.upsert({
-        where: { email },
-        update: { role: "admin", status: "approved" },
-        create: { 
-          id: email === "admin@cst.com" ? "admin-master" : `user_${Date.now()}`,
-          email, 
-          name: email === "admin@cst.com" ? "CST Admin" : "Lester Alarcon", 
-          role: "admin",
-          status: "approved"
-        },
-      });
+    // 3. SEEDING: Ensure the App registry is populated (Overhauled)
+    try {
+      const apps = [
+        { name: "Architect", slug: "architect", description: "Map and automate operational flows.", icon: "Workflow", href: "/architect", isActive: 1, sortOrder: 0 },
+        { name: "BRD Maker", slug: "brd", description: "Generate PRD / BRD documents via AI.", icon: "ClipboardList", href: "/brd", isActive: 1, sortOrder: 1 },
+        { name: "Roadmap", slug: "timeline", description: "Project scheduling and Gantt visualization.", icon: "Clock", href: "/timeline", isActive: 1, sortOrder: 2 },
+        { name: "Mockup Builder", slug: "mockup", description: "Build and preview UI prototypes.", icon: "Paintbrush", href: "/mockup", isActive: 1, sortOrder: 3 },
+        { name: "Daily Tasks", slug: "tasks", description: "Daily task tracking and reporting.", icon: "Zap", href: "/tasks", isActive: 1, sortOrder: 4 },
+        { name: "Meetings Hub", slug: "meetings", description: "Centralized meeting and transcription management.", icon: "Users", href: "/meetings", isActive: 1, sortOrder: 5 },
+      ];
+      for (const app of apps) {
+        await prisma.app.upsert({
+          where: { slug: app.slug },
+          update: { ...app, isBuiltIn: true },
+          create: { ...app, isBuiltIn: true },
+        });
+      }
+
+      const ADMIN_EMAILS = ["lester.alarcon@mobileoptima.com", "admin@cst.com"];
+      for (const email of ADMIN_EMAILS) {
+        await prisma.user.upsert({
+          where: { email },
+          update: { role: "admin", status: "approved" },
+          create: { 
+            id: email === "admin@cst.com" ? "admin-master" : `user_${Date.now()}`,
+            email, 
+            name: email === "admin@cst.com" ? "CST Admin" : "Lester Alarcon", 
+            role: "admin",
+            status: "approved"
+          },
+        });
+      }
+    } catch (e) {
+      console.warn("Seeding failed (non-critical):", e);
     }
-  } catch (e) {
-    console.warn("Seeding failed (non-critical):", e);
-  }
 
   let dbStatus = false;
   try {
