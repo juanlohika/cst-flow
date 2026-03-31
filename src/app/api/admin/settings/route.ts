@@ -23,65 +23,47 @@ export async function GET() {
 }
 
 export async function PATCH(req: Request) {
-  const session = await auth();
-  if (!session || (session.user as any).role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
+    const session = await auth();
+    if (!session || (session.user as any).role !== "admin") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
-    const globalSetting = (prisma as any).globalSetting;
-    
-    // Support batch update {settings: {key1: val1, key2: val2}}
+    const results = [];
+
+    // 1. Process BATCH updates {settings: {key1: val1, key2: val2}}
     if (body.settings) {
-      const results = [];
       for (const [key, value] of Object.entries(body.settings)) {
-        let setting;
-        if (globalSetting) {
-          setting = await globalSetting.upsert({
-            where: { key },
-            update: { value: String(value) },
-            create: { key, value: String(value) },
-          });
-        } else {
-          console.warn("GlobalSetting model missing in Prisma client, falling back to raw SQL for patch");
-          // Manual upsert in SQLite
-          await prisma.$executeRawUnsafe(
-            `INSERT INTO GlobalSetting (id, [key], value) VALUES (?, ?, ?) 
-             ON CONFLICT([key]) DO UPDATE SET value = excluded.value`,
-            Math.random().toString(36).substring(7), key, String(value)
-          );
-          setting = { key, value };
-        }
-        results.push(setting);
+        await prisma.$executeRawUnsafe(
+          `INSERT INTO GlobalSetting (id, [key], value) VALUES (?, ?, ?) 
+           ON CONFLICT([key]) DO UPDATE SET value = excluded.value`,
+          `set_${key}_${Math.random().toString(36).substring(7)}`, 
+          key, 
+          String(value)
+        );
+        results.push({ key, value });
       }
       return NextResponse.json({ success: true, results });
     }
 
-    // Support single update {key, value}
+    // 2. Process SINGLE updates {key, value}
     const { key, value } = body;
-    if (!key) return NextResponse.json({ error: "Key is required" }, { status: 400 });
-
-    let setting;
-    if (globalSetting) {
-      setting = await globalSetting.upsert({
-        where: { key },
-        update: { value: String(value) },
-        create: { key, value: String(value) },
-      });
-    } else {
-      // Corrected raw SQL for SQLite parameter handling
+    if (key) {
       await prisma.$executeRawUnsafe(
-        `INSERT INTO GlobalSetting (id, [key], value) VALUES ('${Math.random().toString(36).substring(7)}', '${key}', '${String(value)}') 
-         ON CONFLICT([key]) DO UPDATE SET value = excluded.value`
+        `INSERT INTO GlobalSetting (id, [key], value) VALUES (?, ?, ?) 
+         ON CONFLICT([key]) DO UPDATE SET value = excluded.value`,
+        `set_${key}_${Math.random().toString(36).substring(7)}`, 
+        key, 
+        String(value)
       );
-      setting = { key, value };
+      return NextResponse.json({ key, value });
     }
 
-    return NextResponse.json(setting);
+    return NextResponse.json({ error: "No settings provided" }, { status: 400 });
   } catch (error: any) {
     console.error("PATCH /api/admin/settings error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message || "Failed to update settings" }, { status: 500 });
   }
 }
 
