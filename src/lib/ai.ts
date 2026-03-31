@@ -20,62 +20,42 @@ export interface AIConfig {
 }
 
 export async function readAIConfig(): Promise<AIConfig> {
-  // 1. Try Environment Variables first (Standard Production Practice)
-  if (process.env.PRIMARY_AI_PROVIDER) {
-    return {
-      primaryProvider: process.env.PRIMARY_AI_PROVIDER as any,
-      ollamaEndpoint: process.env.OLLAMA_ENDPOINT || "http://localhost:11434",
-      ollamaModel: process.env.OLLAMA_MODEL || "llama3.2",
-      groqApiKey: process.env.GROQ_API_KEY || "",
-      geminiApiKey: process.env.GEMINI_API_KEY || "",
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
-    };
-  }
+  // 1. Initial defaults from Environment Variables (Low Priority)
+  const config: AIConfig = {
+    primaryProvider: (process.env.PRIMARY_AI_PROVIDER || "groq") as any,
+    ollamaEndpoint: process.env.OLLAMA_ENDPOINT || "http://localhost:11434",
+    ollamaModel: process.env.OLLAMA_MODEL || "llama3.2",
+    groqApiKey: process.env.GROQ_API_KEY || "",
+    geminiApiKey: process.env.GEMINI_API_KEY || "",
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
+  };
 
-  // 2. Fetch from Database (GlobalSetting table)
+  // 2. Overlay settings from Database (High Priority / User Choice)
   try {
     const { db } = await import("@/db");
     const { globalSettings } = await import("@/db/schema");
     
-    // Fetch all settings
     const settings = await db.select().from(globalSettings);
     const raw: Record<string, string> = {};
     settings.forEach(s => { raw[s.key] = s.value; });
 
-    // Backwards compat: if only legacy apiKey exists, detect provider from it
-    if (!raw.primaryProvider && raw.apiKey) {
-      const provider = raw.apiKey.startsWith("gsk_") ? "groq" : "gemini";
-      return {
-        primaryProvider: provider,
-        ollamaEndpoint: "http://localhost:11434",
-        ollamaModel: "llama3.2",
-        groqApiKey: provider === "groq" ? raw.apiKey : "",
-        geminiApiKey: provider === "gemini" ? raw.apiKey : "",
-        anthropicApiKey: "",
-        apiKey: raw.apiKey,
-      };
+    if (raw.primaryProvider) config.primaryProvider = raw.primaryProvider as any;
+    if (raw.ollamaEndpoint) config.ollamaEndpoint = raw.ollamaEndpoint;
+    if (raw.ollamaModel)    config.ollamaModel = raw.ollamaModel;
+    if (raw.groqApiKey)     config.groqApiKey = raw.groqApiKey;
+    if (raw.geminiApiKey)   config.geminiApiKey = raw.geminiApiKey;
+    if (raw.anthropicApiKey) config.anthropicApiKey = raw.anthropicApiKey;
+    
+    // Backwards compat for legacy "apiKey" field
+    if (raw.apiKey && !config.groqApiKey && !config.geminiApiKey) {
+      if (raw.apiKey.startsWith("gsk_")) config.groqApiKey = raw.apiKey;
+      else config.geminiApiKey = raw.apiKey;
     }
-
-    return {
-      primaryProvider: (raw.primaryProvider || "groq") as any,
-      ollamaEndpoint: raw.ollamaEndpoint || "http://localhost:11434",
-      ollamaModel: raw.ollamaModel || "llama3.2",
-      groqApiKey: raw.groqApiKey || "",
-      geminiApiKey: raw.geminiApiKey || raw.apiKey || "",
-      anthropicApiKey: raw.anthropicApiKey || "",
-      apiKey: raw.apiKey,
-    };
   } catch (error) {
-    console.error("AI Config DB fetch error:", error);
-    return {
-      primaryProvider: "groq",
-      ollamaEndpoint: "http://localhost:11434",
-      ollamaModel: "llama3.2",
-      groqApiKey: "",
-      geminiApiKey: "",
-      anthropicApiKey: "",
-    };
+    console.warn("AI Config DB fetch partially failed, using env defaults:", error);
   }
+
+  return config;
 }
 
 /** Legacy helper — reads primary key for server-side routes */
