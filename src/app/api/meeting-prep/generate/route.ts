@@ -24,10 +24,14 @@ export async function POST(req: Request) {
       );
     }
 
-    // Fetch client profile
-    const profile = await prisma.clientProfile.findUnique({
-      where: { id: clientProfileId },
-    });
+    // Fetch client profile — raw SQL for Turso safety
+    const profileRows = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, userId, companyName, industry, modulesAvailed, engagementStatus,
+              primaryContact, specialConsiderations
+       FROM ClientProfile WHERE id = ?`,
+      clientProfileId
+    );
+    const profile = profileRows[0];
 
     if (!profile || profile.userId !== session.user.id) {
       return NextResponse.json(
@@ -54,43 +58,45 @@ export async function POST(req: Request) {
     // Parse the generated content
     const generated = parseGeneratedContent(text);
 
-    // Create or update MeetingPrepSession
-    let session_record = await prisma.meetingPrepSession.findFirst({
-      where: {
-        clientProfileId,
-        meetingType,
-      },
-    });
+    // Create or update MeetingPrepSession — raw SQL for Turso safety
+    const existingSessions = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT id FROM MeetingPrepSession WHERE clientProfileId = ? AND meetingType = ? LIMIT 1`,
+      clientProfileId, meetingType
+    );
 
-    if (!session_record) {
-      session_record = await prisma.meetingPrepSession.create({
-        data: {
-          userId: session.user.id,
-          clientProfileId,
-          meetingType,
-          status: "ready",
-          agendaContent: generated.agenda,
-          questionnaireContent: generated.questionnaire,
-          discussionGuide: generated.discussionGuide,
-          preparationChecklist: generated.checklist,
-          anticipatedRequirements: generated.anticipatedRequirements,
-        },
-      });
+    let sessionId: string;
+    const now = new Date().toISOString();
+
+    if (existingSessions.length === 0) {
+      sessionId = `mps_${Date.now()}`;
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO MeetingPrepSession (id, userId, clientProfileId, meetingType, status,
+          agendaContent, questionnaireContent, discussionGuide, preparationChecklist, anticipatedRequirements,
+          createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?)`,
+        sessionId, session.user.id, clientProfileId, meetingType,
+        generated.agenda, generated.questionnaire, generated.discussionGuide,
+        generated.checklist, generated.anticipatedRequirements,
+        now, now
+      );
     } else {
-      session_record = await prisma.meetingPrepSession.update({
-        where: { id: session_record.id },
-        data: {
-          status: "ready",
-          agendaContent: generated.agenda,
-          questionnaireContent: generated.questionnaire,
-          discussionGuide: generated.discussionGuide,
-          preparationChecklist: generated.checklist,
-          anticipatedRequirements: generated.anticipatedRequirements,
-        },
-      });
+      sessionId = existingSessions[0].id;
+      await prisma.$executeRawUnsafe(
+        `UPDATE MeetingPrepSession SET status = 'ready',
+          agendaContent = ?, questionnaireContent = ?, discussionGuide = ?,
+          preparationChecklist = ?, anticipatedRequirements = ?, updatedAt = ?
+         WHERE id = ?`,
+        generated.agenda, generated.questionnaire, generated.discussionGuide,
+        generated.checklist, generated.anticipatedRequirements, now,
+        sessionId
+      );
     }
 
-    return NextResponse.json(session_record);
+    // Read back the record
+    const saved = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT * FROM MeetingPrepSession WHERE id = ?`, sessionId
+    );
+    return NextResponse.json(saved[0] || { id: sessionId });
   } catch (error: any) {
     console.error("Generate prep error:", error);
     return NextResponse.json(

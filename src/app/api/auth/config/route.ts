@@ -75,37 +75,43 @@ export async function GET() {
       }
     }
 
-    // 3. SEEDING: Ensure the App registry is populated (Overhauled)
+    // 3. SEEDING: Ensure the App registry is populated (raw SQL for Turso safety)
     try {
       const apps = [
-        { name: "Architect", slug: "architect", description: "Map and automate operational flows.", icon: "Workflow", href: "/architect", isActive: true, sortOrder: 0 },
-        { name: "BRD Maker", slug: "brd", description: "Generate PRD / BRD documents via AI.", icon: "ClipboardList", href: "/brd", isActive: true, sortOrder: 1 },
-        { name: "Roadmap", slug: "timeline", description: "Project scheduling and Gantt visualization.", icon: "Clock", href: "/timeline", isActive: true, sortOrder: 2 },
-        { name: "Mockup Builder", slug: "mockup", description: "Build and preview UI prototypes.", icon: "Paintbrush", href: "/mockup", isActive: true, sortOrder: 3 },
-        { name: "Daily Tasks", slug: "tasks", description: "Daily task tracking and reporting.", icon: "Zap", href: "/tasks", isActive: true, sortOrder: 4 },
-        { name: "Meetings Hub", slug: "meetings", description: "Centralized meeting and transcription management.", icon: "Users", href: "/meetings", isActive: true, sortOrder: 5 },
+        { name: "Architect", slug: "architect", description: "Map and automate operational flows.", icon: "Workflow", href: "/architect", sortOrder: 0 },
+        { name: "BRD Maker", slug: "brd", description: "Generate PRD / BRD documents via AI.", icon: "ClipboardList", href: "/brd", sortOrder: 1 },
+        { name: "Roadmap", slug: "timeline", description: "Project scheduling and Gantt visualization.", icon: "Clock", href: "/timeline", sortOrder: 2 },
+        { name: "Mockup Builder", slug: "mockup", description: "Build and preview UI prototypes.", icon: "Paintbrush", href: "/mockup", sortOrder: 3 },
+        { name: "Daily Tasks", slug: "tasks", description: "Daily task tracking and reporting.", icon: "Zap", href: "/tasks", sortOrder: 4 },
+        { name: "Meetings Hub", slug: "meetings", description: "Centralized meeting and transcription management.", icon: "Users", href: "/meetings", sortOrder: 5 },
       ];
       for (const app of apps) {
-        await prisma.app.upsert({
-          where: { slug: app.slug },
-          update: { ...app, isBuiltIn: true },
-          create: { ...app, isBuiltIn: true },
-        });
+        await prisma.$executeRawUnsafe(
+          `INSERT INTO App (id, name, slug, description, icon, href, isActive, isBuiltIn, sortOrder)
+           VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)
+           ON CONFLICT(slug) DO UPDATE SET name = excluded.name, description = excluded.description, icon = excluded.icon, href = excluded.href, isBuiltIn = 1, sortOrder = excluded.sortOrder`,
+          `app_${app.slug}`, app.name, app.slug, app.description, app.icon, app.href, app.sortOrder
+        );
       }
 
-      const ADMIN_EMAILS = ["lester.alarcon@mobileoptima.com", "admin@cst.com"];
-      for (const email of ADMIN_EMAILS) {
-        await prisma.user.upsert({
-          where: { email },
-          update: { role: "admin", status: "approved" },
-          create: { 
-            id: email === "admin@cst.com" ? "admin-master" : `user_${Date.now()}`,
-            email, 
-            name: email === "admin@cst.com" ? "CST Admin" : "Lester Alarcon", 
-            role: "admin",
-            status: "approved"
-          },
-        });
+      const ADMIN_EMAILS = [
+        { email: "lester.alarcon@mobileoptima.com", name: "Lester Alarcon", id: `user_${Date.now()}` },
+        { email: "admin@cst.com", name: "CST Admin", id: "admin-master" },
+      ];
+      for (const admin of ADMIN_EMAILS) {
+        const existing = await prisma.$queryRawUnsafe<any[]>(
+          `SELECT id FROM User WHERE email = ?`, admin.email
+        );
+        if (existing.length > 0) {
+          await prisma.$executeRawUnsafe(
+            `UPDATE User SET role = 'admin', status = 'approved' WHERE email = ?`, admin.email
+          );
+        } else {
+          await prisma.$executeRawUnsafe(
+            `INSERT INTO User (id, email, name, role, status) VALUES (?, ?, ?, 'admin', 'approved')`,
+            admin.id, admin.email, admin.name
+          );
+        }
       }
     } catch (e) {
       console.warn("Seeding failed (non-critical):", e);
@@ -113,8 +119,8 @@ export async function GET() {
 
   let dbStatus = false;
   try {
-    await prisma.user.count();
-    dbStatus = true;
+    const countResult = await prisma.$queryRawUnsafe<any[]>(`SELECT COUNT(*) as cnt FROM User`);
+    dbStatus = countResult.length > 0;
   } catch (e) {
     dbStatus = false;
   }

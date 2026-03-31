@@ -5,6 +5,7 @@ import { auth } from "@/auth";
 /**
  * PATCH /api/meeting-prep/profiles/[id]
  * Update a client profile (partial update)
+ * PRODUCTION-SAFE: 100% raw SQL
  */
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   try {
@@ -13,8 +14,11 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const profile = await prisma.clientProfile.findUnique({ where: { id: params.id } });
-    if (!profile || profile.userId !== session.user.id) {
+    // Raw SQL instead of Prisma ORM findUnique
+    const existing = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, userId FROM ClientProfile WHERE id = ?`, params.id
+    );
+    if (existing.length === 0 || existing[0].userId !== session.user.id) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
@@ -51,10 +55,20 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       );
     }
 
-    const updated = await prisma.clientProfile.findUnique({ where: { id: params.id } });
+    // Read back with raw SQL
+    const updated = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, userId, companyName, industry, companySize,
+              modulesAvailed, engagementStatus, primaryContact,
+              primaryContactEmail, specialConsiderations,
+              createdAt, updatedAt
+       FROM ClientProfile WHERE id = ?`,
+      params.id
+    );
+
+    const profile = updated[0] || {};
     return NextResponse.json({
-      ...updated,
-      modulesAvailed: JSON.parse((updated as any)?.modulesAvailed || "[]"),
+      ...profile,
+      modulesAvailed: (() => { try { return JSON.parse(profile.modulesAvailed || "[]"); } catch { return []; } })(),
     });
   } catch (error: any) {
     console.error("PATCH /api/meeting-prep/profiles/[id] error:", error);
@@ -64,6 +78,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
 /**
  * DELETE /api/meeting-prep/profiles/[id]
+ * PRODUCTION-SAFE: 100% raw SQL
  */
 export async function DELETE(req: Request, { params }: { params: { id: string } }) {
   try {
@@ -72,12 +87,16 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const profile = await prisma.clientProfile.findUnique({ where: { id: params.id } });
-    if (!profile || profile.userId !== session.user.id) {
+    // Raw SQL ownership check
+    const existing = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, userId FROM ClientProfile WHERE id = ?`, params.id
+    );
+    if (existing.length === 0 || existing[0].userId !== session.user.id) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    await prisma.clientProfile.delete({ where: { id: params.id } });
+    // Raw SQL delete
+    await prisma.$executeRawUnsafe(`DELETE FROM ClientProfile WHERE id = ?`, params.id);
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error("Delete profile error:", error);

@@ -4,6 +4,10 @@ import { auth } from "@/auth";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * GET /api/meeting-prep/sessions
+ * PRODUCTION-SAFE: Uses raw SQL to avoid Prisma schema-mismatch on Turso
+ */
 export async function GET(req: Request) {
   try {
     const session = await auth();
@@ -17,32 +21,53 @@ export async function GET(req: Request) {
     const meetingType = url.searchParams.get("meetingType");
     const meetingPrepSessionId = url.searchParams.get("meetingPrepSessionId");
 
-    const where: any = { userId: session.user.id };
-    if (status) where.status = status;
-    if (clientProfileId) where.clientProfileId = clientProfileId;
+    // Build dynamic WHERE clause with raw SQL
+    const conditions: string[] = ["userId = ?"];
+    const values: any[] = [session.user.id];
+
+    if (status) { conditions.push("status = ?"); values.push(status); }
+    if (clientProfileId) { conditions.push("clientProfileId = ?"); values.push(clientProfileId); }
     if (meetingPrepSessionId) {
-      where.id = meetingPrepSessionId;
+      conditions.push("id = ?"); values.push(meetingPrepSessionId);
     } else if (meetingType) {
       if (meetingType.includes(",")) {
-        where.meetingType = { in: meetingType.split(",").map(t => t.trim()) };
+        const types = meetingType.split(",").map(t => t.trim());
+        const placeholders = types.map(() => "?").join(",");
+        conditions.push(`meetingType IN (${placeholders})`);
+        values.push(...types);
       } else {
-        where.meetingType = meetingType;
+        conditions.push("meetingType = ?");
+        values.push(meetingType);
       }
     }
 
-    const sessions = await prisma.meetingPrepSession.findMany({
-      where,
-      orderBy: { updatedAt: "desc" },
-    });
+    const whereClause = conditions.join(" AND ");
+    const sessions = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, userId, clientProfileId, meetingType, status,
+              agendaContent, questionnaireContent, discussionGuide,
+              preparationChecklist, anticipatedRequirements,
+              createdAt, updatedAt
+       FROM MeetingPrepSession
+       WHERE ${whereClause}
+       ORDER BY updatedAt DESC`,
+      ...values
+    );
 
-    // Fetch related profiles separately to avoid libsql include issues
+    // Fetch related profiles separately with raw SQL
     const profileIds = Array.from(new Set(sessions.map((s: any) => s.clientProfileId)));
-    const profiles = profileIds.length > 0
-      ? await prisma.clientProfile.findMany({ where: { id: { in: profileIds } } })
-      : [];
-    const profileMap = Object.fromEntries(profiles.map(p => [p.id, p]));
+    let profiles: any[] = [];
+    if (profileIds.length > 0) {
+      const placeholders = profileIds.map(() => "?").join(",");
+      profiles = await prisma.$queryRawUnsafe<any[]>(
+        `SELECT id, companyName, industry, engagementStatus, primaryContact
+         FROM ClientProfile
+         WHERE id IN (${placeholders})`,
+        ...profileIds
+      );
+    }
+    const profileMap = Object.fromEntries(profiles.map((p: any) => [p.id, p]));
 
-    const result = sessions.map(s => ({ ...s, clientProfile: profileMap[s.clientProfileId] || null }));
+    const result = sessions.map((s: any) => ({ ...s, clientProfile: profileMap[s.clientProfileId] || null }));
     return NextResponse.json(result);
   } catch (error: any) {
     console.error("Fetch prep sessions error:", error);
