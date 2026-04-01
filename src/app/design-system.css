@@ -136,7 +136,7 @@ a:hover {
   border-radius: 4px;
 }
 
-/* ===== PAGE SHELL STRUCTURE ===== */
+/* ===== LAYOUT CORE (Fixed Mode) ===== */
 .page-shell {
   display: flex;
   height: 100vh;
@@ -150,6 +150,8 @@ a:hover {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  margin-left: var(--nav-width, 255px);
+  transition: margin-left 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .page-content-full {
@@ -193,19 +195,20 @@ a:hover {
   background-color: var(--color-surface-default);
 }
 
-/* ===== LEFT NAVIGATION ===== */
+/* ===== LEFT NAVIGATION (High-Fidelity) ===== */
 .left-nav {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
   width: var(--spacing-nav-w);
   border-right: 1px solid var(--color-border-default);
   background-color: var(--color-surface-default);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  flex-shrink: 0;
-  height: 100vh;
-  transition: width 0.3s ease;
-  position: relative;
-  z-index: 50; /* Ensure navigation is above main content popovers but below modals */
+  z-index: 9999; /* Ensure it is always on top */
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .left-nav.collapsed {

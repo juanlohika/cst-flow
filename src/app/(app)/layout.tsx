@@ -11,14 +11,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <BreadcrumbProvider>
       <div className="page-shell">
         {session && (
-          <Suspense fallback={<div className="left-nav" />}>
+          <Suspense fallback={<div className="left-nav collapsed" />}>
             <LeftNav />
           </Suspense>
         )}
-        <div className={session ? "page-content" : "page-content-full"}>
+        <main className={session ? "page-content" : "page-content-full"}>
           <GlobalBar />
-          {children}
-        </div>
+          <div className="flex-1 overflow-auto bg-surface-subtle">
+            {children}
+          </div>
+        </main>
       </div>
     </BreadcrumbProvider>
   );
