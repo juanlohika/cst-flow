@@ -4,7 +4,7 @@ import { useState, useEffect, Suspense, useRef, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import SmartMic from "@/components/ui/SmartMic";
-import { ArrowUp, Loader2, Download, Copy, Check, Save, FileText, Paperclip, X, MessageSquare, Send, Sparkles } from "lucide-react";
+import { ArrowUp, Loader2, Download, Copy, Check, Save, FileText, Paperclip, X, MessageSquare, Send, Sparkles, FileDown } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 
 export default function BRDPage() {
@@ -29,6 +29,7 @@ function BRDContent() {
   const [brdContent, setBrdContent] = useState("");
   const [copied, setCopied] = useState(false);
   const [exportingToDocx, setExportingToDocx] = useState(false);
+  const [exportingToPdf, setExportingToPdf] = useState(false);
   
   // Interactive Review States
   const [comments, setComments] = useState<{ id: string; text: string; segmentIndex: number }[]>([]);
@@ -38,6 +39,28 @@ function BRDContent() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Read context from query params
+  const accountId = searchParams.get("accountId");
+  const loadId = searchParams.get("loadId");
+
+  // Auto-scroll chat
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  // Load existing work
+  useEffect(() => {
+    if (loadId && session?.user) {
+      fetch("/api/works/" + loadId).then(r => r.json()).then(data => {
+        if (data.data) { 
+          setBrdContent(data.data); 
+          setSavedId(data.id); 
+          // Attempt to restore message context if available (future enhancement)
+        }
+      }).catch(console.error);
+    }
+  }, [loadId, session]);
 
   // Auto-resize chat textarea
   useEffect(() => {
@@ -49,6 +72,37 @@ function BRDContent() {
 
   const handleTranscription = (text: string) => {
     setPrompt((prev) => (prev ? prev + " " + text : text));
+  };
+
+  const saveToCloud = async () => {
+    if (!session?.user) { alert("Please sign in to save."); return; }
+    if (!brdContent) { alert("Generate a BRD first."); return; }
+    
+    // Use the first user message or project title as default
+    const title = messages.find(m => m.role === "user")?.content?.slice(0, 60) || "Business Requirements Document";
+    
+    setSaving(true);
+    try {
+      const payload: any = { id: savedId, appType: "brd", title, data: brdContent };
+      if (accountId) payload.clientProfileId = accountId;
+      
+      const res = await fetch("/api/works", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok) { 
+        setSavedId(data.id); 
+        alert("Saved successfully!"); 
+      } else {
+        alert("Save failed: " + data.error);
+      }
+    } catch (err: any) {
+      alert("Error saving: " + err.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -133,7 +187,7 @@ function BRDContent() {
       const res = await fetch("/api/brd/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ markdown: brdContent, title: "Business_Requirements_Document" }),
+        body: JSON.stringify({ markdown: brdContent, title: "Business_Requirements_Document", format: 'docx' }),
       });
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
@@ -150,21 +204,35 @@ function BRDContent() {
     }
   };
 
+  const exportPdfFile = () => {
+    if (!brdContent) return;
+    window.print();
+  };
+
   // Split content into segments for interactive commenting
   const segments = brdContent.split("\n\n");
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden bg-slate-50 font-inter">
-      {/* Sidebar: Chat Panel */}
-      <div className="w-[380px] border-r bg-white flex flex-col shadow-xl z-20 transition-all">
+      {/* Sidebar: Chat Panel (Hide during print) */}
+      <div className="w-[380px] border-r bg-white flex flex-col shadow-xl z-20 transition-all no-print">
         <div className="p-6 border-b shrink-0">
           <div className="flex items-center gap-2 mb-1">
              <div className="bg-primary text-white p-1 rounded-md shadow-sm"><FileText size={16}/></div>
-             <h1 className="text-xl font-bold tracking-tight text-slate-800">BRD AI Workspace</h1>
+             <h1 className="text-xl font-bold tracking-tight text-slate-800">BRD Maker App</h1>
           </div>
           <p className="text-[11px] font-medium text-slate-400 uppercase tracking-widest mt-2">
             The Tarkie Requirements Hub
           </p>
+          {session?.user && (
+            <button 
+              onClick={saveToCloud} 
+              disabled={saving || !brdContent} 
+              className="mt-3 flex items-center gap-1.5 text-[10px] font-black uppercase text-primary hover:underline disabled:opacity-40"
+            >
+              <Save size={12} /> {saving ? "Saving..." : savedId ? "Update Cloud" : "Save to Cloud"}
+            </button>
+          )}
         </div>
 
         {/* Message History */}
@@ -246,25 +314,28 @@ function BRDContent() {
       </div>
 
       {/* Main Document Viewer (Collaborative Review) */}
-      <div className="flex-1 flex flex-col relative overflow-hidden bg-white/40 backdrop-blur-3xl">
-        <div className="h-14 border-b bg-white/80 backdrop-blur-md px-6 flex items-center justify-between z-10">
+      <div className="flex-1 flex flex-col relative overflow-hidden bg-white/40 backdrop-blur-3xl lg:visible">
+        <div className="h-14 border-b bg-white/80 backdrop-blur-md px-6 flex items-center justify-between z-10 no-print">
            <div className="flex items-center gap-4">
-              <span className="font-bold text-sm text-slate-800 tracking-tight">Interactive BRD Editor</span>
+              <span className="font-bold text-sm text-slate-800 tracking-tight">BRD Maker App</span>
               <div className="h-4 w-px bg-slate-200" />
               <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                 Draft Mode v1.0
               </div>
            </div>
            <div className="flex gap-2">
-             <button onClick={exportDocxFile} className="flex items-center gap-2 px-4 py-2 bg-primary text-white text-xs font-bold rounded-xl hover:shadow-lg transition-all shadow-md">
-                <Download size={14}/> Export Arial .docx
+             <button onClick={exportDocxFile} disabled={exportingToDocx} className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 text-xs font-bold rounded-xl hover:bg-slate-200 transition-all border border-slate-200">
+                {exportingToDocx ? <Loader2 size={14} className="animate-spin"/> : <Download size={14}/>} Export DOCX
+             </button>
+             <button onClick={exportPdfFile} disabled={exportingToPdf} className="flex items-center gap-2 px-4 py-2 bg-primary text-white text-xs font-bold rounded-xl hover:shadow-lg transition-all shadow-md">
+                {exportingToPdf ? <Loader2 size={14} className="animate-spin"/> : <FileDown size={14}/>} Export PDF
              </button>
            </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-12 styled-scroll">
+        <div className="flex-1 overflow-y-auto p-12 styled-scroll brd-document-container">
            {brdContent ? (
-             <div className="w-full max-w-4xl mx-auto bg-white shadow-[0_32px_64px_rgba(0,0,0,0.08)] border border-slate-100 rounded-2xl p-16 relative">
+             <div className="w-full max-w-4xl mx-auto bg-white shadow-[0_32px_64px_rgba(0,0,0,0.08)] border border-slate-100 rounded-2xl p-16 relative brd-document-printable">
                 {segments.map((segment, idx) => (
                   <div 
                     key={idx} 

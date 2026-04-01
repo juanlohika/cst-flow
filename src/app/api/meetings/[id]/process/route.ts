@@ -85,7 +85,34 @@ The format should be:
     // AI Prompts
     const minutesPrompt = `${momInstructions}\n\n${fullContentForAI}\n\nReturn ONLY a valid JSON object:\n{\n  "title": "Professional Meeting Title",\n  "date": "Meeting Date and Duration",\n  "attendees": ["List of all present individuals"],\n  "keyTakeaways": ["Explicit strategic decisions or realizations"],\n  "actionItems": [{"task": "detailed task", "owner": "assigned person or empty string"}],\n  "clarificationsRequired": ["Ambiguous or misheard points requiring followup"]\n}`;
 
-    const brdPrompt = `You are a professional business analyst producing a Business Requirements Document.\n\nCRITICAL RULES:\n1. Only capture requirements EXPLICITLY stated by participants or in notes\n2. Do NOT infer requirements from context or general knowledge\n3. Mixed English/Filipino to professional English\n4. ${TARKIE_INTEGRITY_RULE}\n\n${fullContentForAI}\n\nReturn ONLY a valid JSON object:\n{\n  "overview": "summary",\n  "scope": "scope",\n  "functionalRequirements": ["strings"],\n  "nonFunctionalRequirements": ["strings"],\n  "assumptions": ["strings"],\n  "openItems": ["strings"]\n}`;
+    // Fetch BRD Skill (Loaded from Admin)
+    const brdSkillRows = await db.select().from(skillsTable).where(and(eq(skillsTable.category, 'brd'), eq(skillsTable.isActive, true))).orderBy(desc(skillsTable.updatedAt)).limit(1);
+    const brdSkillContent = brdSkillRows[0]?.content || "";
+
+    // AI Prompts
+    const minutesPrompt = `${momInstructions}\n\n${fullContentForAI}\n\nReturn ONLY a valid JSON object:\n{\n  "title": "Professional Meeting Title",\n  "date": "Meeting Date and Duration",\n  "attendees": ["List of all present individuals"],\n  "keyTakeaways": ["Explicit strategic decisions or realizations"],\n  "actionItems": [{"task": "detailed task", "owner": "assigned person or empty string"}],\n  "clarificationsRequired": ["Ambiguous or misheard points requiring followup"]\n}`;
+
+    const brdPrompt = `
+      ${brdSkillContent}
+      
+      You are processing a transcript from a live meeting.
+      ${TARKIE_INTEGRITY_RULE}
+      
+      BA TASK: Extract and draft the Business Requirements based on the framework above.
+      
+      INPUT DATA:
+      ${fullContentForAI}
+      
+      OUTPUT: Return ONLY a valid JSON object matching this schema:
+      {
+        "overview": "Comprehensive project overview",
+        "scope": "In-scope and Out-of-scope details",
+        "functionalRequirements": ["mapped requirements with Field/Dashboard/Manager tagging"],
+        "nonFunctionalRequirements": ["quality/performance needs"],
+        "assumptions": ["logic assumptions made"],
+        "openItems": ["things requiring client confirmation based on the elicitation steps"]
+      }
+    `.trim();
 
     const tasksPrompt = `You are extracting action items. PRIORITIZE FACILITATOR NOTES.\n\n${fullContentForAI}\n\nReturn ONLY a valid JSON array:\n[\n  {"title": "task description", "owner": "person name or empty string", "due": "date if mentioned or empty string", "priority": "high|medium|low"}\n]\nIf no clear action items, return []`;
 

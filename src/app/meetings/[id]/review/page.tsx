@@ -56,35 +56,63 @@ interface Meeting {
 
 function MarkdownContent({ content }: { content: string }) {
   const lines = content.split("\n");
+  const [inTable, setInTable] = useState(false);
+  const [tableRows, setTableRows] = useState<string[][]>([]);
+
+  // Simple rendering for high-fidelity feel
   return (
-    <div className="space-y-1">
+    <div className="space-y-1.5 brd-markdown-view">
       {lines.map((line, idx) => {
-        if (line.startsWith("## ")) {
+        // Table Detection (Basic)
+        if (line.includes("|") && line.trim().startsWith("|")) {
+          const cells = line.split("|").map(c => c.trim()).filter(c => c !== "");
+          if (line.includes("---")) return null; // skip separators
           return (
-            <h3 key={idx} className="text-[11px] font-semibold text-text-primary mt-3 mb-1">
-              {line.slice(3)}
-            </h3>
+            <div key={idx} className="flex border-b border-slate-100 last:border-0 bg-white/50">
+              {cells.map((cell, ci) => (
+                <div key={ci} className={`px-3 py-2 text-[10px] ${idx === 0 ? "font-bold text-slate-800" : "text-slate-600"} border-r border-slate-100 last:border-0 flex-1`}>
+                  {cell}
+                </div>
+              ))}
+            </div>
           );
         }
+
         if (line.startsWith("# ")) {
           return (
-            <h2 key={idx} className="text-xs font-bold text-text-primary mt-4 mb-1">
+            <h1 key={idx} className="text-sm font-black text-slate-900 mt-6 mb-2 uppercase tracking-tight border-b-2 border-primary/20 pb-1">
               {line.slice(2)}
+            </h1>
+          );
+        }
+        if (line.startsWith("## ")) {
+          return (
+            <h2 key={idx} className="text-xs font-bold text-slate-800 mt-4 mb-2">
+              {line.slice(3)}
             </h2>
+          );
+        }
+        if (line.startsWith("### ")) {
+          return (
+            <h3 key={idx} className="text-[11px] font-bold text-slate-700 mt-3 mb-1">
+              {line.slice(4)}
+            </h3>
           );
         }
         if (line.startsWith("- ") || line.startsWith("* ")) {
           return (
-            <p key={idx} className="text-[11px] text-text-secondary leading-relaxed pl-3">
-              • {line.slice(2)}
-            </p>
+            <div key={idx} className="flex gap-2 pl-2">
+              <span className="text-primary font-bold">•</span>
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                {line.slice(2)}
+              </p>
+            </div>
           );
         }
-        if (line.trim() === "") {
-          return <div key={idx} className="h-1" />;
-        }
+        if (line.trim() === "") return <div key={idx} className="h-1" />;
+        
         return (
-          <p key={idx} className="text-[11px] text-text-secondary leading-relaxed">
+          <p key={idx} className="text-[11px] text-slate-600 leading-relaxed">
             {line}
           </p>
         );

@@ -57,21 +57,27 @@ export async function POST(req: Request) {
       console.error("Failed to fetch BRD skill:", dbErr);
     }
 
-    const fallbackInstruction = `You are a Senior Business Analyst. Create professional BRDs including Field App, Dashboard, and Manager App specs.`;
+    const fallbackInstruction = `You are a professional Business Analyst. Use the Tarkie Standard BRD Framework to elicit requirements (Field App, Dashboard, Manager App) and generate drafts only when Steps 1-3 are complete.`;
     const baseInstruction = dbSkill || systemInstruction || fallbackInstruction;
     
     // Inject the new document standards and real-time date
     const finalSystemInstruction = `
-      ${baseInstruction}
-      
-      CURRENT DATE: ${currentDate}
-      
-      ---
-      ${DOCUMENT_STANDARDS}
-      
-      ---
-      ${CONVERSATION_GUARDRAIL}
-    `.trim();
+${baseInstruction}
+
+CURRENT DATE: ${currentDate}
+
+---
+${DOCUMENT_STANDARDS}
+
+---
+${CONVERSATION_GUARDRAIL}
+
+---
+ADDITIONAL INSTRUCTIONS:
+- If the user asks for a BRD but hasn't provided Step 1 (Overview) or Step 2 (Process Flow) details, you MUST pause and ask the specific questions from those steps.
+- Do NOT hallucinate names or objectives.
+- Be concise but thorough.
+`.trim();
 
     const attachmentList: Attachment[] = Array.isArray(attachments) ? attachments : [];
     const docTexts: string[] = [];

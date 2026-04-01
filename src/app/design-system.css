@@ -352,3 +352,46 @@ a:hover {
     box-shadow: var(--shadow-md);
   }
 }
+/* ===== PRINT STYLES (Professional BRD Export) ===== */
+@media print {
+  @page {
+    size: A4;
+    margin: 2cm;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .brd-document-printable, .brd-document-printable * {
+    visibility: visible;
+    font-family: Arial, Helvetica, sans-serif !important;
+  }
+
+  .brd-document-printable {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: white !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    color: black !important;
+  }
+
+  .brd-segment {
+    margin-bottom: 1.5em !important;
+    page-break-inside: avoid;
+  }
+
+  h1, h2, h3 {
+    color: #1e293b !important;
+    page-break-after: avoid;
+  }
+
+  /* Hide UI elements */
+  .brd-comment-marker, .brd-comment-box, button, .no-print {
+    display: none !important;
+  }
+}
