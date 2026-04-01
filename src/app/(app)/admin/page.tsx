@@ -1638,11 +1638,11 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                             {/* Status */}
                             <span style={{
                               fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20,
-                              background: u.status === 'approved' ? '#DCFCE7' : u.status === 'blocked' ? '#FEE2E2' : '#FEF9C3',
-                              color: u.status === 'approved' ? '#15803D' : u.status === 'blocked' ? '#DC2626' : '#A16207',
+                              background: u.status === 'active' ? '#DCFCE7' : u.status === 'blocked' ? '#FEE2E2' : '#FEF9C3',
+                              color: u.status === 'active' ? '#15803D' : u.status === 'blocked' ? '#DC2626' : '#A16207',
                               display: 'inline-block', whiteSpace: 'nowrap',
                             }}>
-                              {u.status === 'approved' ? 'Active' : u.status === 'blocked' ? 'Blocked' : 'Pending'}
+                              {u.status === 'active' ? 'Active' : u.status === 'blocked' ? 'Blocked' : 'Pending'}
                             </span>
                             {/* Actions */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -1713,7 +1713,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                                     value={editingUser.status}
                                     onChange={e => setEditingUser((eu: any) => ({ ...eu, status: e.target.value }))}>
                                     <option value="pending">Pending</option>
-                                    <option value="approved">Active</option>
+                                    <option value="active">Active</option>
                                     <option value="blocked">Blocked</option>
                                   </select>
                                 </div>

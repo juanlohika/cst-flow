@@ -412,6 +412,7 @@ function NewMeetingModal({ onClose, onSuccess }: { onClose: () => void; onSucces
   const [existingPrepSession, setExistingPrepSession] = useState<any>(null);
   const [checkingPrep, setCheckingPrep] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [meetingTypes, setMeetingTypes] = useState<any[]>([]);
@@ -452,7 +453,7 @@ function NewMeetingModal({ onClose, onSuccess }: { onClose: () => void; onSucces
       .then(r => r.ok ? r.json() : [])
       .then(data => { if (Array.isArray(data)) setProjects(data); })
       .catch(() => {});
-    fetch("/api/skills?category=meeting-prep")
+    fetch("/api/skills?category=meetings")
       .then(r => r.ok ? r.json() : [])
       .then(data => { if (Array.isArray(data)) setMeetingTypes(data); })
       .catch(() => {});
@@ -530,48 +531,65 @@ function NewMeetingModal({ onClose, onSuccess }: { onClose: () => void; onSucces
     ? `${selectedAccount?.companyName} — select meeting type`
     : `${selectedAccount?.companyName} — meeting details`;
 
+  const filteredAccounts = accounts.filter(a => 
+    a.companyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    a.industry?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-lg max-w-md w-full p-6 space-y-5">
+      <div className="bg-white rounded-lg shadow-lg max-w-xl w-full p-6 space-y-4">
         <div>
           <h2 className="text-[15px] font-semibold text-text-primary">Create Meeting</h2>
           <p className="text-[12px] text-text-secondary mt-1">{stepLabel}</p>
         </div>
 
         {step === "select-account" && (
-          <div className="space-y-2 max-h-60 overflow-y-auto styled-scroll">
-            {loadingAccounts ? (
-              <div className="flex items-center justify-center py-6"><Loader2 className="w-4 h-4 animate-spin text-primary" /></div>
-            ) : accounts.length === 0 ? (
-              <div className="text-center py-6 space-y-2">
-                <p className="text-[13px] text-text-secondary">No accounts yet.</p>
-                <p className="text-[12px] text-text-muted">Go to <strong>Accounts</strong> in the sidebar to add your first client.</p>
-              </div>
-            ) : accounts.map(account => (
-              <button key={account.id}
-                onClick={() => setSelectedAccount(account)}
-                className={`w-full text-left px-4 py-3 rounded-md border-2 transition-colors ${selectedAccount?.id === account.id ? "border-primary bg-primary/5" : "border-border-default hover:border-primary/30"}`}
-              >
-                <p className="font-medium text-text-primary text-[13px]">{account.companyName}</p>
-                <p className="text-[11px] text-text-secondary capitalize mt-0.5">{account.industry} · {account.engagementStatus}</p>
-              </button>
-            ))}
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-muted" />
+              <input 
+                type="text"
+                placeholder="Search by company or industry..."
+                className="w-full pl-9 pr-4 py-2 border border-border-default rounded-md text-[13px] outline-none focus:border-primary transition-colors"
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 max-h-[350px] overflow-y-auto styled-scroll pr-1">
+              {loadingAccounts ? (
+                <div className="col-span-2 flex items-center justify-center py-10"><Loader2 className="w-4 h-4 animate-spin text-primary" /></div>
+              ) : filteredAccounts.length === 0 ? (
+                <div className="col-span-2 text-center py-10 space-y-2">
+                  <p className="text-[13px] text-text-secondary">No matching accounts.</p>
+                </div>
+              ) : filteredAccounts.map(account => (
+                <button key={account.id}
+                  onClick={() => setSelectedAccount(account)}
+                  className={`text-left px-3 py-2.5 rounded-md border-2 transition-all ${selectedAccount?.id === account.id ? "border-primary bg-primary/5 shadow-sm" : "border-border-default hover:border-primary/30"}`}
+                >
+                  <p className="font-semibold text-text-primary text-[12px] truncate">{account.companyName}</p>
+                  <p className="text-[10px] text-text-secondary truncate mt-0.5 opacity-80">{account.industry} · {account.engagementStatus}</p>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
         {step === "select-prep-type" && (
           <div className="space-y-3 max-h-80 overflow-y-auto styled-scroll pr-1">
-            <div className="grid grid-cols-1 gap-2.5">
+            <div className="grid grid-cols-2 gap-2">
               {meetingTypes.map(mt => (
                 <button key={mt.slug}
                   onClick={() => toggleMeetingType(mt.slug)}
-                  className={`w-full text-left px-4 py-3 rounded-md border-2 transition-colors ${formData.meetingType.includes(mt.slug) ? "border-primary bg-primary/5" : "border-border-default hover:border-primary/30"}`}
+                  className={`w-full text-left px-3 py-2.5 rounded-md border-2 transition-all ${formData.meetingType.includes(mt.slug) ? "border-primary bg-primary/5 shadow-sm" : "border-border-default hover:border-primary/30"}`}
                 >
                   <div className="flex items-center gap-2">
                     <input type="checkbox" readOnly checked={formData.meetingType.includes(mt.slug)} className="rounded border-border-default text-primary focus:ring-primary pointer-events-none" />
-                    <p className="font-medium text-text-primary text-[13px]">{mt.name}</p>
+                    <p className="font-semibold text-text-primary text-[12px]">{mt.name}</p>
                   </div>
-                  {mt.description && <p className="text-[11px] text-text-secondary mt-1 pl-5">{mt.description}</p>}
+                  {mt.description && <p className="text-[10px] text-text-secondary mt-1 pl-5 line-clamp-2">{mt.description}</p>}
                 </button>
               ))}
             </div>

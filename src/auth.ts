@@ -26,10 +26,10 @@ const credentialsProvider = Credentials({
         const id = email === "admin@cst.com" ? "admin-master" : `user_${Date.now()}`;
         
         await db.insert(usersTable)
-          .values({ id, email, name: "Admin", role: "admin", status: "approved" })
+          .values({ id, email, name: "Admin", role: "admin", status: "active" })
           .onConflictDoUpdate({
             target: usersTable.email,
-            set: { role: "admin", name: "Admin", status: "approved" }
+            set: { role: "admin", name: "Admin", status: "active" }
           });
           
         const results = await db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1);
@@ -66,10 +66,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           if (isAdmin) {
             const id = email === "admin@cst.com" ? "admin-master" : `user_${Date.now()}`;
             await db.insert(usersTable)
-              .values({ id, email, name: user.name || "Master Admin", role: "admin", status: "approved" })
+              .values({ id, email, name: user.name || "Master Admin", role: "admin", status: "active" })
               .onConflictDoUpdate({
                 target: usersTable.email,
-                set: { role: "admin", name: user.name || "Master Admin", status: "approved" }
+                set: { role: "admin", name: user.name || "Master Admin", status: "active" }
               });
             return true;
           }
@@ -82,7 +82,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             const dbUser = results[0];
 
             if (dbUser) {
-              return dbUser.status === "approved";
+              // ONLY registered users with "active" status can sign in.
+              return dbUser.status === "active";
             }
 
             console.warn(`Blocking unregistered access attempt from: ${email}`);

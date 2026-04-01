@@ -25,7 +25,7 @@ export async function GET() {
         role: usersTable.role
       })
       .from(usersTable)
-      .where(or(eq(usersTable.status, 'approved'), eq(usersTable.status, 'active')))
+      .where(or(eq(usersTable.status, 'active'), eq(usersTable.status, 'active')))
       .orderBy(asc(usersTable.name)),
 
       db.select({

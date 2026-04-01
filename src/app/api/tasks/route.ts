@@ -7,7 +7,8 @@ import {
   meetingAssignments as meetingAssignmentsTable,
   users as usersTable,
   projects as projectsTable,
-  clientProfiles as clientProfilesTable
+  clientProfiles as clientProfilesTable,
+  taskHistory as taskHistoryTable
 } from "@/db/schema";
 import { auth } from "@/auth";
 import { materializeRecurringInstances, detectConflicts } from "@/lib/scheduling";
@@ -251,7 +252,7 @@ export async function POST(req: Request) {
       ? project.companyName.split(" ")[0].replace(/[^a-zA-Z]/g, "").toUpperCase().substring(0, 3)
       : "GEN";
 
-    const taskCode = `TASK-${prefix}-${Math.floor(100000 + Math.random() * 900000)}`;
+    const taskCode = `TASK-${Math.floor(100000 + Math.random() * 900000)}`;
     const taskId = `task_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
     const now = new Date().toISOString();
 
@@ -338,6 +339,23 @@ export async function PATCH(req: Request) {
         await tx.update(timelineItemsTable)
           .set({ ...updateData, updatedAt: new Date().toISOString() })
           .where(eq(timelineItemsTable.id, id));
+
+        // 1b. Record History
+        for (const [key, newVal] of Object.entries(updateData)) {
+          const oldVal = (current as any)[key];
+          if (String(oldVal) !== String(newVal)) {
+            await tx.insert(taskHistoryTable).values({
+              id: `hist_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+              timelineItemId: id,
+              type: "field_update",
+              oldValue: oldVal != null ? String(oldVal) : null,
+              newValue: newVal != null ? String(newVal) : null,
+              changedBy: session.user.name || session.user.email || "System",
+              comment: comment || `Updated ${key}`,
+              createdAt: new Date().toISOString()
+            });
+          }
+        }
       }
 
       // 2. Update Assignments

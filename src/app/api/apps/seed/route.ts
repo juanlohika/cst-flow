@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 export const dynamic = "force-dynamic";
 
 const BUILT_IN_APPS = [
-  { name: "Meetings",     slug: "meetings",    icon: "CalendarCheck", href: "/meetings",    sortOrder: 1, isBuiltIn: true },
+  { name: "Meetings Hub", slug: "meetings",    icon: "CalendarCheck", href: "/meetings",    sortOrder: 1, isBuiltIn: true },
   { name: "Architect",    slug: "architect",   icon: "GitBranch",     href: "/architect",   sortOrder: 2, isBuiltIn: true },
   { name: "BRD Maker",    slug: "brd",         icon: "FileText",      href: "/brd",         sortOrder: 3, isBuiltIn: true },
   { name: "Mockup Maker", slug: "mockup",      icon: "Paintbrush",    href: "/mockup",      sortOrder: 4, isBuiltIn: true },

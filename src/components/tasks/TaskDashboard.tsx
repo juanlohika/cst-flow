@@ -37,6 +37,7 @@ import ConflictWarning from "@/components/tasks/ConflictWarning";
 import KanbanView from "@/components/tasks/KanbanView";
 import KanbanSetupModal from "@/components/tasks/KanbanSetupModal";
 import KanbanTransitionModal from "@/components/tasks/KanbanTransitionModal";
+import UserSelect from "@/components/ui/UserSelect";
 
 interface Task {
   id: string;
@@ -123,11 +124,11 @@ function parseDT(dt: string | null | undefined, fallbackDate = today, fallbackTi
 
 // Format owner for display (truncate emails)
 function formatOwner(owner: string | undefined | null): string {
-  if (!owner) return "—";
+  if (!owner || owner === "TBD") return "—";
   if (owner.includes("@")) {
-    return owner.split("@")[0].toUpperCase();
+    return owner.split("@")[0].replace(/\b\w/g, l => l.toUpperCase());
   }
-  return owner.toUpperCase();
+  return owner.replace(/\b\w/g, l => l.toUpperCase());
 }
 
 export default function TaskDashboard({ projectId }: TaskDashboardProps) {
@@ -704,7 +705,7 @@ export default function TaskDashboard({ projectId }: TaskDashboardProps) {
                                 className="flex-1 text-[11px] font-semibold uppercase tracking-tight bg-white border border-primary/30 rounded px-1.5 py-0.5 outline-none text-slate-700 min-w-0" />
                             ) : (
                               <span onClick={e => { e.stopPropagation(); setEditingCell({ taskId: task.id, field: "subject" }); setEditValue(task.subject); }}
-                                className="text-[11px] font-semibold text-slate-700 uppercase tracking-tight truncate cursor-text hover:text-primary transition-colors" title="Click to edit">{task.subject}</span>
+                                className="text-[11px] font-semibold text-slate-700 tracking-tight truncate cursor-text hover:text-primary transition-colors" title="Click to edit">{task.subject}</span>
                             )}
                             {(task as any).isRecurringTemplate && (
                               <span title="Recurring template" className="shrink-0 ml-0.5">
@@ -717,33 +718,28 @@ export default function TaskDashboard({ projectId }: TaskDashboardProps) {
                               </span>
                             )}
                           </div>
-                          <span className="text-[9px] font-bold text-primary/40 uppercase tracking-wide mt-0.5">{task.taskCode}</span>
+                          <span className="text-[9px] font-medium text-slate-400 tracking-wide mt-0.5">{task.taskCode}</span>
                         </div>
                       </div>
                     </td>
 
                     {/* Col 2: Assignee */}
-                    <td className="px-3 py-2 align-middle w-[110px]">
+                    <td className="px-3 py-2 align-middle w-[110px] relative">
                       {isEditingOwner ? (
-                        <select autoFocus value={editValue}
-                          onChange={e => saveField(task.id, "owner", e.target.value)}
-                          onBlur={() => setEditingCell(null)}
-                          onKeyDown={e => e.key === "Escape" && setEditingCell(null)}
-                          onClick={e => e.stopPropagation()}
-                          className="text-[10px] font-bold uppercase bg-white border border-primary/30 rounded-md px-1 py-0.5 outline-none w-full">
-                          <optgroup label="System Roles">
-                            {members.roles.map(r => <option key={r.id} value={r.name}>{r.name.toUpperCase()}</option>)}
-                          </optgroup>
-                          <optgroup label="Approved Users">
-                            {members.users.map(u => <option key={u.id} value={u.name || u.email}>{u.name?.toUpperCase() || u.email}</option>)}
-                          </optgroup>
-                          <option value="TBD">TBD</option>
-                        </select>
+                        <div className="absolute top-0 left-0 z-[150]" onClick={e => e.stopPropagation()}>
+                          <UserSelect
+                            value={task.owner || "TBD"}
+                            users={members.users}
+                            roles={members.roles}
+                            onChange={(val) => saveField(task.id, "owner", val)}
+                            onClose={() => setEditingCell(null)}
+                          />
+                        </div>
                       ) : (
                         <div className="flex items-center gap-0.5 min-w-0">
                           <span 
                             onClick={e => { e.stopPropagation(); setEditingCell({ taskId: task.id, field: "owner" }); setEditValue(task.owner || ""); }}
-                            className={`text-[9px] font-bold uppercase cursor-pointer transition-all px-2 py-0.5 rounded-full border shadow-sm truncate max-w-full ${getOwnerPillClass(task.owner || "UNASSIGNED")}`}
+                            className={`text-[9px] font-bold tracking-wide cursor-pointer transition-all px-2 py-0.5 rounded-full border shadow-sm truncate max-w-full ${getOwnerPillClass(task.owner || "UNASSIGNED")}`}
                             title={task.owner || "Click to edit"}
                           >
                             {formatOwner(task.owner)}

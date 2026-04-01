@@ -206,7 +206,7 @@ export async function GET() {
       archived: t.archived,
     }));
 
-    const userCountRows = await db.select({ count: count() }).from(usersTable).where(eq(usersTable.status, "approved"));
+    const userCountRows = await db.select({ count: count() }).from(usersTable).where(eq(usersTable.status, "active"));
     const teamSize = Number(userCountRows[0].count) || 1;
     const totalTeamCapacity = teamSize * 8;
 

@@ -25,7 +25,6 @@ RULES:
 OUTPUT JSON SCHEMA ARRAY:
 [
   {
-    "taskCode": "Unique ID from input",
     "subject": "Task Name",
     "startDate": "YYYY-MM-DD",
     "endDate": "YYYY-MM-DD",
