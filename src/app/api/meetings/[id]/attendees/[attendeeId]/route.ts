@@ -25,7 +25,7 @@ export async function PATCH(
     }
 
     // Verify organizer owns this meeting
-    const meetingRows = await db.select().from(tarkieMeetingsTable).where(and(eq(tarkieMeetingsTable.id, params.id), eq(tarkieMeetingsTable.userId, userId))).limit(1);
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(eq(tarkieMeetingsTable.id, params.id)).limit(1);
     if (meetingRows.length === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const body = await req.json();
@@ -69,7 +69,7 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const meetingRows = await db.select().from(tarkieMeetingsTable).where(and(eq(tarkieMeetingsTable.id, params.id), eq(tarkieMeetingsTable.userId, userId))).limit(1);
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(eq(tarkieMeetingsTable.id, params.id)).limit(1);
     if (meetingRows.length === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     await db.delete(meetingAttendeesTable).where(eq(meetingAttendeesTable.id, params.attendeeId));

@@ -23,10 +23,10 @@ export async function GET(
 
     const accountId = params.id;
 
-    // Verify account belongs to this user
+    // Check account exists
     const accountRows = await db.select({ id: clientProfilesTable.id })
       .from(clientProfilesTable)
-      .where(and(eq(clientProfilesTable.id, accountId), eq(clientProfilesTable.userId, userId)))
+      .where(eq(clientProfilesTable.id, accountId))
       .limit(1);
       
     if (accountRows.length === 0) {
@@ -35,10 +35,7 @@ export async function GET(
 
     const projects = await db.select()
       .from(projectsTable)
-      .where(and(
-        eq(projectsTable.clientProfileId, accountId),
-        eq(projectsTable.userId, userId)
-      ))
+      .where(eq(projectsTable.clientProfileId, accountId))
       .orderBy(desc(projectsTable.startDate));
 
     if (projects.length === 0) {

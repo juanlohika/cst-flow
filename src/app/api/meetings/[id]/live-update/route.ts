@@ -45,7 +45,7 @@ export async function POST(
     }
 
     // Verify meeting ownership
-    const meetingRows = await db.select().from(tarkieMeetingsTable).where(and(eq(tarkieMeetingsTable.id, meetingId), eq(tarkieMeetingsTable.userId, userId))).limit(1);
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(eq(tarkieMeetingsTable.id, meetingId)).limit(1);
     if (meetingRows.length === 0) {
       return NextResponse.json({ error: 'Meeting not found' }, { status: 404 });
     }

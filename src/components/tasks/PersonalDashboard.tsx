@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { RefreshCw, LayoutDashboard } from "lucide-react";
 import { useDashboard } from "@/lib/hooks/useDashboard";
 import TodayFocusPanel from "@/components/tasks/dashboard/TodayFocusPanel";
@@ -27,7 +28,8 @@ function PanelCard({ title, children, className = "" }: { title: string; childre
 }
 
 export default function PersonalDashboard() {
-  const { data, loading, error, refresh } = useDashboard();
+  const [viewMode, setViewMode] = useState<'mine'|'all'>('mine');
+  const { data, loading, error, refresh } = useDashboard(viewMode);
 
   const today = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
@@ -38,11 +40,32 @@ export default function PersonalDashboard() {
         <div className="flex items-center gap-2.5">
           <LayoutDashboard size={16} className="text-primary" />
           <div>
-            <h1 className="text-[13px] font-black text-slate-800 uppercase tracking-tight">My Dashboard</h1>
+            <h1 className="text-[13px] font-black text-slate-800 uppercase tracking-tight">
+              {viewMode === 'mine' ? 'My Dashboard' : 'Team Dashboard'}
+            </h1>
             <p className="text-[10px] text-slate-400">{today}</p>
           </div>
         </div>
-        <button
+        <div className="flex items-center gap-4">
+          <div className="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200">
+            <button
+              onClick={() => setViewMode('mine')}
+              className={`px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${
+                viewMode === 'mine' ? 'bg-white shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              My Tasks
+            </button>
+            <button
+              onClick={() => setViewMode('all')}
+              className={`px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${
+                viewMode === 'all' ? 'bg-white shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              Overall Team
+            </button>
+          </div>
+          <button
           onClick={refresh}
           disabled={loading}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-bold text-slate-500 hover:bg-slate-100 uppercase tracking-widest transition-all disabled:opacity-40"
@@ -50,6 +73,7 @@ export default function PersonalDashboard() {
           <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
           Refresh
         </button>
+        </div>
       </div>
 
       {/* Body */}

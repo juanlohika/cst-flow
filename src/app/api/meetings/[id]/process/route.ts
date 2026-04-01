@@ -5,7 +5,7 @@ import {
   meetingTranscripts as meetingTranscriptsTable,
   meetingAttendees as meetingAttendeesTable,
   skills as skillsTable,
-  savedWork as savedWorkTable
+  savedWorks as savedWorkTable
 } from '@/db/schema';
 import { auth } from '@/auth';
 import { eq, and, inArray } from 'drizzle-orm';
@@ -33,7 +33,7 @@ export async function POST(
     const meetingId = params.id;
 
     // Fetch meeting
-    const meetingRows = await db.select().from(tarkieMeetingsTable).where(and(eq(tarkieMeetingsTable.id, meetingId), eq(tarkieMeetingsTable.userId, userId))).limit(1);
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(eq(tarkieMeetingsTable.id, meetingId)).limit(1);
     const meeting = meetingRows[0];
 
     if (!meeting) {

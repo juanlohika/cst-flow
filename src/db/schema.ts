@@ -40,6 +40,9 @@ export const users = sqliteTable("User", {
   // Functional role
   profileRole: text("profileRole"),
 
+  // Organizational Hierarchy (Future-proofing)
+  supervisorId:  text("supervisorId"),
+
   // Invite tracking
   inviteToken: text("inviteToken").unique(),
   invitedBy:   text("invitedBy"),

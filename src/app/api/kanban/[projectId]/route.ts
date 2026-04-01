@@ -53,10 +53,6 @@ export async function POST(req: Request, { params }: { params: { projectId: stri
     const projectRows = await db.select({ createdBy: projectsTable.createdBy }).from(projectsTable).where(eq(projectsTable.id, params.projectId)).limit(1);
     if (projectRows.length === 0) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-    const isCreator = projectRows[0].createdBy === currentUserId;
-    const isAdmin = (session.user as any).role === "admin" || (session.user as any).role === "master";
-    if (!isCreator && !isAdmin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
     const { name = "Kanban Board", lanes = [] } = await req.json();
     const now = new Date().toISOString();
     const boardId = createId();
@@ -112,10 +108,6 @@ export async function PATCH(req: Request, { params }: { params: { projectId: str
     .limit(1);
 
     if (joinRows.length === 0) return NextResponse.json({ error: "Board not found" }, { status: 404 });
-
-    const isCreator = joinRows[0].createdBy === currentUserId;
-    const isAdmin = (session.user as any).role === "admin" || (session.user as any).role === "master";
-    if (!isCreator && !isAdmin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const { name, lanes = [] } = await req.json();
     const boardId = joinRows[0].id;

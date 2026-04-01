@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
  * GET /api/dashboard — aggregated status for the landing page 
  * MIGRATED TO DRIZZLE
  */
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const session = await auth();
     const currentUserId = session?.user?.id;
@@ -119,8 +119,11 @@ export async function GET() {
       ...meetingTasks
     ];
 
-    // 5. Personal view
-    const personalTasks = combinedTasks.filter(t => {
+    const { searchParams } = new URL(req.url);
+    const filter = searchParams.get("filter");
+
+    // 5. Filter view
+    const filteredTasks = filter === 'all' ? combinedTasks : combinedTasks.filter(t => {
       const isOwner = t.owner === currentUserId;
       const isAssigned = (t.assignments || []).some((a: any) => a.userId === currentUserId);
       return isOwner || isAssigned;
@@ -168,19 +171,19 @@ export async function GET() {
     }));
 
     // 7. Compute subsets
-    const todayFocus = personalTasks.filter(t => {
+    const todayFocus = filteredTasks.filter(t => {
       if (!t.plannedStart || !t.plannedEnd) return false;
       const s = new Date(t.plannedStart);
       const e = new Date(t.plannedEnd);
       return s <= todayDate && e >= todayDate && t.status !== "completed";
     });
 
-    const overdue = personalTasks.filter(t => {
+    const overdue = filteredTasks.filter(t => {
       if (!t.plannedEnd || t.status === "completed") return false;
       return new Date(t.plannedEnd) < todayDate;
     });
 
-    const approachingDeadline = personalTasks.filter(t => {
+    const approachingDeadline = filteredTasks.filter(t => {
       if (!t.plannedEnd || t.status === "completed") return false;
       const e = new Date(t.plannedEnd);
       return e >= todayDate && e <= in3Days;

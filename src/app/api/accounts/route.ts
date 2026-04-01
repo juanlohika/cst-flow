@@ -11,13 +11,16 @@ export const dynamic = "force-dynamic";
  * Lightweight account list for dropdowns and selectors
  * MIGRATED TO DRIZZLE
  */
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const session = await auth();
     const userId = session?.user?.id;
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const { searchParams } = new URL(req.url);
+    const filter = searchParams.get('filter');
 
     const accounts = await db.select({
       id: clientProfilesTable.id,
@@ -26,7 +29,7 @@ export async function GET() {
       engagementStatus: clientProfilesTable.engagementStatus
     })
     .from(clientProfilesTable)
-    .where(eq(clientProfilesTable.userId, userId))
+    .where(filter === 'mine' ? eq(clientProfilesTable.userId, userId) : undefined)
     .orderBy(asc(clientProfilesTable.companyName));
 
     return NextResponse.json(accounts);

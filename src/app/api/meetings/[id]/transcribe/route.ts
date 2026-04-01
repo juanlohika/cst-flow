@@ -32,7 +32,7 @@ export async function POST(
     }
 
     // Verify meeting ownership
-    const meetingRows = await db.select().from(tarkieMeetingsTable).where(and(eq(tarkieMeetingsTable.id, meetingId), eq(tarkieMeetingsTable.userId, userId))).limit(1);
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(eq(tarkieMeetingsTable.id, meetingId)).limit(1);
     if (meetingRows.length === 0) return NextResponse.json({ error: 'Meeting not found' }, { status: 404 });
 
     // Append the new chunk to whatever transcript already exists
@@ -93,7 +93,7 @@ export async function GET(
     const meetingId = params.id;
 
     // Verify ownership
-    const meetingRows = await db.select().from(tarkieMeetingsTable).where(and(eq(tarkieMeetingsTable.id, meetingId), eq(tarkieMeetingsTable.userId, userId))).limit(1);
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(eq(tarkieMeetingsTable.id, meetingId)).limit(1);
     if (meetingRows.length === 0) return NextResponse.json({ error: 'Meeting not found' }, { status: 404 });
 
     const transcriptRows = await db.select().from(meetingTranscriptsTable).where(eq(meetingTranscriptsTable.meetingId, meetingId)).limit(1);

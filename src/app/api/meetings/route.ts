@@ -25,9 +25,11 @@ export async function GET(req: Request) {
     }
 
     const { searchParams } = new URL(req.url);
+    const filter = searchParams.get("filter");
     const status = searchParams.get("status");
 
-    const conditions = [eq(tarkieMeetingsTable.userId, userId)];
+    const conditions: any[] = [];
+    if (filter === 'mine') conditions.push(eq(tarkieMeetingsTable.userId, userId));
     if (status) conditions.push(eq(tarkieMeetingsTable.status, status));
 
     const meetings = await db.select()

@@ -29,7 +29,7 @@ export async function GET(
     // Fetch meeting
     const meetingsRes = await db.select()
       .from(tarkieMeetingsTable)
-      .where(and(eq(tarkieMeetingsTable.id, meetingId), eq(tarkieMeetingsTable.userId, userId)))
+      .where(eq(tarkieMeetingsTable.id, meetingId))
       .limit(1);
     
     if (meetingsRes.length === 0) {
@@ -97,7 +97,7 @@ export async function PATCH(
 
     const result = await db.update(tarkieMeetingsTable)
       .set(updateData)
-      .where(and(eq(tarkieMeetingsTable.id, meetingId), eq(tarkieMeetingsTable.userId, userId)));
+      .where(eq(tarkieMeetingsTable.id, meetingId));
 
     return NextResponse.json({ success: true });
   } catch (error) {

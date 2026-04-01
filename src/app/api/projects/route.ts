@@ -81,13 +81,16 @@ export async function POST(req: Request) {
  * GET /api/projects
  * MIGRATED TO DRIZZLE
  */
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const session = await auth();
     const userId = session?.user?.id;
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const { searchParams } = new URL(req.url);
+    const filter = searchParams.get('filter');
 
     // Drizzle select with left join
     const projects = await db.select({
@@ -105,7 +108,7 @@ export async function GET() {
     })
     .from(projectsTable)
     .leftJoin(timelineTemplatesTable, eq(projectsTable.templateId, timelineTemplatesTable.id))
-    .where(eq(projectsTable.userId, userId))
+    .where(filter === 'mine' ? eq(projectsTable.userId, userId) : undefined)
     .orderBy(desc(projectsTable.updatedAt));
 
     return NextResponse.json(projects);

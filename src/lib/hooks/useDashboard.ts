@@ -28,7 +28,7 @@ export interface DashboardData {
   recentActivity: any[];
 }
 
-export function useDashboard() {
+export function useDashboard(filterType: 'mine' | 'all' = 'mine') {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +37,7 @@ export function useDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/dashboard");
+      const res = await fetch(`/api/dashboard?filter=${filterType}`);
       if (!res.ok) throw new Error("Failed to load dashboard");
       const json = await res.json();
       setData(json);
@@ -46,7 +46,7 @@ export function useDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filterType]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

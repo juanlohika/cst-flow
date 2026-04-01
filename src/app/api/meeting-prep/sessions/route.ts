@@ -25,7 +25,9 @@ export async function GET(req: Request) {
     const meetingPrepSessionId = url.searchParams.get("meetingPrepSessionId");
 
     // Build dynamic WHERE clause with Drizzle
-    const conditions: SQL[] = [eq(meetingPrepSessionsTable.userId, userId)];
+    const filter = url.searchParams.get("filter");
+    const conditions: SQL[] = [];
+    if (filter === 'mine') conditions.push(eq(meetingPrepSessionsTable.userId, userId));
 
     if (status) {
       conditions.push(eq(meetingPrepSessionsTable.status, status));
