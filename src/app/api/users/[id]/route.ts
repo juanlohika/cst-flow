@@ -44,6 +44,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       if (body.canAccessMeetings !== undefined) updateData.canAccessMeetings = !!body.canAccessMeetings;
       if (body.canAccessAccounts !== undefined) updateData.canAccessAccounts = !!body.canAccessAccounts;
       if (body.canAccessSolutions !== undefined) updateData.canAccessSolutions = !!body.canAccessSolutions;
+      if (body.supervisorId !== undefined) updateData.supervisorId = body.supervisorId || null;
     }
 
     if (Object.keys(updateData).length === 0) return NextResponse.json({ error: "No fields to update" }, { status: 400 });

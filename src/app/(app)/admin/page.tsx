@@ -37,7 +37,7 @@ interface Skill {
 // Category labels are derived dynamically from the App Builder — see categoryLabels() below
 
 export default function AdminSettings() {
-  const [activeTab, setActiveTab] = useState<"company" | "auth" | "apps" | "templates" | "users" | "skills" | "roles">("company");
+  const [activeTab, setActiveTab] = useState<"company" | "auth" | "apps" | "templates" | "users" | "skills" | "roles" | "org-chart">("company");
 
   // App Builder state
   const [appList, setAppList] = useState<any[]>([]);
@@ -207,7 +207,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
     if (activeTab === "skills") loadSkills();
     if (activeTab === "roles") loadRoles();
     if (activeTab === "apps") loadApps();
-    if (activeTab === "users") {
+    if (activeTab === "users" || activeTab === "org-chart") {
       fetch("/api/users/ensure-admin", { method: "POST" }).catch(() => {});
       loadUsers();
       loadRoles();
@@ -398,6 +398,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
           canAccessMeetings: editingUser.canAccessMeetings,
           canAccessAccounts: editingUser.canAccessAccounts,
           canAccessSolutions: editingUser.canAccessSolutions,
+          supervisorId: editingUser.supervisorId || null,
         }),
       });
       if (res.ok) {
@@ -797,6 +798,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
         {([
           { id: "company",   label: "Company",      Icon: Building2 },
           { id: "users",     label: "Users",        Icon: Users    },
+          { id: "org-chart", label: "Org Chart",    Icon: LayoutTemplate },
           { id: "roles",     label: "Roles",        Icon: Shield   },
           { id: "auth",      label: "Credentials",  Icon: Key      },
           { id: "apps",      label: "App Builder",  Icon: Sparkles },
@@ -1892,6 +1894,85 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
             )}
 
             {/* ─── Roles Tab ──────────────────────────────────────────── */}
+            {activeTab === "org-chart" && (
+              <div className="flex-1 overflow-auto p-4 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                <div className="flex items-center justify-between border-b pb-4">
+                  <div>
+                    <h3 className="font-bold text-xl flex items-center gap-2">
+                       🌳 Organizational Chart
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Visual representation of the team reporting structure. Supervisors can see all data related to their subordinates.
+                    </p>
+                  </div>
+                  <button type="button" onClick={loadUsers} className="p-2 hover:bg-slate-100 rounded-lg text-slate-400" title="Refresh Chart">
+                    <RefreshCw className={`w-4 h-4 ${usersLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+
+                {usersLoading ? (
+                  <div className="flex items-center justify-center py-20">
+                    <Loader2 className="animate-spin text-primary" />
+                  </div>
+                ) : (
+                  <div className="max-w-4xl mx-auto py-8">
+                    {(() => {
+                      const buildTree = (supervisorId: string | null = null, level = 0): React.ReactNode[] => {
+                        const subordinates = userList.filter(u => (u.supervisorId || null) === supervisorId);
+                        
+                        return subordinates.map(user => (
+                          <div key={user.id} className="relative">
+                            {/* Connector Line */}
+                            {level > 0 && (
+                              <div className="absolute left-[-20px] top-[24px] w-[20px] h-[1px] bg-slate-200" />
+                            )}
+                            
+                            <div className="flex items-center gap-3 p-3 mb-3 bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md transition-all group max-w-md">
+                              <div className="shrink-0">
+                                {user.image ? (
+                                  <img src={user.image} alt="" className="w-10 h-10 rounded-full border border-slate-100" />
+                                ) : (
+                                  <div className="w-10 h-10 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 font-bold text-sm">
+                                    {(user.name || user.email || "?")[0].toUpperCase()}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-bold text-slate-800 text-sm truncate">{user.name || "Unnamed User"}</p>
+                                <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{user.profileRole || "Team Member"}</p>
+                                <p className="text-[10px] text-slate-400 truncate">{user.email}</p>
+                              </div>
+                              <button type="button" onClick={() => { setEditingUser({...user}); setActiveTab("users"); }} className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-slate-100 rounded-md text-slate-400 transition-all">
+                                <Pencil size={12} />
+                              </button>
+                            </div>
+
+                            {/* Children container */}
+                            <div className="ml-10 border-l border-slate-200">
+                              {buildTree(user.id, level + 1)}
+                            </div>
+                          </div>
+                        ));
+                      };
+
+                      const roots = buildTree(null);
+                      return roots.length > 0 ? (
+                        <div className="space-y-6">
+                           {roots}
+                        </div>
+                      ) : (
+                        <div className="text-center py-20 text-slate-400">
+                          <Users className="w-12 h-12 mx-auto opacity-20 mb-4" />
+                          <p>No reporting structure defined yet.</p>
+                          <p className="text-xs mt-2">Go to the Users tab to assign supervisors.</p>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
+ 
             {activeTab === "roles" && (
               <div className="space-y-4 flex-1 animate-in fade-in zoom-in-95 duration-200">
                 <div className="flex items-center justify-between border-b pb-4">
