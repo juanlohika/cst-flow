@@ -33,6 +33,7 @@ async function main() {
     })
     .where(
       or(
+        eq(users.email, "lester.alarcon@mobileoptima.com"),
         eq(users.email, "tarkielester@mobileoptima.com"),
         eq(users.email, "tarkielester@gmail.com"),
         eq(users.email, "lestersalesalarcon@gmail.com"),

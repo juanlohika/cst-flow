@@ -129,12 +129,24 @@ export default function LeftNav() {
                   <Zap size={14} /> <span>Tasks</span>
                 </Link>
               </div>
+
+              {session?.user?.role === "admin" && (
+                <div className="mt-4 border-t pt-4">
+                  <div className="px-3 mb-2 text-[10px] font-black uppercase text-slate-400 tracking-widest">Administration</div>
+                  <Link href="/admin" className={`left-nav-item ${isActive("/admin") ? "active" : ""}`}>
+                    <LayoutDashboard size={14} /> <span>Admin Console</span>
+                  </Link>
+                </div>
+              )}
             </>
           ) : (
             <div className="flex flex-col items-center gap-2">
               <Link href="/" className={`p-2 rounded-md ${isActive("/") ? "bg-primary/5 text-primary" : "text-slate-400 hover:bg-slate-50"}`} title="Explore"><Compass size={18}/></Link>
               <Link href="/accounts" className={`p-2 rounded-md ${isActive("/accounts") ? "bg-primary/5 text-primary" : "text-slate-400 hover:bg-slate-50"}`} title="Accounts"><Building2 size={18}/></Link>
               <Link href="/tasks" className={`p-2 rounded-md ${isTasksActive ? "bg-primary/5 text-primary" : "text-slate-400 hover:bg-slate-50"}`} title="Tasks"><Zap size={18}/></Link>
+              {session?.user?.role === "admin" && (
+                <Link href="/admin" className={`p-2 rounded-md ${isActive("/admin") ? "bg-primary/5 text-primary" : "text-slate-400 hover:bg-slate-50"}`} title="Admin Console"><LayoutDashboard size={18}/></Link>
+              )}
             </div>
           )}
         </div>
