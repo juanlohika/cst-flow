@@ -37,7 +37,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const user = rows[0];
     // If user is already active/approved, we don't need to re-invite (though they might want to reset)
     // For this flow, we follow the original logic: only re-invite if status is 'pending' or similar
-    if (user.status === "approved") {
+    if (user.status === "active") {
       return NextResponse.json({ error: "User is already active" }, { status: 400 });
     }
 

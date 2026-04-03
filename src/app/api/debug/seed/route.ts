@@ -12,21 +12,17 @@ export async function GET() {
     console.log("Web Seeding: Creating mock admin...");
     
     const adminEmail = "admin@cst.com";
-    const data = {
-      id: "mock-admin-id",
-      name: "CST Admin (Mock)",
-      email: adminEmail,
+    await db.insert(usersTable).values({
+      id: 'usr_admin123',
+      email: 'admin@cst.com',
+      name: 'System Administrator',
       role: 'admin',
-      status: 'approved',
+      status: 'active',
       isSuperAdmin: true
-    };
-
-    await db.insert(usersTable)
-      .values(data)
-      .onConflictDoUpdate({
-        target: usersTable.email,
-        set: { role: 'admin', status: 'approved' }
-      });
+    }).onConflictDoUpdate({
+      target: [usersTable.email],
+      set: { role: 'admin', status: 'active' }
+    });
 
     const rows = await db.select().from(usersTable).where(eq(usersTable.email, adminEmail)).limit(1);
 

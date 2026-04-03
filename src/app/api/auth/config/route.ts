@@ -125,7 +125,7 @@ export async function GET() {
           email: admin.email,
           name: admin.name,
           role: 'admin',
-          status: 'approved',
+          status: 'active',
           isSuperAdmin: true,
           canAccessArchitect: true,
           canAccessBRD: true,

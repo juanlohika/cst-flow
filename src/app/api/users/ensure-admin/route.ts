@@ -27,9 +27,9 @@ export async function POST() {
 
     if (existing.length > 0) {
       const u = existing[0];
-      if (u.role !== "admin" || u.status !== "approved") {
+      if (u.role !== "admin" || u.status !== "active") {
         await db.update(usersTable)
-          .set({ role: 'admin', status: 'approved', isSuperAdmin: true })
+          .set({ role: 'admin', status: 'active', isSuperAdmin: true })
           .where(eq(usersTable.email, ADMIN_EMAIL));
       }
       return NextResponse.json({ created: false, message: "Admin account already exists" });
@@ -41,7 +41,7 @@ export async function POST() {
       name: ADMIN_NAME,
       email: ADMIN_EMAIL,
       role: 'admin',
-      status: 'approved',
+      status: 'active',
       isSuperAdmin: true,
       canAccessArchitect: true,
       canAccessBRD: true,

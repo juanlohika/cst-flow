@@ -416,7 +416,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
   };
 
   const approveUser = async (userId: string) => {
-    await updateUserField(userId, "status", "approved");
+    await updateUserField(userId, "status", "active");
   };
 
   const MODULE_FLAGS = [

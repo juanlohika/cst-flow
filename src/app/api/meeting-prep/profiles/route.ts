@@ -103,7 +103,7 @@ export async function POST(req: Request) {
           name: session.user.name || "CST User",
           email: session.user.email || `unknown_${Date.now()}@cst.com`,
           role: (session.user as any).role || "user",
-          status: "approved",
+          status: "active",
         });
       }
     } catch (e) {
