@@ -1,60 +1,44 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { usePathname } from "next/navigation";
 import {
   ChevronLeft, ChevronRight, ChevronDown,
-  Compass, Zap, Building2, Sparkles, FolderOpen, LayoutDashboard,
-  Network
+  Compass, Zap, Building2, Sparkles, LayoutDashboard
 } from "lucide-react";
 
 const ICON_MAP: Record<string, React.ReactNode> = {
   Sparkles: <Sparkles size={14} />,
 };
 
-export default function LeftNav() {
-  const [isCollapsed, setIsCollapsed] = useState(false);
-  const [aiAppsOpen, setAiAppsOpen] = useState(false);
-  const [aiApps, setAiApps] = useState<any[]>([]);
-  const [mounted, setMounted] = useState(false);
+interface LeftNavProps {
+  initialApps: any[];
+  user: any;
+}
 
+export default function LeftNav({ initialApps, user }: LeftNavProps) {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const { data: session } = useSession();
-
-  const isAiAppActive = aiApps.some(a => pathname?.startsWith(a.href));
-  const isTasksActive = pathname?.startsWith("/tasks") ?? false;
+  
+  // High-Fidelity Initial State: Auto-expand based on current URL immediately
+  const isInsideAiApp = initialApps.some(a => pathname?.startsWith(a.href));
+  
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [aiAppsOpen, setAiAppsOpen] = useState(isInsideAiApp);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
+  // Sync open state when navigating directly (e.g. via browser back button or script)
   useEffect(() => {
-    fetch("/api/apps")
-      .then(r => r.ok ? r.json() : [])
-      .then(data => {
-        if (Array.isArray(data)) {
-          const apps = data.filter((a: any) => a.isActive && !["meeting-prep", "tasks"].includes(a.slug));
-          setAiApps(apps);
-          
-          // AUTO-EXPAND: If current path is an AI App, open the menu immediately
-          if (pathname && apps.some((a: any) => pathname.startsWith(a.href))) {
-            setAiAppsOpen(true);
-          }
-        }
-      });
-  }, []);
-
-  // Sync open state with navigation
-  useEffect(() => {
-    if (pathname && aiApps.some(a => pathname.startsWith(a.href))) {
+    if (isInsideAiApp) {
       setAiAppsOpen(true);
     }
-  }, [pathname, aiApps]);
+  }, [pathname, isInsideAiApp]);
 
-  if (!session) return null;
+  if (!user) return null;
 
   const isActive = (href: string) => {
     if (!mounted) return false;
@@ -63,11 +47,12 @@ export default function LeftNav() {
     return false;
   };
 
+  const isTasksActive = pathname?.startsWith("/tasks") ?? false;
   const sidebarWidth = isCollapsed ? 64 : 240;
 
   return (
     <aside
-      className={`left-nav transition-all duration-300 ease-in-out flex-shrink-0 flex flex-col`}
+      className="left-nav transition-all duration-300 ease-in-out flex-shrink-0 flex flex-col bg-white border-r border-slate-200"
       style={{ width: sidebarWidth }}
     >
       {/* Header */}
@@ -101,13 +86,17 @@ export default function LeftNav() {
             </Link>
 
             <div className="mt-1">
-              <button onClick={() => setAiAppsOpen(!aiAppsOpen)} className={`left-nav-item w-full ${isAiAppActive ? "active" : ""}`}>
+              <button 
+                onClick={() => setAiAppsOpen(!aiAppsOpen)} 
+                className={`left-nav-item w-full ${isInsideAiApp ? "active" : ""}`}
+              >
                 <Sparkles size={14} /> <span className="flex-1 text-left">AI Intelligence</span>
                 <ChevronDown size={12} className={`transition-transform duration-200 ${aiAppsOpen ? "rotate-180" : ""}`} />
               </button>
+              
               {aiAppsOpen && !isCollapsed && (
                 <div className="ml-4 mt-0.5 space-y-0.5 border-l border-slate-100 pl-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                  {aiApps.map(app => {
+                  {initialApps.map(app => {
                     const active = isActive(app.href);
                     return (
                       <Link 
@@ -131,7 +120,7 @@ export default function LeftNav() {
               </Link>
             </div>
 
-            {session?.user?.role === "admin" && (
+            {user.role === "admin" && (
               <div className="mt-4 border-t pt-4">
                 <div className="px-3 mb-2 text-[10px] font-black uppercase text-slate-400 tracking-widest opacity-60">Administration</div>
                 <Link href="/admin" className={`left-nav-item ${isActive("/admin") ? "active" : ""}`}>
@@ -146,15 +135,19 @@ export default function LeftNav() {
             <Link href="/accounts" className={`p-2.5 rounded-xl transition-all ${isActive("/accounts") ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"}`} title="Accounts"><Building2 size={20}/></Link>
             
             <div className="relative group/mini">
-              <button onClick={() => { setIsCollapsed(false); setAiAppsOpen(true); }} className={`p-2.5 rounded-xl transition-all ${isAiAppActive ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"}`} title="AI Intelligence">
+              <button 
+                onClick={() => { setIsCollapsed(false); setAiAppsOpen(true); }} 
+                className={`p-2.5 rounded-xl transition-all ${isInsideAiApp ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"}`} 
+                title="AI Intelligence"
+              >
                 <Sparkles size={20}/>
               </button>
             </div>
 
             <Link href="/tasks" className={`p-2.5 rounded-xl transition-all ${isTasksActive ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"}`} title="Tasks"><Zap size={20}/></Link>
             
-            {session?.user?.role === "admin" && (
-              <div className="mt-4 pt-4 border-t border-slate-50 flex flex-col items-center gap-2">
+            {user.role === "admin" && (
+              <div className="mt-4 pt-4 border-t border-slate-200 flex flex-col items-center gap-2">
                 <Link href="/admin" className={`p-2.5 rounded-xl transition-all ${isActive("/admin") ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"}`} title="Admin Console"><LayoutDashboard size={20}/></Link>
               </div>
             )}

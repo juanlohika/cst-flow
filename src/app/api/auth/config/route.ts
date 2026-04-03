@@ -52,7 +52,7 @@ export async function GET() {
 
     // 2. INCREMENTAL REPAIR: Add missing columns without data loss
     const repairs = [
-      { table: "User", column: "status", type: "TEXT DEFAULT 'approved'" },
+      { table: "User", column: "status", type: "TEXT DEFAULT 'active'" },
       { table: "User", column: "isSuperAdmin", type: "INTEGER DEFAULT 0" },
       { table: "User", column: "supervisorId", type: "TEXT" },
       { table: "App", column: "provider", type: "TEXT" },
@@ -137,7 +137,7 @@ export async function GET() {
         })
         .onConflictDoUpdate({
           target: usersTable.email,
-          set: { role: 'admin', status: 'approved', isSuperAdmin: true }
+          set: { role: 'admin', status: 'active', isSuperAdmin: true }
         });
     }
     migrations.push("Admin accounts bootstrapped.");
