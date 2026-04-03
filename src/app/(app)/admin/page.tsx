@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Key, LayoutTemplate, Users, Calendar, Plus, Trash2, GripVertical, Save, Loader2, ChevronDown, ChevronRight, BookOpen, Pencil, X, RefreshCw, ToggleLeft, ToggleRight, Shield, Sparkles, ExternalLink, Tag, Download, Upload, Building2, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Key, LayoutTemplate, Users, Calendar, Plus, Trash2, GripVertical, Save, Loader2, ChevronDown, ChevronRight, BookOpen, Pencil, X, RefreshCw, ToggleLeft, ToggleRight, Shield, Sparkles, ExternalLink, Tag, Download, Upload, Building2, AlertCircle, CheckCircle2, Network } from "lucide-react";
 import * as XLSX from "xlsx";
 
 interface TemplateTask {
@@ -798,7 +798,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
         {([
           { id: "company",   label: "Company",      Icon: Building2 },
           { id: "users",     label: "Users",        Icon: Users    },
-          { id: "org-chart", label: "Org Chart",    Icon: LayoutTemplate },
+          { id: "org-chart", label: "Org Chart",    Icon: Network  },
           { id: "roles",     label: "Roles",        Icon: Shield   },
           { id: "auth",      label: "Credentials",  Icon: Key      },
           { id: "apps",      label: "App Builder",  Icon: Sparkles },
@@ -1719,6 +1719,17 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                                     <option value="blocked">Blocked</option>
                                   </select>
                                 </div>
+                                <div className="col-span-2">
+                                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#717680', marginBottom: 4 }}>Supervisor</div>
+                                  <select style={{ width: '100%', height: 32, border: '1px solid #E9EAEB', borderRadius: 6, padding: '0 8px', fontSize: 12, outline: 'none', background: '#fff', boxSizing: 'border-box' }}
+                                    value={editingUser.supervisorId || ''}
+                                    onChange={e => setEditingUser((eu: any) => ({ ...eu, supervisorId: e.target.value || null }))}>
+                                    <option value="">— No Supervisor (Root) —</option>
+                                    {userList.filter(u_item => u_item.id !== editingUser.id).map(u_item => (
+                                      <option key={u_item.id} value={u_item.id}>{u_item.name || u_item.email}</option>
+                                    ))}
+                                  </select>
+                                </div>
                               </div>
                               {/* Module toggles */}
                               <div style={{ marginBottom: 12 }}>
@@ -1899,7 +1910,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                 <div className="flex items-center justify-between border-b pb-4">
                   <div>
                     <h3 className="font-bold text-xl flex items-center gap-2">
-                       🌳 Organizational Chart
+                       <Network className="w-5 h-5 text-primary" /> Organizational Chart
                     </h3>
                     <p className="text-xs text-slate-500 mt-1">
                       Visual representation of the team reporting structure. Supervisors can see all data related to their subordinates.
