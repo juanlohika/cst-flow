@@ -64,8 +64,8 @@
   --spacing-bar-px: 16px;
   --spacing-bar-icon-gap: 8px;
   
-  --spacing-nav-w: 255px;
-  --spacing-nav-w-collapsed: 72px;
+  --spacing-nav-w: 240px;
+  --spacing-nav-w-collapsed: 64px;
   --spacing-nav-item-py: 6px;
   --spacing-nav-item-px: 8px;
   --spacing-nav-item-gap: 2px;
@@ -196,18 +196,15 @@ a:hover {
 
 /* ===== LEFT NAVIGATION (High-Fidelity) ===== */
 .left-nav {
-  position: fixed;
-  left: 0;
-  top: 0;
-  bottom: 0;
+  position: relative; /* REFINED: Part of flex-shell flow, not fixed layer */
   width: var(--spacing-nav-w);
   border-right: 1px solid var(--color-border-default);
   background-color: var(--color-surface-default);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  z-index: 9999; /* Ensure it is always on top */
-  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 10;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ===== INTERACTIVE BRD (Collaborative Review) ===== */

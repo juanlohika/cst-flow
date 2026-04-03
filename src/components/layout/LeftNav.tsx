@@ -67,7 +67,7 @@ export default function LeftNav() {
 
   return (
     <aside
-      className={`left-nav relative h-screen bg-white border-r transition-all duration-300 ease-in-out flex-shrink-0 flex flex-col z-50`}
+      className={`left-nav transition-all duration-300 ease-in-out flex-shrink-0 flex flex-col`}
       style={{ width: sidebarWidth }}
     >
       {/* Header */}
