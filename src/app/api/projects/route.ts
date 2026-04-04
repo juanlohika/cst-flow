@@ -96,60 +96,66 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const filter = searchParams.get('filter');
-    const isAdmin = (userRole?.toLowerCase() === "admin");
-
-    console.log(`[api/projects] Fetching... UserID: ${userId} | Role: ${userRole} | IsAdmin: ${isAdmin} | Filter: ${filter}`);
-
     // EXPLICIT LOGIC: Admins see all. Owners see their own. Assigned users see assigned.
-    let baseQuery = db.select({
-      id: projectsTable.id,
-      name: projectsTable.name,
-      companyName: projectsTable.companyName,
-      clientProfileId: projectsTable.clientProfileId,
-      startDate: projectsTable.startDate,
-      status: projectsTable.status,
-      templateId: projectsTable.templateId,
-      assignedIds: projectsTable.assignedIds,
-      createdAt: projectsTable.createdAt,
-      updatedAt: projectsTable.updatedAt,
-      templateType: timelineTemplatesTable.type,
-      templateName: timelineTemplatesTable.name
-    })
-    .from(projectsTable)
-    .leftJoin(
-        timelineTemplatesTable, 
-        eq(projectsTable.templateId, timelineTemplatesTable.id)
-    );
+    const isAdmin = (userRole?.toLowerCase() === "admin");
+    const version = "v3-safemode";
 
-    let data: any[];
+    console.log(`[api/projects] Fetching (Version: ${version}). UserID: ${userId} | Role: ${userRole} | IsAdmin: ${isAdmin}`);
+
+    let data: any[] = [];
     
-    // BUILD THE FILTERED QUERY
-    if (filter === 'mine') {
-       data = await baseQuery
-         .where(eq(projectsTable.userId, userId))
-         .orderBy(desc(projectsTable.updatedAt));
-    } else if (isAdmin) {
-       // ADMINS: Bypass WHERE entirely
-       data = await baseQuery
-         .orderBy(desc(projectsTable.updatedAt));
-    } else {
-       // STANDARD USERS: Shared/Assigned Visibility
-       data = await baseQuery
-         .where(or(
-           eq(projectsTable.userId, userId),
-           like(projectsTable.assignedIds, `%${userId}%`)
-         ))
-         .orderBy(desc(projectsTable.updatedAt));
+    try {
+        // 1. PRIMARY ATTEMPT: Rich data with Template Joins
+        let baseQuery = db.select({
+            id: projectsTable.id,
+            name: projectsTable.name,
+            companyName: projectsTable.companyName,
+            clientProfileId: projectsTable.clientProfileId,
+            startDate: projectsTable.startDate,
+            status: projectsTable.status,
+            templateId: projectsTable.templateId,
+            assignedIds: projectsTable.assignedIds,
+            createdAt: projectsTable.createdAt,
+            updatedAt: projectsTable.updatedAt,
+            templateType: timelineTemplatesTable.type,
+            templateName: timelineTemplatesTable.name
+        })
+        .from(projectsTable)
+        .leftJoin(
+            timelineTemplatesTable, 
+            eq(projectsTable.templateId, timelineTemplatesTable.id)
+        );
+
+        if (filter === 'mine') {
+            data = await baseQuery.where(eq(projectsTable.userId, userId)).orderBy(desc(projectsTable.updatedAt));
+        } else if (isAdmin) {
+            data = await baseQuery.orderBy(desc(projectsTable.updatedAt));
+        } else {
+            data = await baseQuery.where(or(eq(projectsTable.userId, userId), like(projectsTable.assignedIds, `%${userId}%`))).orderBy(desc(projectsTable.updatedAt));
+        }
+    } catch (dbError: any) {
+        console.warn("[api/projects] JOIN ERROR - Falling back to simple query:", dbError.message);
+        
+        // 2. FALLBACK ATTEMPT: Simple projects list (NO JOINS) - Guaranteed to work if DB is up
+        let simpleQuery = db.select().from(projectsTable);
+        
+        if (filter === 'mine') {
+            data = await simpleQuery.where(eq(projectsTable.userId, userId)).orderBy(desc(projectsTable.updatedAt));
+        } else if (isAdmin) {
+            data = await simpleQuery.orderBy(desc(projectsTable.updatedAt));
+        } else {
+            data = await simpleQuery.where(or(eq(projectsTable.userId, userId), like(projectsTable.assignedIds, `%${userId}%`))).orderBy(desc(projectsTable.updatedAt));
+        }
     }
 
-    return NextResponse.json(data);
+    return NextResponse.json({ projects: data, _v: version, isAdmin });
   } catch (error: any) {
     console.error("[api/projects] CRITICAL ERROR:", error);
-    // Explicitly return the error message in the detail field so the user can see it in their network tab
     return NextResponse.json({ 
         error: "Failed to fetch projects",
         detail: error.message || "Internal Database Error",
-        userRole: session?.user?.role || "unknown"
+        userRole: session?.user?.role || "unknown",
+        _v: "v3-safemode"
     }, { status: 500 });
   }
 }

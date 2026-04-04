@@ -7,13 +7,14 @@ import {
   FileText, CheckSquare, CheckCircle2, Search,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   UserPlus, Trash2, Clock, RefreshCw, Sparkles,
-  X, User
+  X, User, Info, Layout, CheckCircle, LayoutGrid
 } from "lucide-react";
 import QRCode from "qrcode";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import { useToast } from "@/components/ui/ToastContext";
 import { formatRef } from "@/lib/utils/format";
+import { ClientOnly } from "@/components/ui/ClientOnly";
 import ForceLink from "@/components/ui/ForceLink";
 import StitchTimePicker from "@/components/ui/StitchTimePicker";
 
@@ -305,10 +306,16 @@ function MeetingHubContent() {
                             </div>
                           </td>
                           <td className="px-3 py-3">
-                            <div className="flex flex-col">
-                              <span className="text-[12px] font-medium text-text-primary">{scheduledDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
-                              <span className="text-[11px] text-text-secondary">{scheduledDate.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}</span>
-                            </div>
+                            <ClientOnly 
+                              fallback={
+                                <div className="flex flex-col gap-1 w-24 h-8 bg-surface-subtle animate-pulse rounded no-print"></div>
+                              }
+                            >
+                              <div className="flex flex-col">
+                                <span className="text-[12px] font-medium text-text-primary">{scheduledDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                                <span className="text-[11px] text-text-secondary">{scheduledDate.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}</span>
+                              </div>
+                            </ClientOnly>
                           </td>
                           <td className="px-3 py-3 text-text-muted">
                             <div className="flex items-center gap-1.5">
