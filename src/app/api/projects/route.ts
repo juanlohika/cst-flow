@@ -18,7 +18,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { name, startDate, templateId, clientProfileId, events } = await req.json();
+    const { name, startDate, templateId, clientProfileId, events, assignedIds } = await req.json();
 
     if (!name || !events || !Array.isArray(events)) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -38,6 +38,7 @@ export async function POST(req: Request) {
         clientProfileId: clientProfileId || null,
         startDate: new Date(startDate).toISOString(),
         templateId: templateId || null,
+        assignedIds: assignedIds ? (Array.isArray(assignedIds) ? assignedIds.join(",") : assignedIds) : null,
         status: "active",
         createdAt: nowStr,
         updatedAt: nowStr,
@@ -89,8 +90,24 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const userRole = session?.user?.role;
     const { searchParams } = new URL(req.url);
     const filter = searchParams.get('filter');
+
+    const { or, like, eq: eqOp } = await import("drizzle-orm");
+
+    // Visibility Logic
+    // Admins see all. Owners see their own. Assigned users see assigned.
+    let whereClause = undefined;
+    if (userRole !== "admin") {
+      whereClause = or(
+        eqOp(projectsTable.userId, userId),
+        like(projectsTable.assignedIds, `%${userId}%`)
+      );
+    }
+    if (filter === 'mine') {
+       whereClause = eqOp(projectsTable.userId, userId);
+    }
 
     // Drizzle select with left join
     const projects = await db.select({
@@ -101,6 +118,7 @@ export async function GET(req: Request) {
       startDate: projectsTable.startDate,
       status: projectsTable.status,
       templateId: projectsTable.templateId,
+      assignedIds: projectsTable.assignedIds,
       createdAt: projectsTable.createdAt,
       updatedAt: projectsTable.updatedAt,
       templateType: timelineTemplatesTable.type,
@@ -108,7 +126,7 @@ export async function GET(req: Request) {
     })
     .from(projectsTable)
     .leftJoin(timelineTemplatesTable, eq(projectsTable.templateId, timelineTemplatesTable.id))
-    .where(filter === 'mine' ? eq(projectsTable.userId, userId) : undefined)
+    .where(whereClause)
     .orderBy(desc(projectsTable.updatedAt));
 
     return NextResponse.json(projects);

@@ -21,12 +21,12 @@ async function getGlobalSettings() {
     });
     
     return {
-      appName: config.app_name || "CST FlowDesk",
+      appName: config.app_name || "CST OS",
       logoUrl: config.bottom_logo_url || ""
     };
   } catch (error) {
     console.error("error fetching global settings for email:", error);
-    return { appName: "CST FlowDesk", logoUrl: "" };
+    return { appName: "CST OS", logoUrl: "" };
   }
 }
 

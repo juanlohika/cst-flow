@@ -11,7 +11,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const { globalSettings } = await import("@/db/schema");
   const { eq } = await import("drizzle-orm");
   
-  let appName = "Tarkie CST FlowDesk";
+  let appName = "CST OS";
   try {
     const rows = await db.select({ value: globalSettings.value })
       .from(globalSettings)

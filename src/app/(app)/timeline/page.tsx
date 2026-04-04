@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSession } from "next-auth/react";
-import { Loader2, Calendar, FileText, Download, Save, Clock, HelpCircle, Image as ImageIcon, Zap, LayoutList } from "lucide-react";
+import { Loader2, Calendar, FileText, Download, Save, Clock, HelpCircle, Image as ImageIcon, Zap, LayoutList, Users } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import GlobalBar from "@/components/layout/GlobalBar";
 import mermaid from "mermaid";
@@ -73,6 +73,8 @@ function TimelineApp() {
   const isAccountMaintenance = selectedTemplate?.type === "account-maintenance";
   const [savingToDb, setSavingToDb] = useState(false);
   const [isLaunched, setIsLaunched] = useState(false);
+  const [members, setMembers] = useState<any[]>([]);
+  const [assignedIds, setAssignedIds] = useState<string[]>([]);
   const mermaidRef = useRef<HTMLDivElement>(null);
   const interactiveGanttRef = useRef<HTMLDivElement>(null);
 
@@ -120,6 +122,10 @@ function TimelineApp() {
       .then(data => {
         if (Array.isArray(data)) setTemplates(data);
       })
+      .catch(console.error);
+    fetch("/api/users/members")
+      .then(res => res.json())
+      .then(data => { if (data.users) setMembers(data.users); })
       .catch(console.error);
 
     // Deep-linking: Load project from URL if present
@@ -282,7 +288,8 @@ function TimelineApp() {
           templateId: selectedTemplateId,
           clientProfileId: selectedAccountId || null,
           startDate: startDate,
-          events: events
+          events: events,
+          assignedIds: assignedIds
         }),
       });
       const data = await res.json();
@@ -446,6 +453,35 @@ function TimelineApp() {
                 onChange={e => setCustomInstructions(e.target.value)}
                 className="w-full text-xs border rounded-lg p-2.5 bg-surface-default text-text-primary focus:ring-2 focus:ring-primary outline-none resize-none border-border-default"
               />
+            </div>
+
+            <div className="space-y-2 border-t pt-3">
+              <label className="text-[10px] font-black uppercase text-text-secondary tracking-widest flex items-center gap-2">
+                <Users className="w-3.5 h-3.5 text-primary" /> Assign Members
+              </label>
+              <p className="text-[10px] text-text-muted mb-2 font-medium">Who can view this project?</p>
+              <div className="max-h-40 overflow-y-auto space-y-1.5 border border-border-default rounded-lg p-2 bg-slate-50/50 styled-scroll">
+                {members.map(member => (
+                   <label key={member.id} className="flex items-center gap-2 px-1.5 py-1 hover:bg-white rounded border border-transparent hover:border-border-default transition-all cursor-pointer group">
+                      <input 
+                        type="checkbox" 
+                        checked={assignedIds.includes(member.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) setAssignedIds(prev => [...prev, member.id]);
+                          else setAssignedIds(prev => prev.filter(id => id !== member.id));
+                        }}
+                        className="rounded border-border-default text-primary focus:ring-primary w-3 h-3"
+                      />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[11px] font-bold text-text-primary truncate">{member.name || member.email}</span>
+                        <span className="text-[9px] text-text-muted uppercase font-bold tracking-tight opacity-60">
+                           {member.role === 'admin' ? 'Admin (Auto)' : member.role || 'Member'}
+                        </span>
+                      </div>
+                   </label>
+                ))}
+              </div>
+              <p className="text-[8px] text-slate-400 italic mt-1 font-medium">* Admins automatically see all projects.</p>
             </div>
 
             <button 

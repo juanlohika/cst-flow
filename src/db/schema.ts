@@ -106,6 +106,7 @@ export const projects = sqliteTable("Project", {
   clientProfileId:  text("clientProfileId").references(() => clientProfiles.id),
   externalContact:  text("externalContact"),
   internalInCharge: text("internalInCharge"),
+  assignedIds:      text("assignedIds"), // Stores comma-separated or JSON array of user IDs
   startDate:        text("startDate").notNull(),
   status:           text("status").default("active").notNull(),
   templateId:       text("templateId").references(() => timelineTemplates.id),

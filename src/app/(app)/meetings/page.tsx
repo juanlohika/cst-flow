@@ -14,6 +14,7 @@ import AuthGuard from "@/components/auth/AuthGuard";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import { useToast } from "@/components/ui/ToastContext";
 import { formatRef } from "@/lib/utils/format";
+import ForceLink from "@/components/ui/ForceLink";
 import StitchTimePicker from "@/components/ui/StitchTimePicker";
 
 export default function MeetingHubPage() {
@@ -395,11 +396,10 @@ function MeetingSortHeader({ label, col, sortKey, sortDir, onSort }: {
 }
 
 function StartMeetingButton({ meetingId }: { meetingId: string }) {
-  const router = useRouter();
   return (
-    <button onClick={() => router.push(`/meetings/${meetingId}/live`)} title="Start meeting" className="p-1.5 rounded hover:bg-green-50 transition-colors text-green-600">
+    <ForceLink href={`/meetings/${meetingId}/live`} title="Start meeting" className="p-1.5 rounded hover:bg-green-50 transition-colors text-green-600">
       <Play className="w-3.5 h-3.5" />
-    </button>
+    </ForceLink>
   );
 }
 
@@ -922,12 +922,12 @@ function MeetingDetailPanel({ meetingId, onClose, loadMeetings }: { meetingId: s
           </div>
           <div className="flex items-center gap-3">
              {(meeting?.status === "scheduled" || meeting?.status === "in-progress") && (
-               <button 
-                onClick={() => router.push(`/meetings/${meetingId}/live`)}
+               <ForceLink 
+                href={`/meetings/${meetingId}/live`}
                 className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl text-[12px] font-bold shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap"
                >
                  <Play className="w-3.5 h-3.5 fill-current" /> Join Live
-               </button>
+               </ForceLink>
              )}
              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
                <X className="w-5 h-5 text-slate-400" />

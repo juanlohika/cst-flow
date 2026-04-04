@@ -152,7 +152,7 @@ export default function CommandK() {
              <span className="flex items-center gap-1 text-[9px] font-bold text-slate-300"><ChevronRight size={10}/> To Select</span>
              <span className="flex items-center gap-1 text-[9px] font-bold text-slate-300"><ChevronDown size={10}/> To Navigate</span>
            </div>
-           <div className="text-[9px] font-black text-primary/30 uppercase tracking-tighter">CST FLOWDESK WORKSPACE</div>
+           <div className="text-[9px] font-black text-primary/30 uppercase tracking-tighter">CST OS WORKSPACE</div>
         </div>
       </div>
     </div>

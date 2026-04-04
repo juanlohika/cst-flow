@@ -41,7 +41,7 @@ function SignInForm() {
           </div>
         </div>
         <h1 className="text-3xl font-black uppercase tracking-tighter text-slate-900">Sign In</h1>
-        <p className="text-xs font-black uppercase tracking-[0.3em] text-slate-400">CST FlowDesk · Secure Workspace</p>
+        <p className="text-xs font-black uppercase tracking-[0.3em] text-slate-400">CST OS · Secure Workspace</p>
       </div>
 
       {error === "domain" && (

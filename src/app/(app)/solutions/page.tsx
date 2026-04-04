@@ -119,10 +119,12 @@ export default function SolutionsPage() {
           <div className="flex items-center gap-2 text-primary font-bold tracking-widest uppercase text-xs">
             <ShieldCheck className="h-4 w-4" /> Enterprise Security
           </div>
-          <h2 className="text-3xl font-bold tracking-tight">Local Performance, <br /> Cloud Persistence.</h2>
-          <p className="text-slate-500">
-            FlowDesk is designed as a BYOK (Bring Your Own Key) system. Your Gemini API key stays encrypted in your browser&apos;s LocalStorage, while your generated workflows are securely stored on our backend for collaboration.
-          </p>
+          <h2 className="text-3xl md:text-5xl font-bold tracking-tight">How to use CST OS</h2>
+          <div className="max-w-2xl text-[15px] leading-relaxed text-slate-300 space-y-4">
+            <p>
+              CST OS is designed as a BYOK (Bring Your Own Key) system. Your Gemini API key stays encrypted in your browser&apos;s LocalStorage, while your generated workflows are securely stored on our backend for collaboration.
+            </p>
+          </div>
           <div className="flex gap-8">
             <div className="space-y-1">
               <h5 className="font-bold text-lg">SQLite</h5>

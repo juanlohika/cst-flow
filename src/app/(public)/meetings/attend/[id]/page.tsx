@@ -59,14 +59,14 @@ export default function AttendPage() {
   }, [id]);
 
   if (loadingMeeting) {
-    const brandName = settings.app_name || "FlowDesk";
+    const brandName = settings.app_name || "CST OS";
     const logoUrl = settings.app_logo || settings.bottom_logo_url;
     return (
       <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 text-center">
         {logoUrl ? (
           <img src={logoUrl} alt={brandName} className="h-10 w-auto mb-6 animate-pulse object-contain" />
         ) : (
-          <div className="text-2xl font-black text-primary mb-6 tracking-tighter uppercase">{brandName}</div>
+          <div className="text-[9px] font-black text-primary/30 uppercase tracking-tighter">CST OS WORKSPACE</div>
         )}
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-6 h-6 text-primary animate-spin" />
@@ -125,7 +125,7 @@ export default function AttendPage() {
       )}
 
       <p className="text-center text-[11px] text-slate-300 mt-8 mb-4">
-        Powered by {settings.app_name || "FlowDesk"} · Your data is kept confidential
+        Powered by {settings.app_name || "CST OS"} · Your data is kept confidential
       </p>
     </Shell>
   );
@@ -511,7 +511,7 @@ function RegisterTab({ meetingId, meeting }: { meetingId: string; meeting: Meeti
 
 function Shell({ children, settings = {} }: { children: React.ReactNode; settings?: Record<string, string> }) {
   const logoUrl = settings.app_logo || settings.bottom_logo_url;
-  const brandName = settings.app_name || "FlowDesk";
+  const brandName = settings.app_name || "CST OS";
   return (
     <div className="min-h-screen bg-white flex flex-col antialiased">
       {/* Header */}
