@@ -59,18 +59,18 @@ export default function AttendPage() {
   }, [id]);
 
   if (loadingMeeting) {
-    const brandName = settings.company_name || settings.app_name || "Meeting Hub";
-    const logoUrl = settings.company_logo || settings.bottom_logo_url;
+    const brandName = settings.app_name || "FlowDesk";
+    const logoUrl = settings.app_logo || settings.bottom_logo_url;
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 text-center">
         {logoUrl ? (
           <img src={logoUrl} alt={brandName} className="h-10 w-auto mb-6 animate-pulse object-contain" />
         ) : (
-          <div className="text-2xl font-bold text-blue-600 mb-6 tracking-tight">{brandName}</div>
+          <div className="text-2xl font-black text-primary mb-6 tracking-tighter uppercase">{brandName}</div>
         )}
         <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-          <p className="text-sm text-slate-400 font-medium">Loading meeting…</p>
+          <Loader2 className="w-6 h-6 text-primary animate-spin" />
+          <p className="text-[11px] text-slate-400 font-black uppercase tracking-widest opacity-60">Loading...</p>
         </div>
       </div>
     );
@@ -125,7 +125,7 @@ export default function AttendPage() {
       )}
 
       <p className="text-center text-[11px] text-slate-300 mt-8 mb-4">
-        Powered by {settings.company_name || settings.app_name || "Tarkie"} · Your data is kept confidential
+        Powered by {settings.app_name || "FlowDesk"} · Your data is kept confidential
       </p>
     </Shell>
   );
@@ -510,17 +510,18 @@ function RegisterTab({ meetingId, meeting }: { meetingId: string; meeting: Meeti
 // ── Shared components ──────────────────────────────────────────────────────────
 
 function Shell({ children, settings = {} }: { children: React.ReactNode; settings?: Record<string, string> }) {
-  const logoUrl = settings.company_logo || settings.bottom_logo_url;
+  const logoUrl = settings.app_logo || settings.bottom_logo_url;
+  const brandName = settings.app_name || "FlowDesk";
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white flex flex-col">
+    <div className="min-h-screen bg-white flex flex-col antialiased">
       {/* Header */}
       <div className="flex flex-col items-center pt-8 pb-5">
         {logoUrl ? (
-          <img src={logoUrl} alt={settings.company_name || settings.app_name || "Brand"} className="h-10 w-auto object-contain" />
+          <img src={logoUrl} alt={brandName} className="h-10 w-auto object-contain" />
         ) : (
-          <div className="text-xl font-bold text-blue-600 tracking-tight">{settings.company_name || settings.app_name || "Tarkie"}</div>
+          <div className="text-xl font-black text-primary tracking-tighter uppercase">{brandName}</div>
         )}
-        <p className="text-[11px] text-slate-400 mt-0.5">Meeting Attendance</p>
+        <p className="text-[10px] font-black text-slate-400 mt-1 uppercase tracking-widest opacity-60">Meeting Attendance</p>
       </div>
       {children}
     </div>

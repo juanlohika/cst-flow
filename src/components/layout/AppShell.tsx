@@ -17,11 +17,15 @@ interface AppShellProps {
  * during Next.js page transitions within the (app) group.
  */
 export default function AppShell({ children, initialApps, user }: AppShellProps) {
-  // We keep the sidebar session-aware but structurally static.
-  // This ensures that the 200ms "Dead Click" window is eliminated 
-  // because the JS is already hydrated and doesn't need to rebuild 
-  // the DOM on every navigation.
-  
+  const [settings, setSettings] = useState<any>(null);
+
+  useEffect(() => {
+    fetch("/api/admin/settings")
+      .then(r => r.ok ? r.json() : {})
+      .then(setSettings)
+      .catch(() => setSettings({}));
+  }, []);
+
   return (
     <BreadcrumbProvider>
       <div className="page-shell bg-surface-subtle">
@@ -29,6 +33,7 @@ export default function AppShell({ children, initialApps, user }: AppShellProps)
           <LeftNav 
             initialApps={initialApps} 
             user={user} 
+            settings={settings}
           />
         )}
         

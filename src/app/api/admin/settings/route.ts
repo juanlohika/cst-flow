@@ -6,20 +6,23 @@ import { auth } from "@/auth";
 export async function GET() {
   try {
     const settings = await db.select().from(globalSettingsTable);
-    const config: Record<string, string> = {
-      app_name: "CST FlowDesk",
-      company_name: "Tarkie",
-      company_logo: "/tarkie-logo.svg"
-    };
+    const config: Record<string, string> = {};
+    
     settings.forEach((s: any) => {
       config[s.key] = s.value;
     });
-    return NextResponse.json(config);
+
+    // Provide generic fallbacks only if DB is empty
+    return NextResponse.json({
+      ...config,
+      app_name: config.app_name || "FlowDesk",
+      app_logo: config.bottom_logo_url || config.company_logo || "",
+    });
   } catch (error: any) {
     console.error("GET /api/admin/settings error:", error);
     return NextResponse.json({
-      app_name: "CST FlowDesk",
-      company_name: "Tarkie"
+      app_name: "FlowDesk",
+      app_logo: ""
     });
   }
 }

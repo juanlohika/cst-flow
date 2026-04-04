@@ -13,20 +13,24 @@ export default function Loading() {
       .catch(() => setSettings({}));
   }, []);
 
-  const logoUrl = settings?.company_logo || "/tarkie-logo.svg";
-  const brandName = settings?.company_name || settings?.app_name || "Tarkie";
+  const logoUrl = settings?.app_logo || settings?.bottom_logo_url;
+  const brandName = settings?.app_name || "FlowDesk";
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center min-h-[400px]">
-      <img 
-        src={logoUrl} 
-        alt={brandName} 
-        className="h-8 w-auto mb-4 animate-pulse object-contain" 
-      />
+    <div className="flex-1 flex flex-col items-center justify-center min-h-screen bg-white">
+      {logoUrl ? (
+        <img 
+          src={logoUrl} 
+          alt={brandName} 
+          className="h-10 w-auto mb-6 animate-pulse object-contain" 
+        />
+      ) : (
+        <div className="text-2xl font-black text-primary mb-6 tracking-tighter uppercase">{brandName}</div>
+      )}
       <div className="flex items-center gap-2 text-slate-400">
-        <Loader2 className="w-4 h-4 animate-spin" />
-        <span className="text-[11px] font-medium tracking-wide uppercase">
-          Initialising {brandName}...
+        <Loader2 className="w-4 h-4 animate-spin text-primary" />
+        <span className="text-[10px] font-black tracking-widest uppercase opacity-70">
+          Loading {brandName}
         </span>
       </div>
     </div>

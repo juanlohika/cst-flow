@@ -15,15 +15,20 @@ const ICON_MAP: Record<string, React.ReactNode> = {
 interface LeftNavProps {
   initialApps: any[];
   user: any;
+  settings?: any;
 }
 
 /**
  * LeftNav: Permanent Sidebar Navigation.
  * Now using ForceLink for indestructible navigation logic.
+ * Dynamic Branding: Uses logo/name from Admin settings.
  */
-export default function LeftNav({ initialApps, user }: LeftNavProps) {
+export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
   const pathname = usePathname();
   
+  const logoUrl = settings?.app_logo || settings?.bottom_logo_url;
+  const brandName = settings?.app_name || "FlowDesk";
+
   // High-Fidelity Initial State
   const isInsideAiApp = initialApps.some(a => pathname?.startsWith(a.href));
   
@@ -54,9 +59,13 @@ export default function LeftNav({ initialApps, user }: LeftNavProps) {
       <div className="h-10 border-b flex items-center justify-between px-3 shrink-0">
         {!isCollapsed ? (
           <>
-            <ForceLink href="/" className="flex items-center gap-2">
-              <div className="w-5 h-5 bg-primary rounded flex items-center justify-center text-[8px] font-black text-white shrink-0 shadow-sm shadow-primary/20">CST</div>
-              <span className="text-[12px] font-bold text-slate-800 uppercase tracking-tighter whitespace-nowrap">FlowDesk</span>
+            <ForceLink href="/" className="flex items-center gap-2 overflow-hidden">
+              {logoUrl ? (
+                <img src={logoUrl} alt={brandName} className="h-6 w-auto object-contain shrink-0" />
+              ) : (
+                <div className="w-5 h-5 bg-primary rounded flex items-center justify-center text-[8px] font-black text-white shrink-0 shadow-sm">CST</div>
+              )}
+              <span className="text-[12px] font-bold text-slate-800 uppercase tracking-tighter whitespace-nowrap truncate">{brandName}</span>
             </ForceLink>
             <button onClick={() => setIsCollapsed(true)} className="p-1 hover:bg-slate-50 rounded text-slate-400">
               <ChevronLeft size={14} />
@@ -64,7 +73,11 @@ export default function LeftNav({ initialApps, user }: LeftNavProps) {
           </>
         ) : (
           <button className="mx-auto block" onClick={() => setIsCollapsed(false)}>
-            <div className="w-7 h-7 bg-primary rounded flex items-center justify-center text-[11px] font-black text-white shadow-md shadow-primary/20">CST</div>
+            {logoUrl ? (
+              <img src={logoUrl} alt={brandName} className="w-7 h-7 object-contain" />
+            ) : (
+              <div className="w-7 h-7 bg-primary rounded flex items-center justify-center text-[11px] font-black text-white shadow-sm">CST</div>
+            )}
           </button>
         )}
       </div>

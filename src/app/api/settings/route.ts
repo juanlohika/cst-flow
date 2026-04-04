@@ -21,6 +21,8 @@ export async function GET() {
       smtpUser: cfg.smtpUser || "",
       smtpPass: cfg.smtpPass || "",
       smtpFrom: cfg.smtpFrom || "",
+      app_name: cfg.app_name || "FlowDesk",
+      app_logo: cfg.bottom_logo_url || cfg.company_logo || "",
     });
   } catch (err) {
     console.error("GET /api/settings error:", err);
