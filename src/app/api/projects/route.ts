@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { projects as projectsTable, timelineItems as timelineItemsTable, timelineTemplates as timelineTemplatesTable } from "@/db/schema";
 import { auth } from "@/auth";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, or, like } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -94,19 +94,17 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const filter = searchParams.get('filter');
 
-    const { or, like, eq: eqOp } = await import("drizzle-orm");
-
     // Visibility Logic
     // Admins see all. Owners see their own. Assigned users see assigned.
-    let whereClause = undefined;
-    if (userRole !== "admin") {
-      whereClause = or(
-        eqOp(projectsTable.userId, userId),
-        like(projectsTable.assignedIds, `%${userId}%`)
-      );
-    }
+    let whereClause: any = undefined;
+    
     if (filter === 'mine') {
-       whereClause = eqOp(projectsTable.userId, userId);
+       whereClause = eq(projectsTable.userId, userId);
+    } else if (userRole !== "admin") {
+       whereClause = or(
+         eq(projectsTable.userId, userId),
+         like(projectsTable.assignedIds, `%${userId}%`)
+       );
     }
 
     // Drizzle select with left join

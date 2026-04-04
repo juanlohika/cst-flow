@@ -517,10 +517,11 @@ function LiveMeetingRoom() {
       if (!transcriptChanged && !notesChanged) return;
 
       const newItems = transcriptChanged ? current.slice(lastIdx) : [];
-      // Combine utterances while preserving AI objects if needed? 
-      // Actually fireAIUpdates takes a string.
       const newText = newItems.map(t => typeof t === 'string' ? t : t.text).join(" ").trim();
       
+      // GUARD: Only fire if there is actual content to process
+      if (!newText && currentNotes === lastNotesRef.current) return;
+
       lastProcessedIndexRef.current = current.length;
       lastNotesRef.current = currentNotes;
       

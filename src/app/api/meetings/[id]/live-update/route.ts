@@ -37,11 +37,13 @@ export async function POST(
     ({ panel, newTranscript, currentState, prepContext, notes } =
       await request.json());
 
-    if (!panel || (!newTranscript?.trim() && !notes?.trim())) {
-      return NextResponse.json(
-        { error: 'Either newTranscript or notes is required' },
-        { status: 400 }
-      );
+    if (!panel) {
+      return NextResponse.json({ error: 'Panel is required' }, { status: 400 });
+    }
+    
+    if (!newTranscript?.trim() && !notes?.trim()) {
+      // Graceful "No Change" response to prevent 400s in console during silence
+      return new Response(null, { status: 204 });
     }
 
     // Verify meeting ownership

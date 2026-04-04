@@ -323,13 +323,13 @@ function MeetingHubContent() {
                           </td>
                           <td className="px-3 py-3 text-right pr-4">
                             <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button 
-                                onClick={() => router.push(`/meetings/${meeting.id}/live`)} 
+                              <ForceLink 
+                                href={`/meetings/${meeting.id}/live`}
                                 className="p-1 h-7 w-7 flex items-center justify-center text-text-muted hover:text-primary transition-colors border border-border-default rounded-md bg-white shadow-sm"
                                 title="Join Live Session"
                               >
                                 <Play className="w-3.5 h-3.5 fill-current" />
-                              </button>
+                              </ForceLink>
                               <button 
                                 onClick={() => setSelectedMeetingId(meeting.id)} 
                                 className="p-1 h-7 w-7 flex items-center justify-center text-text-muted hover:text-primary transition-colors border border-border-default rounded-md bg-white shadow-sm"
