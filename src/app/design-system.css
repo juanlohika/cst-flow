@@ -251,12 +251,12 @@ a:hover {
 }
 
 .left-nav-header {
-  padding: 16px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--color-border-default);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 64px;
+  height: var(--spacing-bar-h);
   flex-shrink: 0;
 }
 

@@ -24,6 +24,7 @@ import AuthGuard from "@/components/auth/AuthGuard";
 import MeetingTour, { TourStep } from "@/components/ui/MeetingTour";
 import { useToast } from "@/components/ui/ToastContext";
 import { formatRef } from "@/lib/utils/format";
+import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,7 @@ function LiveMeetingRoom() {
   const params = useParams();
   const router = useRouter();
   const meetingId = params.id as string;
+  const { setBreadcrumbs } = useBreadcrumbs();
 
   // Meeting data
   const [meeting, setMeeting] = useState<any>(null);
@@ -80,6 +82,7 @@ function LiveMeetingRoom() {
   const [transcript, setTranscript] = useState<(string | { type: "ai"; text: string })[]>([]);
   const transcriptRef = useRef<(string | { type: "ai"; text: string })[]>([]);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Timer
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -271,12 +274,19 @@ function LiveMeetingRoom() {
     }
     load();
 
+    // Set standard breadcrumbs
+    setBreadcrumbs([
+      { label: "AI Intelligence", href: "/meetings" },
+      { label: "Live Hub", href: "/meetings" },
+      { label: meetingRef.current?.title || "Active Meeting" }
+    ]);
+
     // Show tour if first time
     const hasSeenTour = localStorage.getItem("cst-live-tour-seen");
     if (!hasSeenTour) {
       setTimeout(() => setShowTour(true), 1500);
     }
-  }, [meetingId, router]);
+  }, [meetingId, router, setBreadcrumbs]);
 
   // ─── Timer ────────────────────────────────────────────────────────────────
 
@@ -291,10 +301,13 @@ function LiveMeetingRoom() {
   useEffect(() => {
     if (typeof window === "undefined" || !("mediaSession" in navigator)) return;
 
-    // 1. Silent Audio Heartbeat
-    const audio = new Audio();
-    audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA=";
-    audio.loop = true;
+    // 1. Silent Audio Heartbeat - Singleton via Ref
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+      audioRef.current.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA=";
+      audioRef.current.loop = true;
+    }
+    const audio = audioRef.current;
     
     const startKeepAlive = async () => {
       try {
@@ -302,7 +315,7 @@ function LiveMeetingRoom() {
         // 2. Media Session Metadata (tells OS this is an active "call")
         navigator.mediaSession.metadata = new MediaMetadata({
           title: "Live Meeting Hub",
-          artist: "Tarkie FlowDesk",
+          artist: "CST OS",
           album: meetingRef.current?.title || "Active Session",
         });
         navigator.mediaSession.playbackState = "playing";
@@ -311,11 +324,11 @@ function LiveMeetingRoom() {
       }
     };
 
-    // Trigger on first transcript or when meeting loads
+    // Trigger after short delay to ensure browser allows audio play context
     const timer = setTimeout(startKeepAlive, 2000);
     return () => {
       clearTimeout(timer);
-      audio.pause();
+      if (audio) audio.pause();
     };
   }, [meeting?.title]);
 
@@ -691,7 +704,7 @@ function LiveMeetingRoom() {
 
   return (
     <div
-      className="fixed inset-0 flex flex-col overflow-hidden bg-white"
+      className="relative flex flex-col h-full overflow-hidden bg-white"
       style={{ fontFamily: "Inter, sans-serif" }}
     >
       {/* ━━━ HEADER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
@@ -1014,78 +1027,12 @@ function LiveMeetingRoom() {
 
           {/* Transcript lines */}
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1.5 select-text" style={{ scrollbarWidth: "thin" }}>
-            {transcript.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-center">
-                <div
-                  className="w-10 h-10 rounded-full border-2 flex items-center justify-center mb-3"
-                  style={{ borderColor: "#E9EAEB" }}
-                >
-                  <Mic className="w-5 h-5" style={{ color: "#717680" }} />
-                </div>
-                <p className="text-[12px]" style={{ color: "#717680" }}>
-                  Listening for speech…
-                </p>
-                <p className="text-[11px] mt-1" style={{ color: "#717680" }}>
-                  Transcript appears here as you speak
-                </p>
-              </div>
-            ) : (
-              <>
-                {transcript.map((line, i) => {
-                  const isAi = typeof line !== "string";
-                  const text = isAi ? (line as any).text : (line as string);
-                  
-                  if (isAi) {
-                    return (
-                      <div key={i} className="bg-blue-50/50 border border-blue-100 rounded-lg p-3 my-2 shadow-sm animate-in slide-in-from-left duration-500">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Sparkles className="w-3 h-3 text-primary" />
-                          <span className="text-[10px] font-black uppercase tracking-widest text-primary">Tarkie AI Suggestion</span>
-                        </div>
-                        <div className="flex items-start justify-between gap-4">
-                          <p className="text-[12px] leading-relaxed text-slate-800">
-                            {text}
-                          </p>
-                          {!acceptedSuggestions.has(i) ? (
-                            <button
-                              onClick={() => acceptSuggestion(i, text)}
-                              className="px-2 py-0.5 rounded text-[9px] font-bold bg-primary text-white hover:bg-primary-hover transition-colors flex-shrink-0"
-                            >
-                              Accept
-                            </button>
-                          ) : (
-                            <span className="flex items-center gap-0.5 text-[9px] font-bold text-emerald-600 flex-shrink-0 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
-                              <Check className="w-2.5 h-2.5" /> Accepted
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <p
-                      key={i}
-                      className="text-[13px] leading-relaxed pl-2 border-l-2 transition-colors select-text"
-                      style={{
-                        color: "#252B37",
-                        borderColor: i === transcript.length - 1 && !interimText ? "#2162F9" : "transparent",
-                      }}
-                    >
-                      {text}
-                    </p>
-                  );
-                })}
-                {interimText && (
-                  <p
-                    className="text-[13px] leading-relaxed pl-2 border-l-2 italic select-text"
-                    style={{ color: "#9CA3AF", borderColor: "#2162F9" }}
-                  >
-                    {interimText}
-                  </p>
-                )}
-              </>
-            )}
+            <TranscriptList 
+              transcript={transcript} 
+              interimText={interimText} 
+              acceptedSuggestions={acceptedSuggestions}
+              onAccept={acceptSuggestion}
+            />
             <div ref={transcriptEndRef} />
           </div>
 
@@ -1900,3 +1847,95 @@ function MinutesSection({
     </section>
   );
 }
+// ─── Sub-components ──────────────────────────────────────────────────────────
+
+const TranscriptList = React.memo(({ 
+  transcript, 
+  interimText, 
+  acceptedSuggestions, 
+  onAccept 
+}: { 
+  transcript: (string | { type: "ai"; text: string })[];
+  interimText: string;
+  acceptedSuggestions: Set<number>;
+  onAccept: (idx: number, text: string) => void;
+}) => {
+  if (transcript.length === 0 && !interimText) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center">
+        <div
+          className="w-10 h-10 rounded-full border-2 flex items-center justify-center mb-3"
+          style={{ borderColor: "#E9EAEB" }}
+        >
+          <Mic className="w-5 h-5" style={{ color: "#717680" }} />
+        </div>
+        <p className="text-[12px]" style={{ color: "#717680" }}>
+          Listening for speech…
+        </p>
+        <p className="text-[11px] mt-1" style={{ color: "#717680" }}>
+          Transcript appears here as you speak
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {transcript.map((line, i) => {
+        const isAi = typeof line !== "string";
+        const text = isAi ? (line as any).text : (line as string);
+        
+        if (isAi) {
+          return (
+            <div key={i} className="bg-blue-50/50 border border-blue-100 rounded-lg p-3 my-2 shadow-sm animate-in slide-in-from-left duration-500">
+              <div className="flex items-center gap-2 mb-1">
+                <Sparkles className="w-3 h-3 text-primary" />
+                <span className="text-[10px] font-black uppercase tracking-widest text-primary">CST AI Suggestion</span>
+              </div>
+              <div className="flex items-start justify-between gap-4">
+                <p className="text-[12px] leading-relaxed text-slate-800">
+                  {text}
+                </p>
+                {!acceptedSuggestions.has(i) ? (
+                  <button
+                    onClick={() => onAccept(i, text)}
+                    className="px-2 py-0.5 rounded text-[9px] font-bold bg-primary text-white hover:bg-primary-hover transition-colors flex-shrink-0"
+                  >
+                    Accept
+                  </button>
+                ) : (
+                  <span className="flex items-center gap-0.5 text-[9px] font-bold text-emerald-600 flex-shrink-0 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
+                    <Check className="w-2.5 h-2.5" /> Accepted
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <p
+            key={i}
+            className="text-[13px] leading-relaxed pl-2 border-l-2 transition-colors select-text"
+            style={{
+              color: "#252B37",
+              borderColor: i === transcript.length - 1 && !interimText ? "#2162F9" : "transparent",
+            }}
+          >
+            {text}
+          </p>
+        );
+      })}
+      {interimText && (
+        <p
+          className="text-[13px] leading-relaxed pl-2 border-l-2 italic select-text"
+          style={{ color: "#9CA3AF", borderColor: "#2162F9" }}
+        >
+          {interimText}
+        </p>
+      )}
+    </>
+  );
+});
+
+TranscriptList.displayName = "TranscriptList";
