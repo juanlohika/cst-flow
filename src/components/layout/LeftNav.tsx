@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import ForceLink from "@/components/ui/ForceLink";
 import {
   ChevronLeft, ChevronRight, ChevronDown,
@@ -25,6 +25,8 @@ interface LeftNavProps {
  */
 export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const activeProjectId = searchParams.get("project");
   
   const logoUrl = settings?.app_logo || settings?.bottom_logo_url;
   const brandName = settings?.app_name || "FlowDesk";
@@ -133,7 +135,7 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
               <div className="flex items-center">
                 <ForceLink 
                   href="/tasks" 
-                  className={`flex-1 left-nav-item !mr-0 ${isActive("/tasks") && !pathname?.includes("?project=") ? "active" : ""}`}
+                  className={`flex-1 left-nav-item !mr-0 ${isActive("/tasks") && !activeProjectId ? "active" : ""}`}
                 >
                   <Zap size={14} /> <span>Tasks</span>
                 </ForceLink>
@@ -149,11 +151,21 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
                 <div className="ml-4 mt-0.5 space-y-0.5 border-l border-slate-100 pl-2">
                   <ForceLink 
                     href="/tasks" 
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors ${isActive("/tasks") && !pathname?.includes("?project=") ? "text-primary bg-primary/10 font-bold" : "text-slate-500 hover:bg-slate-50"}`}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors ${isActive("/tasks") && !activeProjectId ? "text-primary bg-primary/10 font-bold" : "text-slate-500 hover:bg-slate-50"}`}
                   >
                     <LayoutDashboard size={12} />
                     <span>My Dashboard</span>
                   </ForceLink>
+
+                  <ForceLink 
+                    href="/tasks?project=ALL" 
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors ${activeProjectId === "ALL" ? "text-primary bg-primary/10 font-bold" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}
+                  >
+                    <div className={`w-1.5 h-1.5 rounded-full ${activeProjectId === "ALL" ? "bg-primary" : "bg-slate-200"}`} />
+                    <span>All Projects</span>
+                  </ForceLink>
+                  
+                  <div className="py-1 px-2 text-[9px] font-black uppercase text-slate-300 tracking-widest mt-2 border-t border-slate-50 pt-2">Individual Roadmaps</div>
                   
                   {projectsLoading ? (
                     <div className="px-2 py-1 text-[10px] text-slate-300 animate-pulse uppercase font-bold tracking-widest">Loading Projects…</div>
@@ -161,7 +173,7 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
                     <div className="px-2 py-1 text-[10px] text-slate-300 uppercase font-bold tracking-widest">No active roadmaps</div>
                   ) : projects.map(p => {
                     const projectHref = `/tasks?project=${p.id}`;
-                    const active = pathname?.startsWith("/tasks") && pathname?.includes(`project=${p.id}`);
+                    const active = activeProjectId === p.id;
                     return (
                       <ForceLink 
                         key={p.id} 

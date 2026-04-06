@@ -135,7 +135,7 @@ function formatOwner(owner: string | undefined | null): string {
   return owner.replace(/\b\w/g, l => l.toUpperCase());
 }
 
-export default function TaskDashboard({ projectId }: TaskDashboardProps) {
+export default function TaskDashboard({ projectId, projectName, profile }: TaskDashboardProps) {
   const { data: session } = useSession();
   const { showToast } = useToast();
   const [tasks, setTasks] = useState<Task[]>([]);

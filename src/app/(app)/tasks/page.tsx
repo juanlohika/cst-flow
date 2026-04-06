@@ -12,14 +12,16 @@ function TasksContent() {
   const [projectName, setProjectName] = useState<string | null>(null);
   const [profile, setProfile] = useState<any>(null);
 
-  // No project param → show Personal Dashboard
-  const showPersonalDashboard = !projectParam;
+  // My Dashboard: specifically no project param
+  const isMyDashboard = !projectParam;
+  // All Projects or Specific Project
+  const isTaskView = !!projectParam;
   const projectId = projectParam || "ALL";
 
   // STABILITY: Integrated Central Navigation
   useBreadcrumbs([
     { label: "Tasks", href: "/tasks" },
-    { label: showPersonalDashboard ? "My Dashboard" : (projectName || "All Projects") }
+    { label: isMyDashboard ? "My Dashboard" : (projectId === "ALL" ? "All Projects" : (projectName || "Project")) }
   ]);
 
   useEffect(() => {
@@ -45,7 +47,7 @@ function TasksContent() {
     }
   }, [projectId]);
 
-  if (showPersonalDashboard) {
+  if (isMyDashboard) {
     return <PersonalDashboard />;
   }
 
