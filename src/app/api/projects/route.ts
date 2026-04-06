@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { users as usersTable, projects as projectsTable, timelineItems as timelineItemsTable, timelineTemplates as timelineTemplatesTable } from "@/db/schema";
+import { users as usersTable, projects as projectsTable, timelineItems as timelineItemsTable, timelineTemplates as timelineTemplatesTable, taskAssignments } from "@/db/schema";
 import { auth } from "@/auth";
 import { eq, desc, or, like, inArray } from "drizzle-orm";
 import { calculateClientEndDate } from "@/lib/utils/business-days";
@@ -132,7 +132,6 @@ export async function POST(req: Request) {
             }));
             
             try {
-              const { taskAssignments } = require("@/db/schema");
               await tx.insert(taskAssignments).values(assignmentValues);
             } catch (err) {
               console.warn("Assignment join failed (schema sync?):", err);
