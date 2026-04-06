@@ -17,7 +17,8 @@ import { formatRef } from "@/lib/utils/format";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import InteractiveGantt from "@/components/timeline/InteractiveGantt";
 import BufferModal from "@/components/timeline/BufferModal";
-import { Share, Mail, Copy, Check, X } from "lucide-react";
+import ProjectSettingsModal from "@/components/projects/ProjectSettingsModal";
+import { Share, Mail, Copy, Check, X, Settings } from "lucide-react";
 
 
 const WorkflowCanvas = dynamic(() => import("@/components/flow/WorkflowCanvas"), { ssr: false });
@@ -1114,12 +1115,12 @@ export function ProjectsTab({ accountId, companyName, profile }: { accountId: st
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectSubTab, setProjectSubTab] = useState<"list" | "gantt">("list");
   
-  // SHARING STATE
-  const [sharingProjectId, setSharingProjectId] = useState<string | null>(null);
-  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  // SETTINGS/SHARING STATE
+  const [sharingProject, setSharingProject] = useState<any>(null);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const { showToast } = useToast();
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
     setLoading(true);
     Promise.all([
       fetch(`/api/accounts/${accountId}/projects`).then(r => r.ok ? r.json() : []),
@@ -1130,9 +1131,13 @@ export function ProjectsTab({ accountId, companyName, profile }: { accountId: st
     }).finally(() => setLoading(false));
   }, [accountId]);
 
-  const handleShare = (project: any) => {
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleOpenSettings = (project: any) => {
     setSharingProject(project);
-    setIsShareModalOpen(true);
+    setIsSettingsModalOpen(true);
   };
 
   const selectedProject = useMemo(() => projects.find(p => p.id === selectedProjectId), [projects, selectedProjectId]);
@@ -1197,7 +1202,15 @@ export function ProjectsTab({ accountId, companyName, profile }: { accountId: st
               </div>
               <div className="flex gap-2 pb-2">
                  <button 
-                   onClick={() => handleShare(selectedProject)}
+                    onClick={() => handleOpenSettings(selectedProject)}
+                    className="p-1.5 hover:bg-slate-100 rounded-md text-text-muted hover:text-primary transition-all flex items-center gap-1.5"
+                    title="Project Settings"
+                 >
+                    <Settings className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Settings</span>
+                 </button>
+                 <button 
+                   onClick={() => handleOpenSettings({...selectedProject, forceTab: 'share'})}
                    className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-[11px] font-bold shadow-sm hover:scale-[1.02] active:scale-[0.98] transition-all uppercase tracking-tight"
                  >
                    <Share className="w-3 h-3" strokeWidth={3} /> Share Link
@@ -1257,16 +1270,16 @@ export function ProjectsTab({ accountId, companyName, profile }: { accountId: st
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 ml-4">
+                  <div className="flex items-center gap-1 ml-4 transition-all group-hover:translate-x-0 translate-x-2">
                     <button 
-                      onClick={(ev) => { ev.stopPropagation(); handleShare(p); }}
-                      className="p-2 hover:bg-primary/5 rounded-lg text-text-muted hover:text-primary transition-all opacity-0 group-hover:opacity-100" 
-                      title="Share Roadmap"
+                      onClick={(ev) => { ev.stopPropagation(); handleOpenSettings(p); }}
+                      className="p-2 hover:bg-slate-100 rounded-lg text-text-muted hover:text-slate-900 transition-all opacity-0 group-hover:opacity-100" 
+                      title="Project Settings"
                     >
-                      <Share className="w-3.5 h-3.5" />
+                      <Settings className="w-4 h-4" />
                     </button>
                     <button onClick={() => setSelectedProjectId(p.id)} className="p-2 hover:bg-surface-muted rounded-full transition-colors text-text-muted" title="View Project Details">
-                      <ExternalLink className="w-3.5 h-3.5" />
+                      <ExternalLink className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
@@ -1283,13 +1296,17 @@ export function ProjectsTab({ accountId, companyName, profile }: { accountId: st
         </div>
       )}
 
-      {/* EMAIL SHARE MODAL */}
-      <EmailShareModal 
-        isOpen={isShareModalOpen} 
-        onClose={() => setIsShareModalOpen(false)} 
+      {/* PROJECT SETTINGS & SHARE MODAL */}
+      <ProjectSettingsModal 
+        isOpen={isSettingsModalOpen} 
+        onClose={() => setIsSettingsModalOpen(false)} 
         project={sharingProject} 
         profile={profile}
+        onUpdate={loadData}
       />
+    </div>
+  );
+}
     </div>
   );
 }

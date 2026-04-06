@@ -66,27 +66,79 @@ export async function POST(req: Request) {
         updatedAt: nowStr,
       });
 
-      // 2. Create the timeline items
+      // 2. Create the timeline items and their assignments
       if (events.length > 0) {
-        await tx.insert(timelineItemsTable).values(
-          events.map((event: any, index: number) => ({
-            id: `ti_${projectId}_${index}_${Math.random().toString(36).substring(7)}`,
+        const teamIds = Array.isArray(assignedIds) ? assignedIds : (assignedIds ? assignedIds.split(",") : []);
+
+        for (let i = 0; i < events.length; i++) {
+          const event = events[i];
+          const itemId = `ti_${projectId}_${i}_${Math.random().toString(36).substring(7)}`;
+          const subject = (event.subject || "").toUpperCase();
+
+          // INTELLIGENT ASSIGNMENT LOGIC
+          let finalOwner = "INTERNAL TEAM";
+          let assignToClient = false;
+          let assignToTeam = true;
+
+          if (subject.includes("KICK-OFF") || subject.includes("KICK OFF")) {
+            finalOwner = "TEAM + CLIENT";
+            assignToClient = true;
+          } else if (subject.includes("MASTER DATA") || subject.includes("MASTERDATA")) {
+            finalOwner = "TEAM + CLIENT";
+            assignToClient = true;
+          } else if (subject.includes("CONTRACT SIGN-OFF") || subject.includes("SIGN OFF")) {
+            finalOwner = "CLIENT";
+            assignToClient = true;
+            assignToTeam = false;
+          } else if (subject.includes("USER ACCEPTANCE") || subject.includes("UAT")) {
+            finalOwner = "TEAM + CLIENT";
+            assignToClient = true;
+          } else if (subject.includes("TRAINING")) {
+            finalOwner = "TEAM + CLIENT";
+            assignToClient = true;
+          } else if (subject.includes("GO LIVE") || subject.includes("GO-LIVE")) {
+            finalOwner = "TEAM + CLIENT";
+            assignToClient = true;
+          } else if (subject.includes("FEEDBACK")) {
+            finalOwner = "TEAM + CLIENT";
+            assignToClient = true;
+          }
+
+          await tx.insert(timelineItemsTable).values({
+            id: itemId,
             projectId: projectId,
             clientProfileId: clientProfileId || null,
-            taskCode: event.taskCode || `T-${String(index + 1).padStart(2, '0')}`,
+            taskCode: event.taskCode || `T-${String(i + 1).padStart(2, '0')}`,
             subject: event.subject || "Untitled Task",
             plannedStart: safeIsoDate(event.startDate, sanitizedStartDate),
             plannedEnd: safeIsoDate(event.endDate, sanitizedStartDate),
-            externalPlannedEnd: calculateClientEndDate(event.endDate, 3), // Initial default padding
+            externalPlannedEnd: event.externalPlannedEnd || calculateClientEndDate(event.endDate, 3),
             durationHours: event.durationHours || 8,
-            owner: event.owner || null,
+            owner: finalOwner,
             description: event.description || null,
             status: "pending",
-            sortOrder: index + 1,
+            sortOrder: i + 1,
+            paddingDays: event.paddingDays || 0,
             createdAt: nowStr,
             updatedAt: nowStr,
-          }))
-        );
+          });
+
+          // Create explicit assignments for the team
+          if (assignToTeam && teamIds.length > 0) {
+            const assignmentValues = teamIds.map((tid: string) => ({
+              id: `ta_${itemId}_${tid.substring(0, 4)}`,
+              timelineItemId: itemId,
+              userId: tid,
+            }));
+            
+            try {
+              const { taskAssignments } = require("@/db/schema");
+              await tx.insert(taskAssignments).values(assignmentValues);
+            } catch (err) {
+              console.warn("Assignment join failed (schema sync?):", err);
+            }
+          }
+        }
       }
 
       // Return the project summary

@@ -323,31 +323,40 @@ export default function InteractiveGantt({
                          <div 
                           style={{ left: `calc(${pos.left}px)`, width: `calc(${pos.width}px)` }}
                           onMouseDown={(ev) => handleDragStart(index, "move", ev.clientX)}
-                          className={`absolute top-2.5 bottom-2.5 bg-gradient-to-r ${getProjectGradient(e.projectName, e.id)} rounded-lg shadow-sm border border-black/5 flex flex-col justify-center px-4 text-white z-20 transition-all ${isCompleted ? 'opacity-100 shadow-md ring-1 ring-black/5' : 'opacity-80 cursor-move border-dashed hover:opacity-100'}`}
+                          className={`absolute top-2.5 bottom-2.5 bg-gradient-to-r ${getProjectGradient(e.projectName, e.id)} rounded-lg shadow-sm border border-black/5 flex flex-col justify-center px-4 text-white z-20 group/bar transition-all ${isCompleted ? 'opacity-100 shadow-md ring-1 ring-black/5' : 'opacity-80 cursor-move border-dashed hover:opacity-100'}`}
                         >
                            {!isCompleted && (
                              <>
                                <div className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/30 active:bg-white/50 z-30" onMouseDown={(ev) => { ev.stopPropagation(); handleDragStart(index, "left", ev.clientX); }} />
                                <div className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/30 active:bg-white/50 z-30" onMouseDown={(ev) => { ev.stopPropagation(); handleDragStart(index, "right", ev.clientX); }} />
+                               
+                               {/* TERMINAL BUFFER ICON */}
+                               <button 
+                                 onClick={(ev) => { ev.stopPropagation(); onUpdateBuffer?.(e.id, e.paddingDays || 0); }}
+                                 className="absolute -right-2 top-1/2 -translate-y-1/2 w-5 h-5 bg-white shadow-lg rounded-full flex items-center justify-center opacity-0 group-hover/bar:opacity-100 hover:scale-110 transition-all z-40 text-primary border border-slate-100"
+                                 title="Add Client Buffer"
+                               >
+                                 <Timer className="w-3 h-3" strokeWidth={2.5} />
+                               </button>
                              </>
                            )}
                         </div>
 
-                        {/* EXTERNAL PADDING BAR (ORANGE) */}
-                        {e.externalPlannedEnd && (
+                        {/* EXTERNAL PADDING BAR (ORANGE) - ONLY SHOW IF PADDING > 0 */}
+                        {e.paddingDays && e.paddingDays > 0 && e.externalPlannedEnd && (
                           (() => {
                             const extPos = calculatePosition(e.endDate, e.externalPlannedEnd);
                             return (
                               <div 
                                 onClick={(ev) => { ev.stopPropagation(); onUpdateBuffer?.(e.id, e.paddingDays || 0); }}
                                 style={{ 
-                                  left: `calc((${pos.left} + ${pos.width}) * 1px - 4px)`, 
+                                  left: `calc(${pos.left + pos.width}px - 4px)`, 
                                   width: `calc(${extPos.width}px + 4px)`
                                 }}
-                                className="absolute top-4 bottom-4 bg-orange-400/40 border border-orange-400/60 rounded-r-lg z-10 flex items-center justify-end px-2 cursor-pointer hover:bg-orange-400/50 transition-all"
+                                className="absolute top-4 bottom-4 bg-orange-400/30 border border-orange-400/50 rounded-r-lg z-10 flex items-center justify-end px-2 cursor-pointer hover:bg-orange-400/50 transition-all group/buffer"
                                 title={`Client Buffer until ${e.externalPlannedEnd}. Click to edit.`}
                               >
-                                <span className="text-[8px] font-bold text-orange-600 hidden group-hover:block">LEG ROOM</span>
+                                <span className="text-[7px] font-black text-orange-600/60 uppercase tracking-tighter opacity-0 group-hover/buffer:opacity-100 whitespace-nowrap">Client Buffer</span>
                               </div>
                             );
                           })()
