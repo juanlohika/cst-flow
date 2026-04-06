@@ -34,41 +34,30 @@ export default function BufferModal({
   }, [currentPadding]);
 
   const handleSave = async () => {
-    // Bulk mode: caller handles all DB writes + state updates
-    if (bulkCount && bulkCount > 1) {
+    // Bulk mode OR temporary tasks: caller updates local state first
+    if ((bulkCount && bulkCount > 1) || taskId.startsWith("temp-")) {
       onSuccess(padding);
-      return;
-    }
-
-    // Unsaved/generated tasks have temp IDs — can't persist buffer until project is saved
-    if (taskId.startsWith("temp-")) {
-      showToast("Save the project first before setting client buffers.", "error");
       return;
     }
 
     setLoading(true);
     try {
       let resolvedPlannedEnd = plannedEnd;
-
-      // Only fetch the task if plannedEnd was not passed as a prop
       if (!resolvedPlannedEnd) {
         const taskRes = await fetch(`/api/tasks/${taskId}`);
-        if (!taskRes.ok) throw new Error("Task not found. Save the project first.");
+        if (!taskRes.ok) throw new Error("Task not found.");
         const task = await taskRes.json();
         resolvedPlannedEnd = task.plannedEnd;
-        if (!resolvedPlannedEnd) throw new Error("Task has no planned end date");
       }
+
+      if (!resolvedPlannedEnd) throw new Error("Task has no end date");
 
       const externalPlannedEnd = addDaysSkippingWeekends(resolvedPlannedEnd, padding);
 
       const res = await fetch("/api/tasks", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: taskId,
-          paddingDays: padding,
-          externalPlannedEnd,
-        }),
+        body: JSON.stringify({ id: taskId, paddingDays: padding, externalPlannedEnd }),
       });
 
       if (res.ok) {
@@ -78,76 +67,74 @@ export default function BufferModal({
         throw new Error("Failed to save");
       }
     } catch (err: any) {
-      showToast(err.message || "Failed to save buffer", "error");
+      showToast(err.message || "Error saving buffer", "error");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-[360px] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-200">
-        {/* Header */}
-        <div className="px-6 py-4 border-b bg-slate-50/50 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center text-white shadow-sm">
-              <Timer className="w-4 h-4" />
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/5 backdrop-blur-[2px] animate-in fade-in duration-200">
+      <div className="bg-white rounded-xl shadow-2xl w-[260px] overflow-hidden border border-border animate-in zoom-in-95 duration-200 ring-4 ring-black/5">
+        
+        {/* Compact Header */}
+        <div className="px-4 py-3 border-b bg-surface-subtle flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 bg-primary rounded-md flex items-center justify-center text-white shadow-sm ring-1 ring-primary/20">
+              <Timer className="w-3.5 h-3.5" strokeWidth={2.5} />
             </div>
             <div>
-              <span className="text-[11px] font-black text-slate-800 uppercase tracking-[0.1em]">Client Leg Room</span>
+              <span className="text-[10px] font-bold text-text-primary uppercase tracking-wider">Client Buffer</span>
               {bulkCount && bulkCount > 1 && (
-                <p className="text-[9px] font-black text-indigo-600 uppercase tracking-widest mt-0.5">
-                  Applying to {bulkCount} tasks
+                <p className="text-[8px] font-bold text-primary uppercase tracking-widest leading-none">
+                  {bulkCount} Tasks Selected
                 </p>
               )}
             </div>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center hover:bg-slate-200 rounded-xl transition-colors text-slate-400">
-            <X size={16} />
+          <button onClick={onClose} className="p-1 hover:bg-surface-muted rounded-md transition-colors text-text-secondary opacity-50 hover:opacity-100">
+            <X size={14} />
           </button>
         </div>
 
-        {/* Content */}
-        <div className="p-8">
-          <div className="space-y-6">
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 text-center">Buffer Days (Business Days)</label>
-              <div className="flex items-center justify-center gap-4">
-                <input
-                  type="number"
-                  min="0"
-                  max="30"
-                  value={padding}
-                  onChange={(e) => setPadding(parseInt(e.target.value) || 0)}
-                  className="w-20 h-14 bg-slate-50 border-2 border-slate-100 rounded-2xl text-xl font-black text-slate-800 focus:outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all text-center"
-                />
-                <span className="text-xs font-black text-slate-400 uppercase">Days</span>
-              </div>
+        {/* Compact Content */}
+        <div className="p-4 bg-white">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-full flex items-center justify-between bg-surface-subtle rounded-lg p-2 border border-border">
+              <span className="text-[9px] font-bold text-text-secondary uppercase tracking-widest pl-1">Days</span>
+              <input
+                type="number"
+                min="0"
+                max="30"
+                autoFocus
+                value={padding}
+                onChange={(e) => setPadding(parseInt(e.target.value) || 0)}
+                onKeyDown={(e) => e.key === "Enter" && handleSave()}
+                className="w-16 h-8 bg-white border border-border rounded-md text-sm font-bold text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-center"
+              />
             </div>
-
-            <div className="bg-amber-50/50 border border-amber-100 p-4 rounded-2xl">
-              <p className="text-[10px] text-amber-700 leading-relaxed font-bold italic text-center">
-                Weekends are automatically skipped. This padding affects only the Client-facing deadline.
-              </p>
-            </div>
+            
+            <p className="text-[8px] text-text-secondary font-medium italic opacity-60 text-center leading-tight">
+              Saturdays & Sundays are automatically skipped.
+            </p>
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-6 bg-slate-50/50 border-t flex gap-3">
+        {/* Compact Footer */}
+        <div className="px-3 py-3 bg-surface-subtle border-t flex gap-2">
           <button
             onClick={onClose}
-            className="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-2xl text-[10px] font-black text-slate-400 hover:bg-slate-100 transition-all uppercase tracking-widest"
+            className="flex-1 py-1.5 bg-white border border-border rounded-md text-[9px] font-bold text-text-secondary hover:bg-surface-muted transition-all uppercase tracking-widest shadow-sm"
           >
             Cancel
           </button>
           <button
-            onClick={handleSave}
             disabled={loading}
-            className="flex-1 px-4 py-3 bg-primary text-white rounded-2xl text-[10px] font-black shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 uppercase tracking-widest disabled:opacity-50"
+            onClick={handleSave}
+            className="flex-1 py-1.5 bg-primary text-white rounded-md text-[9px] font-bold shadow-md shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 uppercase tracking-widest disabled:opacity-50 ring-1 ring-primary/30"
           >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} strokeWidth={3} />}
-            {bulkCount && bulkCount > 1 ? `Apply to ${bulkCount} Tasks` : "Save Buffer"}
+            {loading ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} strokeWidth={3} />}
+            {bulkCount && bulkCount > 1 ? "Apply" : "Save"}
           </button>
         </div>
       </div>

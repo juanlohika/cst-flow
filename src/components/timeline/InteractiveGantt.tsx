@@ -175,7 +175,7 @@ export default function InteractiveGantt({
         ev.endDate = addDays(dragInfo.initialEnd, deltaDays);
       }
       if (ev.paddingDays && ev.paddingDays > 0) {
-        ev.externalPlannedEnd = calculateClientEndDate(ev.endDate, ev.paddingDays);
+        ev.externalPlannedEnd = calculateClientEndDate(ev.endDate, ev.paddingDays) || undefined;
       }
       newEvents[dragInfo.index] = ev;
       onUpdateEvents(newEvents);
@@ -275,13 +275,7 @@ export default function InteractiveGantt({
                         if (!dragOccurredRef.current && editingId !== e.id) onTaskClick?.(e.id);
                       }}
                     >
-                      {selectionMode && !e.isSummary && (
-                        <div className="absolute left-2 top-1/2 -translate-y-1/2 z-10">
-                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-all ${selectedIds?.has(e.id) ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 bg-white'}`}>
-                            {selectedIds?.has(e.id) && <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M1.5 4.5L3.5 6.5L7.5 2.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
-                          </div>
-                        </div>
-                      )}
+                      {/* Buffer Selection indicator deleted — using icons and highlights now */}
                       {depth > 0 && (
                         <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ backgroundColor: `hsl(${(depth * 60 + 220) % 360}, 60%, 65%)`, marginLeft: depth * 20 - 4 }} />
                       )}
@@ -313,9 +307,13 @@ export default function InteractiveGantt({
                             </span>
                             {onUpdateBuffer && !e.isSummary && (
                                <button 
-                                 onClick={(ev) => { ev.stopPropagation(); onUpdateBuffer(e.id, e.paddingDays || 0); }}
-                                 className="opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-primary transition-all rounded hover:bg-primary/5 shadow-sm"
-                                 title="Add/Edit Client Buffer"
+                                 onClick={(ev) => { 
+                                   ev.stopPropagation(); 
+                                   if (onToggleSelect) onToggleSelect(e.id);
+                                   else onUpdateBuffer(e.id, e.paddingDays || 0);
+                                 }}
+                                 className={`p-1 transition-all rounded hover:bg-primary/5 shadow-sm ${selectedIds?.has(e.id) ? 'opacity-100 text-primary bg-primary/10 ring-1 ring-primary/30' : 'opacity-0 group-hover:opacity-100 text-slate-300 hover:text-primary'}`}
+                                 title="Set/Select for Client Buffer"
                                >
                                  <Timer className="w-2.5 h-2.5" strokeWidth={3} />
                                </button>
@@ -361,9 +359,13 @@ export default function InteractiveGantt({
                                
                                {/* TERMINAL BUFFER ICON */}
                                <button 
-                                 onClick={(ev) => { ev.stopPropagation(); onUpdateBuffer?.(e.id, e.paddingDays || 0); }}
-                                 className="absolute -right-5 top-1/2 -translate-y-1/2 w-5 h-5 bg-white shadow-lg rounded-full flex items-center justify-center opacity-0 group-hover/bar:opacity-100 hover:scale-110 transition-all z-40 text-primary border border-slate-100"
-                                 title="Add Client Buffer"
+                                 onClick={(ev) => { 
+                                   ev.stopPropagation(); 
+                                   if (onToggleSelect) onToggleSelect(e.id);
+                                   else onUpdateBuffer?.(e.id, e.paddingDays || 0);
+                                 }}
+                                 className={`absolute -right-5 top-1/2 -translate-y-1/2 w-5 h-5 shadow-lg rounded-full flex items-center justify-center transition-all z-40 border ${selectedIds?.has(e.id) ? 'opacity-100 bg-primary text-white border-primary scale-110' : 'opacity-0 group-hover/bar:opacity-100 bg-white text-primary border-slate-100 hover:scale-110'}`}
+                                 title="Set/Select for Client Buffer"
                                >
                                  <Timer className="w-3 h-3" strokeWidth={2.5} />
                                </button>
@@ -377,9 +379,9 @@ export default function InteractiveGantt({
                            )}
                         </div>
 
-                        {/* EXTERNAL PADDING BAR (ORANGE) - ONLY SHOW IF PADDING > 0 */}
                         {Boolean(e.paddingDays && e.paddingDays > 0 && e.externalPlannedEnd) && (
                           (() => {
+                            if (!e.externalPlannedEnd) return null;
                             const extPos = calculatePosition(e.endDate, e.externalPlannedEnd);
                             return (
                               <div 

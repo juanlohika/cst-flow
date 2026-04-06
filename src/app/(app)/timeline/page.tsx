@@ -83,14 +83,8 @@ function TimelineApp() {
   const [selectedTask, setSelectedTask] = useState<TimelineEvent | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   
-  // BUFFER MODAL STATE
-  const [bufferTaskId, setBufferTaskId] = useState<string | null>(null);
-  const [isBufferModalOpen, setIsBufferModalOpen] = useState(false);
-
   // MULTI-SELECT BUFFER STATE
-  const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkBufferOpen, setBulkBufferOpen] = useState(false);
   
   const [shareLink, setShareLink] = useState<string | null>(null);
   const mermaidRef = useRef<HTMLDivElement>(null);
@@ -215,30 +209,6 @@ function TimelineApp() {
     }
   };
 
-  const handleAddBuffer = (taskId: string) => {
-    setBufferTaskId(taskId);
-    setIsBufferModalOpen(true);
-  };
-
-  const handleSaveBuffer = (padding: number) => {
-    if (!bufferTaskId) return;
-
-    setEvents(prev => prev.map(ev => {
-      if (ev.id === bufferTaskId) {
-        const externalEnd = calculateClientEndDate(ev.endDate, padding);
-        return {
-          ...ev,
-          paddingDays: padding,
-          externalPlannedEnd: externalEnd || ev.endDate
-        };
-      }
-      return ev;
-    }));
-
-    setIsBufferModalOpen(false);
-    setBufferTaskId(null);
-  };
-
   const handleToggleSelect = (id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -256,15 +226,8 @@ function TimelineApp() {
       }
       return ev;
     }));
-    setBulkBufferOpen(false);
     setSelectedIds(new Set());
-    setSelectionMode(false);
     showToast(`Buffer applied to ${selectedIds.size} task${selectedIds.size !== 1 ? "s" : ""}.`, "success");
-  };
-
-  const exitSelectionMode = () => {
-    setSelectionMode(false);
-    setSelectedIds(new Set());
   };
 
   const generateTimeline = async (e: React.FormEvent) => {
@@ -623,15 +586,16 @@ function TimelineApp() {
                      ))}
                    </div>
                    <button
-                     onClick={() => selectionMode ? exitSelectionMode() : setSelectionMode(true)}
+                     onClick={() => setSelectedIds(new Set())}
+                     disabled={selectedIds.size === 0}
                      className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg border transition-all ${
-                       selectionMode
-                         ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200"
-                         : "bg-surface-default text-text-secondary border-border-default hover:border-indigo-300 hover:text-indigo-600"
+                       selectedIds.size > 0
+                         ? "bg-primary text-white border-primary shadow-md shadow-primary/20"
+                         : "bg-surface-default text-text-secondary border-border-default opacity-50"
                      }`}
                    >
-                     <CheckSquare className="w-3.5 h-3.5" />
-                     {selectionMode ? "Exit Select" : "Multi-Select"}
+                     <Clock className="w-3.5 h-3.5" />
+                     {selectedIds.size > 0 ? `Selected: ${selectedIds.size}` : "No Selection"}
                    </button>
                  </div>
                )}
@@ -685,36 +649,14 @@ function TimelineApp() {
                             events={events}
                             onUpdateEvents={handleUpdateEvents}
                             onTaskClick={handleTaskClick}
-                            onUpdateBuffer={handleAddBuffer}
+                            onUpdateBuffer={id => handleToggleSelect(id)}
                             scale={scale}
                             ganttRef={interactiveGanttRef}
-                            selectionMode={selectionMode}
+                            selectionMode={selectedIds.size > 0}
                             selectedIds={selectedIds}
                             onToggleSelect={handleToggleSelect}
                           />
-                          {selectionMode && selectedIds.size > 0 && (
-                            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-slate-900 text-white px-5 py-3 rounded-xl shadow-2xl border border-slate-700 animate-in slide-in-from-bottom-2 duration-200">
-                              <div className="w-6 h-6 bg-indigo-600 rounded-md flex items-center justify-center text-xs font-black shrink-0">
-                                {selectedIds.size}
-                              </div>
-                              <span className="text-[11px] font-black uppercase tracking-widest text-slate-300">
-                                task{selectedIds.size !== 1 ? "s" : ""} selected
-                              </span>
-                              <button
-                                onClick={() => setBulkBufferOpen(true)}
-                                className="ml-2 flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-lg transition-all"
-                              >
-                                <Clock className="w-3.5 h-3.5" />
-                                Set Buffer →
-                              </button>
-                              <button
-                                onClick={exitSelectionMode}
-                                className="text-slate-400 hover:text-white text-[10px] font-black uppercase tracking-widest transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          )}
+                          {/* Bottom selection bar removed — now using integrated Floating Buffer Card */}
                         </div>
                     )}
                  </div>
@@ -802,27 +744,29 @@ function TimelineApp() {
         )}
       </div>
 
-      {isBufferModalOpen && (
+      {/* INTEGRATED BUFFER MINI-CARD (FOR SINGLE & BULK) */}
+      {selectedIds.size > 0 && (
         <BufferModal
-          taskId={bufferTaskId || ""}
-          currentPadding={events.find(e => e.id === bufferTaskId)?.paddingDays || 0}
-          plannedEnd={events.find(e => e.id === bufferTaskId)?.endDate}
-          onClose={() => setIsBufferModalOpen(false)}
-          onSuccess={(newPadding) => {
-            handleSaveBuffer(newPadding);
-          }}
-        />
-      )}
-
-      {bulkBufferOpen && (
-        <BufferModal
-          taskId={[...selectedIds][0] || ""}
-          currentPadding={0}
-          plannedEnd={events.find(e => selectedIds.has(e.id))?.endDate}
+          taskId={Array.from(selectedIds)[0]}
+          currentPadding={selectedIds.size === 1 ? (events.find(e => e.id === Array.from(selectedIds)[0])?.paddingDays || 0) : 0}
+          plannedEnd={events.find(e => e.id === Array.from(selectedIds)[0])?.endDate}
           bulkCount={selectedIds.size}
-          onClose={() => setBulkBufferOpen(false)}
+          onClose={() => setSelectedIds(new Set())}
           onSuccess={(newPadding) => {
-            handleBulkBuffer(newPadding);
+            if (selectedIds.size > 1) {
+              handleBulkBuffer(newPadding);
+            } else {
+              // Local save logic
+              setEvents(prev => prev.map(ev => {
+                const firstId = Array.from(selectedIds)[0];
+                if (ev.id === firstId) {
+                  const externalEnd = calculateClientEndDate(ev.endDate, newPadding);
+                  return { ...ev, paddingDays: newPadding, externalPlannedEnd: externalEnd || ev.endDate };
+                }
+                return ev;
+              }));
+            }
+            setSelectedIds(new Set());
           }}
         />
       )}
