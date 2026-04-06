@@ -14,6 +14,7 @@ interface ProjectSettingsViewProps {
     name?: string | null;
     shareToken?: string | null;
     assignedIds?: string | null;
+    internalInCharge?: string | null;
     archived?: boolean;
   };
   onUpdate: () => void;
@@ -34,6 +35,7 @@ export default function ProjectSettingsView({ project, onUpdate }: ProjectSettin
 
   const [assignedIds, setAssignedIds] = useState<string[]>([]);
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
+  const [pmUserId, setPmUserId] = useState<string>(project?.internalInCharge || "");
   const [stakeholders, setStakeholders] = useState<Stakeholder[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newStakeholder, setNewStakeholder] = useState({ fullName: "", email: "", role: "" });
@@ -80,6 +82,21 @@ export default function ProjectSettingsView({ project, onUpdate }: ProjectSettin
     setIsCopied(true);
     showToast("Portal link copied!", "success");
     setTimeout(() => setIsCopied(false), 2000);
+  };
+
+  const savePM = async (userId: string) => {
+    setPmUserId(userId);
+    try {
+      await fetch(`/api/projects/${project.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ internalInCharge: userId }),
+      });
+      onUpdate();
+      showToast("Project Manager updated", "success");
+    } catch {
+      showToast("Failed to update Project Manager", "error");
+    }
   };
 
   const toggleUser = async (userId: string) => {
@@ -243,6 +260,23 @@ export default function ProjectSettingsView({ project, onUpdate }: ProjectSettin
               <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Members</span>
             </span>
           </div>
+
+          {/* PM selector */}
+          {assignedMembers.length > 0 && (
+            <div className="mb-4 flex items-center gap-2 p-3 bg-indigo-50/50 border border-indigo-100 rounded-lg">
+              <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest shrink-0">Project Manager</span>
+              <select
+                value={pmUserId}
+                onChange={e => savePM(e.target.value)}
+                className="flex-1 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 transition-all"
+              >
+                <option value="">— Not assigned —</option>
+                {assignedMembers.map(u => (
+                  <option key={u.id} value={u.id}>{u.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {availableUsers.length === 0 ? (
             <div className="py-8 flex flex-col items-center bg-slate-50 border border-dashed border-slate-200 rounded-lg">

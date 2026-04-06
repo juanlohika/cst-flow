@@ -21,10 +21,7 @@ export async function GET(
 
     const { searchParams } = new URL(req.url);
     const email = searchParams.get("email")?.toLowerCase().trim();
-
-    if (!email) {
-      return NextResponse.json({ error: "Email required" }, { status: 400 });
-    }
+    const peek = searchParams.get("peek") === "true";
 
     // 1. Fetch Project by Share Token
     const projects = await db.select().from(projectsTable).where(eq(projectsTable.shareToken, token)).limit(1);
@@ -32,6 +29,15 @@ export async function GET(
 
     if (!project) {
       return NextResponse.json({ error: "Project not found or link expired" }, { status: 404 });
+    }
+
+    // Peek mode: return only project name (for lock screen display)
+    if (peek) {
+      return NextResponse.json({ name: project.name, companyName: project.companyName });
+    }
+
+    if (!email) {
+      return NextResponse.json({ error: "Email required" }, { status: 400 });
     }
 
     // 2. Validate email against registered stakeholders

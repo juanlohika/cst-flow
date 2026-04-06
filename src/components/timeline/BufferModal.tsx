@@ -10,6 +10,8 @@ interface BufferModalProps {
   currentPadding: number;
   /** Pass plannedEnd directly to avoid re-fetching the task */
   plannedEnd?: string;
+  /** When set, shows "Apply to N tasks" label and skips DB write (caller handles bulk apply) */
+  bulkCount?: number;
   onClose: () => void;
   /** Called after successful DB save — receives the new padding value */
   onSuccess: (newPadding: number) => void;
@@ -19,6 +21,7 @@ export default function BufferModal({
   taskId,
   currentPadding,
   plannedEnd,
+  bulkCount,
   onClose,
   onSuccess,
 }: BufferModalProps) {
@@ -31,6 +34,18 @@ export default function BufferModal({
   }, [currentPadding]);
 
   const handleSave = async () => {
+    // Bulk mode: caller handles all DB writes + state updates
+    if (bulkCount && bulkCount > 1) {
+      onSuccess(padding);
+      return;
+    }
+
+    // Unsaved/generated tasks have temp IDs — can't persist buffer until project is saved
+    if (taskId.startsWith("temp-")) {
+      showToast("Save the project first before setting client buffers.", "error");
+      return;
+    }
+
     setLoading(true);
     try {
       let resolvedPlannedEnd = plannedEnd;
@@ -38,7 +53,7 @@ export default function BufferModal({
       // Only fetch the task if plannedEnd was not passed as a prop
       if (!resolvedPlannedEnd) {
         const taskRes = await fetch(`/api/tasks/${taskId}`);
-        if (!taskRes.ok) throw new Error("Task not found");
+        if (!taskRes.ok) throw new Error("Task not found. Save the project first.");
         const task = await taskRes.json();
         resolvedPlannedEnd = task.plannedEnd;
         if (!resolvedPlannedEnd) throw new Error("Task has no planned end date");
@@ -78,7 +93,14 @@ export default function BufferModal({
             <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center text-white shadow-sm">
               <Timer className="w-4 h-4" />
             </div>
-            <span className="text-[11px] font-black text-slate-800 uppercase tracking-[0.1em]">Client Leg Room</span>
+            <div>
+              <span className="text-[11px] font-black text-slate-800 uppercase tracking-[0.1em]">Client Leg Room</span>
+              {bulkCount && bulkCount > 1 && (
+                <p className="text-[9px] font-black text-indigo-600 uppercase tracking-widest mt-0.5">
+                  Applying to {bulkCount} tasks
+                </p>
+              )}
+            </div>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center hover:bg-slate-200 rounded-xl transition-colors text-slate-400">
             <X size={16} />
@@ -125,7 +147,7 @@ export default function BufferModal({
             className="flex-1 px-4 py-3 bg-primary text-white rounded-2xl text-[10px] font-black shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 uppercase tracking-widest disabled:opacity-50"
           >
             {loading ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} strokeWidth={3} />}
-            Save Buffer
+            {bulkCount && bulkCount > 1 ? `Apply to ${bulkCount} Tasks` : "Save Buffer"}
           </button>
         </div>
       </div>

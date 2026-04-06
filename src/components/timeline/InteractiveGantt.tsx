@@ -33,18 +33,25 @@ interface InteractiveGanttProps {
   onUpdateBuffer?: (taskId: string, currentPadding: number) => void;
   scale: "day" | "week" | "month";
   ganttRef?: React.RefObject<HTMLDivElement>;
+  /** When true, rows show checkboxes for multi-select buffer mode */
+  selectionMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
 }
 
-export default function InteractiveGantt({ 
-  events, 
-  onUpdateEvents, 
-  onTaskClick, 
-  onReschedule, 
-  onToggleExpand, 
-  onAllocateHours, 
+export default function InteractiveGantt({
+  events,
+  onUpdateEvents,
+  onTaskClick,
+  onReschedule,
+  onToggleExpand,
+  onAllocateHours,
   onUpdateBuffer,
-  scale, 
-  ganttRef 
+  scale,
+  ganttRef,
+  selectionMode = false,
+  selectedIds,
+  onToggleSelect,
 }: InteractiveGanttProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
@@ -262,9 +269,19 @@ export default function InteractiveGantt({
                 return (
                   <div key={index} style={{ height: ROW_HEIGHT }} className={`flex border-b transition-colors group ${e.isSummary ? 'bg-slate-50/20' : (depth > 0 ? 'bg-slate-50/60 border-slate-100/80 hover:bg-slate-100/40' : 'bg-white border-slate-100 hover:bg-slate-50/40')}`}>
                     <div
-                      className={`w-[320px] shrink-0 sticky left-0 z-50 border-r flex flex-col justify-center px-5 shadow-[4px_0_12px_rgba(0,0,0,0.01)] cursor-pointer ${depth > 0 ? 'bg-slate-50/80' : 'bg-white'}`}
-                      onClick={() => !dragOccurredRef.current && editingId !== e.id && onTaskClick?.(e.id)}
+                      className={`w-[320px] shrink-0 sticky left-0 z-50 border-r flex flex-col justify-center px-5 shadow-[4px_0_12px_rgba(0,0,0,0.01)] cursor-pointer ${depth > 0 ? 'bg-slate-50/80' : 'bg-white'} ${selectionMode && selectedIds?.has(e.id) ? 'bg-indigo-50/60' : ''}`}
+                      onClick={() => {
+                        if (selectionMode && !e.isSummary) { onToggleSelect?.(e.id); return; }
+                        if (!dragOccurredRef.current && editingId !== e.id) onTaskClick?.(e.id);
+                      }}
                     >
+                      {selectionMode && !e.isSummary && (
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 z-10">
+                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-all ${selectedIds?.has(e.id) ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 bg-white'}`}>
+                            {selectedIds?.has(e.id) && <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M1.5 4.5L3.5 6.5L7.5 2.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                          </div>
+                        </div>
+                      )}
                       {depth > 0 && (
                         <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ backgroundColor: `hsl(${(depth * 60 + 220) % 360}, 60%, 65%)`, marginLeft: depth * 20 - 4 }} />
                       )}

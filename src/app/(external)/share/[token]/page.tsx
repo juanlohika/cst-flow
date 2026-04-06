@@ -15,13 +15,19 @@ export default function ClientPortalPage({ params }: { params: { token: string }
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"list" | "gantt" | "summary">("list");
   const [branding, setBranding] = useState<{ appName: string; logoUrl: string }>({ appName: "CST OS", logoUrl: "" });
+  const [projectName, setProjectName] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/branding")
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setBranding({ appName: d.appName || "CST OS", logoUrl: d.logoUrl || "" }); })
       .catch(() => {});
-  }, []);
+    // Peek: get project name for lock screen without email
+    fetch(`/api/share/${params.token}?peek=true`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.name) setProjectName(d.name); })
+      .catch(() => {});
+  }, [params.token]);
 
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,7 +55,7 @@ export default function ClientPortalPage({ params }: { params: { token: string }
     return (
       <div className="min-h-screen bg-[#F7F7F5] flex flex-col items-center justify-center p-6 font-sans">
 
-        {/* Logo bar */}
+        {/* Logo */}
         <div className="mb-8 flex items-center gap-2">
           {branding.logoUrl ? (
             <img src={branding.logoUrl} alt={branding.appName} className="h-8 w-auto" />
@@ -58,17 +64,17 @@ export default function ClientPortalPage({ params }: { params: { token: string }
           )}
         </div>
 
-        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
-          {/* Card header accent */}
-          <div className="h-1.5 bg-gradient-to-r from-indigo-500 to-indigo-600" />
-
+        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl border border-slate-100">
           <div className="p-8 flex flex-col items-center">
             <div className="w-14 h-14 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-center justify-center mb-5">
               <ShieldCheck className="w-7 h-7 text-indigo-600" />
             </div>
-            <h1 className="text-xl font-black text-slate-900 tracking-tight mb-1">Project Roadmap Access</h1>
+            {/* Project name or fallback */}
+            <h1 className="text-xl font-black text-slate-900 tracking-tight mb-1 text-center">
+              {projectName || "Project Roadmap"}
+            </h1>
             <p className="text-sm text-slate-500 text-center mb-7 leading-relaxed">
-              Enter the email address you were registered with as a project stakeholder.
+              Enter your email address to access this project roadmap.
             </p>
 
             <form onSubmit={handleUnlock} className="w-full flex flex-col gap-3">
@@ -87,7 +93,7 @@ export default function ClientPortalPage({ params }: { params: { token: string }
                 disabled={loading}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-md shadow-indigo-200 active:scale-[0.98] disabled:opacity-60 text-sm"
               >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Unlock Roadmap →"}
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "View Roadmap →"}
               </button>
             </form>
 
@@ -99,9 +105,6 @@ export default function ClientPortalPage({ params }: { params: { token: string }
           </div>
         </div>
 
-        <p className="mt-6 text-[11px] text-slate-400 text-center">
-          Powered by {branding.appName} &middot; Delivery dates include agreed buffer windows
-        </p>
       </div>
     );
   }

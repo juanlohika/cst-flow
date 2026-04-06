@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSession } from "next-auth/react";
-import { Loader2, Calendar, FileText, Download, Save, Clock, HelpCircle, Image as ImageIcon, Zap, LayoutList, Users } from "lucide-react";
+import { Loader2, Calendar, FileText, Download, Save, Clock, HelpCircle, Image as ImageIcon, Zap, LayoutList, Users, MousePointerClick, CheckSquare } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import GlobalBar from "@/components/layout/GlobalBar";
 import mermaid from "mermaid";
@@ -86,6 +86,11 @@ function TimelineApp() {
   // BUFFER MODAL STATE
   const [bufferTaskId, setBufferTaskId] = useState<string | null>(null);
   const [isBufferModalOpen, setIsBufferModalOpen] = useState(false);
+
+  // MULTI-SELECT BUFFER STATE
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBufferOpen, setBulkBufferOpen] = useState(false);
   
   const [shareLink, setShareLink] = useState<string | null>(null);
   const mermaidRef = useRef<HTMLDivElement>(null);
@@ -217,7 +222,7 @@ function TimelineApp() {
 
   const handleSaveBuffer = (padding: number) => {
     if (!bufferTaskId) return;
-    
+
     setEvents(prev => prev.map(ev => {
       if (ev.id === bufferTaskId) {
         const externalEnd = calculateClientEndDate(ev.endDate, padding);
@@ -229,9 +234,37 @@ function TimelineApp() {
       }
       return ev;
     }));
-    
+
     setIsBufferModalOpen(false);
     setBufferTaskId(null);
+  };
+
+  const handleToggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleBulkBuffer = (padding: number) => {
+    setEvents(prev => prev.map(ev => {
+      if (selectedIds.has(ev.id)) {
+        const externalEnd = calculateClientEndDate(ev.endDate, padding);
+        return { ...ev, paddingDays: padding, externalPlannedEnd: externalEnd || ev.endDate };
+      }
+      return ev;
+    }));
+    setBulkBufferOpen(false);
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+    showToast(`Buffer applied to ${selectedIds.size} task${selectedIds.size !== 1 ? "s" : ""}.`, "success");
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
   };
 
   const generateTimeline = async (e: React.FormEvent) => {
@@ -577,16 +610,29 @@ function TimelineApp() {
                )}
 
                {activeTab === "gantt" && viewMode === "interactive" && (
-                 <div className="flex bg-surface-muted p-1 rounded-lg">
-                   {(["day", "week", "month"] as const).map((s) => (
-                     <button
-                        key={s}
-                        onClick={() => setScale(s)}
-                        className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all ${scale === s ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}
-                     >
-                       {s}
-                     </button>
-                   ))}
+                 <div className="flex items-center gap-2">
+                   <div className="flex bg-surface-muted p-1 rounded-lg">
+                     {(["day", "week", "month"] as const).map((s) => (
+                       <button
+                          key={s}
+                          onClick={() => setScale(s)}
+                          className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all ${scale === s ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}
+                       >
+                         {s}
+                       </button>
+                     ))}
+                   </div>
+                   <button
+                     onClick={() => selectionMode ? exitSelectionMode() : setSelectionMode(true)}
+                     className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg border transition-all ${
+                       selectionMode
+                         ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200"
+                         : "bg-surface-default text-text-secondary border-border-default hover:border-indigo-300 hover:text-indigo-600"
+                     }`}
+                   >
+                     <CheckSquare className="w-3.5 h-3.5" />
+                     {selectionMode ? "Exit Select" : "Multi-Select"}
+                   </button>
                  </div>
                )}
 
@@ -634,15 +680,41 @@ function TimelineApp() {
                           <StitchLoading />
                        </div>
                     ) : (
-                        <div className="flex-1 min-h-0 bg-white">
-                          <InteractiveGantt 
-                            events={events} 
+                        <div className="flex-1 min-h-0 bg-white relative">
+                          <InteractiveGantt
+                            events={events}
                             onUpdateEvents={handleUpdateEvents}
                             onTaskClick={handleTaskClick}
                             onUpdateBuffer={handleAddBuffer}
                             scale={scale}
                             ganttRef={interactiveGanttRef}
+                            selectionMode={selectionMode}
+                            selectedIds={selectedIds}
+                            onToggleSelect={handleToggleSelect}
                           />
+                          {selectionMode && selectedIds.size > 0 && (
+                            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-slate-900 text-white px-5 py-3 rounded-xl shadow-2xl border border-slate-700 animate-in slide-in-from-bottom-2 duration-200">
+                              <div className="w-6 h-6 bg-indigo-600 rounded-md flex items-center justify-center text-xs font-black shrink-0">
+                                {selectedIds.size}
+                              </div>
+                              <span className="text-[11px] font-black uppercase tracking-widest text-slate-300">
+                                task{selectedIds.size !== 1 ? "s" : ""} selected
+                              </span>
+                              <button
+                                onClick={() => setBulkBufferOpen(true)}
+                                className="ml-2 flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-lg transition-all"
+                              >
+                                <Clock className="w-3.5 h-3.5" />
+                                Set Buffer →
+                              </button>
+                              <button
+                                onClick={exitSelectionMode}
+                                className="text-slate-400 hover:text-white text-[10px] font-black uppercase tracking-widest transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          )}
                         </div>
                     )}
                  </div>
@@ -738,6 +810,19 @@ function TimelineApp() {
           onClose={() => setIsBufferModalOpen(false)}
           onSuccess={(newPadding) => {
             handleSaveBuffer(newPadding);
+          }}
+        />
+      )}
+
+      {bulkBufferOpen && (
+        <BufferModal
+          taskId={[...selectedIds][0] || ""}
+          currentPadding={0}
+          plannedEnd={events.find(e => selectedIds.has(e.id))?.endDate}
+          bulkCount={selectedIds.size}
+          onClose={() => setBulkBufferOpen(false)}
+          onSuccess={(newPadding) => {
+            handleBulkBuffer(newPadding);
           }}
         />
       )}

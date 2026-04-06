@@ -721,8 +721,10 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                        <span className="text-2xl font-black text-emerald-500 uppercase">Active</span>
                     </div>
                     <div className="flex flex-col">
-                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Leader</span>
-                       <span className="text-xl font-black text-slate-800 truncate">{formatOwner(session?.user?.name)}</span>
+                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Project Manager</span>
+                       <span className="text-xl font-black text-slate-800 truncate">
+                         {projectRecord?.internalInCharge ? formatOwner(projectRecord.internalInCharge) : formatOwner(session?.user?.name)}
+                       </span>
                     </div>
                  </div>
               </div>
@@ -732,8 +734,8 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
         {viewMode === "settings" && (
            <div className="max-w-5xl mx-auto pb-20">
               <ProjectSettingsView
-                project={projectRecord || { id: projectId, name: projectName, assignedIds: '', archived: showArchived, shareToken: null }}
-                onUpdate={fetchTasks}
+                project={projectRecord || { id: projectId, name: projectName, assignedIds: '', internalInCharge: null, archived: showArchived, shareToken: null }}
+                onUpdate={() => { fetchTasks(); fetch(`/api/projects/${projectId}`).then(r=>r.ok?r.json():null).then(d=>{if(d)setProjectRecord(d);}); }}
               />
            </div>
         )}
@@ -971,9 +973,27 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
         {/* GANTT */}
         {viewMode === "gantt" && (
            <div className="h-full bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
-              <InteractiveGantt 
-                tasks={isLevelZero ? transformToLevelZero(displayTasks) : displayTasks} 
-                onUpdate={fetchTasks} 
+              <InteractiveGantt
+                events={(isLevelZero ? transformToLevelZero(displayTasks) : displayTasks).map((t: any) => ({
+                  id: t.id,
+                  taskCode: t.taskCode || "",
+                  subject: t.subject || "",
+                  startDate: (t.plannedStart || "").split("T")[0],
+                  endDate: (t.plannedEnd || t.plannedStart || "").split("T")[0],
+                  owner: t.owner || "",
+                  status: t.status || "pending",
+                  durationHours: t.durationHours,
+                  paddingDays: t.paddingDays || 0,
+                  externalPlannedEnd: t.externalPlannedEnd,
+                  depth: t.depth || 0,
+                  parentId: t.parentId,
+                  expanded: expandedTasks.has(t.id),
+                  isSummary: t.isSummary,
+                  projectName: t.project?.name || t.projectName,
+                }))}
+                onUpdateEvents={() => {}}
+                scale={ganttScale}
+                ganttRef={ganttRef}
                 onTaskClick={(id: string) => { const t = flattenTasks(tasks).find(x => x.id === id); if (t) setSelectedTask(t); }}
                 onToggleExpand={id => { const n = new Set(expandedTasks); if (n.has(id)) n.delete(id); else n.add(id); setExpandedTasks(n); }}
                 onUpdateBuffer={(id, padding) => setBufferTask({ id, padding })}
