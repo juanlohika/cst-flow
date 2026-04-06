@@ -29,7 +29,6 @@ export async function GET(req: Request) {
       engagementStatus: clientProfilesTable.engagementStatus
     })
     .from(clientProfilesTable)
-    .where(filter === 'mine' ? eq(clientProfilesTable.userId, userId) : undefined)
     .orderBy(asc(clientProfilesTable.companyName));
 
     return NextResponse.json(accounts);

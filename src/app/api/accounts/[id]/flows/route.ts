@@ -26,7 +26,7 @@ export async function GET(
     // Verify account belongs to this user
     const accountRows = await db.select({ id: clientProfilesTable.id })
       .from(clientProfilesTable)
-      .where(and(eq(clientProfilesTable.id, accountId), eq(clientProfilesTable.userId, userId)))
+      .where(eq(clientProfilesTable.id, accountId))
       .limit(1);
       
     if (accountRows.length === 0) {

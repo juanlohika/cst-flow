@@ -19,10 +19,9 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Drizzle: Get profiles for the current user
+    // Drizzle: Get all profiles
     const profiles = await db.select()
       .from(clientProfilesTable)
-      .where(eq(clientProfilesTable.userId, userId))
       .orderBy(desc(clientProfilesTable.createdAt));
 
     // Fetch meeting prep sessions separately
