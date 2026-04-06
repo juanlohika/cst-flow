@@ -21,6 +21,7 @@ const config: Config = {
       },
       colors: {
         border: "var(--color-border-default)",
+        "border-default": "var(--color-border-default)",
         input: "var(--color-gray-200)",
         ring: "var(--color-blue-500)",
         background: "var(--color-surface-default)",
