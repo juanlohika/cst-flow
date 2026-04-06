@@ -382,13 +382,14 @@ export default function InteractiveGantt({
                         {Boolean(e.paddingDays && e.paddingDays > 0 && e.externalPlannedEnd) && (
                           (() => {
                             if (!e.externalPlannedEnd) return null;
-                            const extPos = calculatePosition(e.endDate, e.externalPlannedEnd);
+                            const bufferStart = calculateClientEndDate(e.endDate, 1) || e.endDate;
+                            const extPos = calculatePosition(bufferStart, e.externalPlannedEnd);
                             return (
                               <div 
                                 onClick={(ev) => { ev.stopPropagation(); onUpdateBuffer?.(e.id, e.paddingDays || 0); }}
                                 style={{ 
-                                  left: `calc(${pos.left + pos.width}px - 4px)`, 
-                                  width: `calc(${extPos.width}px + 4px)`
+                                  left: pos.left + pos.width, 
+                                  width: extPos.width
                                 }}
                                 className="absolute top-4 bottom-4 bg-orange-400/30 border border-orange-400/50 rounded-r-lg z-10 flex items-center justify-end px-2 cursor-pointer hover:bg-orange-400/50 transition-all group/buffer"
                                 title={`Client Buffer until ${e.externalPlannedEnd}. Click to edit.`}
