@@ -385,6 +385,250 @@ function inviteEmailHtml({
 }
 
 
+/* ─── Portal Invite Email Template ──────────────────────────── */
+function portalInviteEmailHtml({
+  stakeholderName,
+  projectName,
+  senderName,
+  portalUrl,
+  appName,
+  logoUrl,
+}: {
+  stakeholderName: string;
+  projectName: string;
+  senderName: string;
+  portalUrl: string;
+  appName: string;
+  logoUrl: string;
+}): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Project Roadmap Access – ${projectName}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f7f7f5;
+    color: #252B37;
+    -webkit-font-smoothing: antialiased;
+    padding: 48px 16px;
+  }
+  .wrapper { max-width: 560px; margin: 0 auto; }
+  .card {
+    background: #ffffff;
+    border-radius: 12px;
+    border: 1px solid #E9EAEB;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+  }
+  .card-header {
+    padding: 20px 32px;
+    border-bottom: 1px solid #F5F5F5;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .logo-mark {
+    width: 32px; height: 32px;
+    background: #2162F9;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .logo-dot { width: 8px; height: 8px; background: #44EB7C; border-radius: 50%; display: inline-block; }
+  .logo-name { font-size: 16px; font-weight: 700; color: #252B37; letter-spacing: -0.3px; }
+  .hero {
+    background: linear-gradient(135deg, #2162F9 0%, #4f46e5 100%);
+    padding: 36px 32px;
+    text-align: center;
+  }
+  .hero-icon {
+    width: 56px; height: 56px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
+  }
+  .hero-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.4px;
+    margin-bottom: 6px;
+  }
+  .hero-sub {
+    font-size: 13px;
+    color: rgba(255,255,255,0.75);
+    font-weight: 400;
+  }
+  .card-body { padding: 36px 32px; }
+  .eyebrow {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: #2162F9;
+    margin-bottom: 10px;
+  }
+  .text {
+    font-size: 14px;
+    color: #535862;
+    line-height: 1.7;
+    margin-bottom: 14px;
+  }
+  .text strong { color: #252B37; font-weight: 600; }
+  .project-box {
+    background: #F1F7FF;
+    border: 1px solid #DBEAFE;
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin: 20px 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .project-icon {
+    width: 36px; height: 36px;
+    background: #2162F9;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .project-label { font-size: 10px; font-weight: 700; color: #2162F9; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 2px; }
+  .project-name { font-size: 15px; font-weight: 700; color: #252B37; }
+  .notice {
+    background: #FFFBEB;
+    border: 1px solid #FDE68A;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: #92400E;
+    margin-bottom: 24px;
+    line-height: 1.5;
+  }
+  .cta-wrap { margin: 8px 0 24px; text-align: center; }
+  .cta {
+    display: inline-block;
+    background: #2162F9;
+    color: #ffffff !important;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 14px 36px;
+    border-radius: 8px;
+    text-decoration: none;
+    letter-spacing: -0.1px;
+  }
+  .url-fallback {
+    background: #FAFAFA;
+    border: 1px solid #E9EAEB;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-top: 16px;
+  }
+  .url-fallback p { font-size: 11px; color: #717680; margin-bottom: 4px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+  .url-fallback a { font-size: 12px; color: #2162F9; word-break: break-all; text-decoration: none; }
+  .card-footer {
+    padding: 18px 32px;
+    background: #FAFAFA;
+    border-top: 1px solid #F5F5F5;
+  }
+  .footer-text { font-size: 11px; color: #717680; line-height: 1.6; }
+  .footer-text a { color: #717680; text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+  <div class="card">
+    <div class="card-header">
+      ${logoUrl ? `<img src="${logoUrl}" alt="${appName}" style="height:28px;width:auto;" />` : `<span class="logo-mark"><span class="logo-dot"></span></span><span class="logo-name">${appName}</span>`}
+    </div>
+
+    <div class="hero">
+      <div class="hero-icon">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+      </div>
+      <div class="hero-title">Your Project Roadmap is Ready</div>
+      <div class="hero-sub">View the latest progress and timeline updates</div>
+    </div>
+
+    <div class="card-body">
+      <p class="eyebrow">Client Portal Access</p>
+      <p class="text">Hi${stakeholderName ? ` <strong>${stakeholderName}</strong>` : ""},</p>
+      <p class="text"><strong>${senderName}</strong> has shared a project roadmap with you on <strong>${appName}</strong>. You can now view the latest status, timelines, and delivery dates for:</p>
+
+      <div class="project-box">
+        <div class="project-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg>
+        </div>
+        <div>
+          <div class="project-label">Project</div>
+          <div class="project-name">${projectName}</div>
+        </div>
+      </div>
+
+      <div class="notice">
+        <strong>How to access:</strong> Click the button below, then enter <strong>this email address</strong> to unlock the portal. Delivery dates shown include your agreed buffer window.
+      </div>
+
+      <div class="cta-wrap">
+        <a href="${portalUrl}" class="cta">View Project Roadmap →</a>
+      </div>
+
+      <div class="url-fallback">
+        <p>Or copy this link into your browser</p>
+        <a href="${portalUrl}">${portalUrl}</a>
+      </div>
+    </div>
+
+    <div class="card-footer">
+      <p class="footer-text">
+        Internal tasks and budget data are not shared — you only see client-facing milestones and delivery dates.<br/>
+        ${appName} &middot; <a href="${APP_URL}">${APP_URL.replace(/^https?:\/\//, "")}</a>
+      </p>
+    </div>
+  </div>
+</div>
+</body>
+</html>`;
+}
+
+/* ─── Send portal invite to external stakeholder ─────────────── */
+export async function sendPortalInviteEmail({
+  to,
+  stakeholderName,
+  projectName,
+  senderName,
+  shareToken,
+}: {
+  to: string;
+  stakeholderName: string;
+  projectName: string;
+  senderName: string;
+  shareToken: string;
+}) {
+  const portalUrl = `${APP_URL}/share/${shareToken}`;
+  const smtpCfg = await getSmtpConfig();
+  const transport = await getTransport();
+  const { appName, logoUrl } = await getGlobalSettings();
+
+  await transport.sendMail({
+    from: `"${appName}" <${smtpCfg.from}>`,
+    to,
+    subject: `${senderName} shared "${projectName}" roadmap with you`,
+    html: portalInviteEmailHtml({ stakeholderName, projectName, senderName, portalUrl, appName, logoUrl }),
+    text: `${senderName} has shared the "${projectName}" project roadmap with you.\n\nView it here: ${portalUrl}\n\nEnter your email (${to}) to unlock access.`,
+  });
+}
+
 /* ─── Send invite ────────────────────────────────────────────── */
 export async function sendInviteEmail({
   to,

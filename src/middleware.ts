@@ -5,12 +5,15 @@ export default auth((req) => {
   const { pathname } = req.nextUrl;
   const isAuthPage = pathname.startsWith("/auth");
   const isAuthApi = pathname.startsWith("/api/auth");
-  const isPublicApi = pathname.startsWith("/api/meetings/lookup") || 
+  const isPublicApi = pathname.startsWith("/api/meetings/lookup") ||
                      pathname === "/api/debug-db" ||
-                     /^\/api\/meetings\/[^/]+\/register$/.test(pathname);
-  const isPublicPage = pathname === "/" || 
-                      pathname.startsWith("/meetings/attend") || 
-                      pathname.startsWith("/meetings/scan");
+                     pathname === "/api/branding" ||
+                     /^\/api\/meetings\/[^/]+\/register$/.test(pathname) ||
+                     /^\/api\/share\/[^/]+$/.test(pathname);
+  const isPublicPage = pathname === "/" ||
+                      pathname.startsWith("/meetings/attend") ||
+                      pathname.startsWith("/meetings/scan") ||
+                      pathname.startsWith("/share/");
 
   // Allow auth-related paths to bypass middleware
   if (isAuthPage || isAuthApi) {
