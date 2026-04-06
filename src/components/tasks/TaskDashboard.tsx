@@ -187,6 +187,10 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
   const [datePopover, setDatePopover] = useState<DatePopover | null>(null);
   const [popoverSaving, setPopoverSaving] = useState(false);
   
+  // SELECTION MODE FOR BUFFER
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  
   // DEFERRED RESCHEDULING (Batching moves)
   const [pendingReschedules, setPendingReschedules] = useState<Map<string, { start: string, end: string }>>(new Map());
   
@@ -296,6 +300,14 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
       }
     } catch (err) { console.error("Failed to fetch tasks", err); }
     finally { setLoading(false); }
+  };
+
+  const updateRecursiveTaskDates = (items: Task[], id: string, start: string, end: string): Task[] => {
+    return items.map(t => {
+      if (t.id === id) return { ...t, plannedStart: start, plannedEnd: end };
+      if (t.subtasks) return { ...t, subtasks: updateRecursiveTaskDates(t.subtasks, id, start, end) };
+      return t;
+    });
   };
 
   const toggleExpand = (id: string, e: React.MouseEvent) => {
@@ -712,6 +724,19 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
             </div>
             <div className="w-px h-4 bg-slate-200 shrink-0 mx-2" />
             <button
+               onClick={(e) => { e.stopPropagation(); const next = !selectionMode; setSelectionMode(next); if (!next) setSelectedIds(new Set()); }}
+               className={`flex items-center gap-1.5 px-3 py-1.2 rounded-lg border text-[9px] font-black uppercase tracking-widest transition-all ${
+                 selectionMode
+                   ? "bg-primary text-white border-primary shadow-sm shadow-primary/20"
+                   : "bg-white text-slate-400 border-slate-200 hover:text-primary hover:border-primary/20"
+               }`}
+               title="Buffer Selection Mode: Select multiple tasks to set buffer"
+             >
+               <Timer className={`w-3.5 h-3.5 ${selectionMode ? "animate-pulse" : ""}`} />
+               {selectionMode ? `Selecting: ${selectedIds.size}` : "Buffer Mode"}
+            </button>
+            <div className="w-px h-4 bg-slate-200 shrink-0 mx-1" />
+            <button
                onClick={(e) => { e.stopPropagation(); setSmartMode(!smartMode); }}
                className={`flex items-center gap-1.5 px-3 py-1.2 rounded-lg border text-[9px] font-black uppercase tracking-widest transition-all ${
                  smartMode
@@ -1041,13 +1066,19 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                 allExternalEvents={allExternalEvents}
                 onUpdateEvents={(evs) => {
                   const updatedMap = new Map(pendingReschedules);
+                  let tempTasks = [...tasks];
+                  
                   evs.forEach(ev => {
                     const original = flattenTasks(tasks).find(t => t.id === ev.id);
                     if (original && (original.plannedStart.split('T')[0] !== ev.startDate || original.plannedEnd.split('T')[0] !== ev.endDate)) {
                       updatedMap.set(ev.id, { start: ev.startDate, end: ev.endDate });
+                      tempTasks = updateRecursiveTaskDates(tempTasks, ev.id, ev.startDate, ev.endDate);
                     }
                   });
+                  
                   setPendingReschedules(updatedMap);
+                  setTasks(tempTasks);
+                  setDisplayTasks(tempTasks);
                 }}
                 scale={ganttScale}
                 ganttRef={ganttRef}
@@ -1055,8 +1086,21 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                 onTaskClick={(id: string) => { const t = flattenTasks(tasks).find(x => x.id === id); if (t) setSelectedTask(t); }}
                 onToggleExpand={id => { const n = new Set(expandedTasks); if (n.has(id)) n.delete(id); else n.add(id); setExpandedTasks(n); }}
                 onUpdateBuffer={(id, padding) => {
-                  const t = flattenTasks(tasks).find(x => x.id === id);
-                  if (t) setBufferTask({ id, padding, plannedEnd: t.plannedEnd });
+                  if (selectionMode) {
+                    const next = new Set(selectedIds);
+                    if (next.has(id)) next.delete(id); else next.add(id);
+                    setSelectedIds(next);
+                  } else {
+                    const t = flattenTasks(tasks).find(x => x.id === id);
+                    if (t) setBufferTask({ id, padding, plannedEnd: t.plannedEnd });
+                  }
+                }}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                onToggleSelect={(id) => {
+                  const next = new Set(selectedIds);
+                  if (next.has(id)) next.delete(id); else next.add(id);
+                  setSelectedIds(next);
                 }}
               />
            </div>

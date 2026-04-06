@@ -14,11 +14,13 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  let stakeholderId: string | undefined;
   try {
     const session = await auth();
     if (!session?.user) return new NextResponse("Unauthorized", { status: 401 });
 
-    const { stakeholderId } = await req.json();
+    const body = await req.json();
+    stakeholderId = body.stakeholderId;
     if (!stakeholderId) return new NextResponse("stakeholderId required", { status: 400 });
 
     // Load the project (need shareToken + name)
@@ -52,7 +54,13 @@ export async function POST(
 
     return NextResponse.json({ ok: true });
   } catch (error: any) {
-    console.error("[stakeholders/invite] Error:", error);
+    console.error("[stakeholders/invite] Error Details:", {
+        message: error.message,
+        code: error.code,
+        stack: error.stack,
+        stakeholderId: stakeholderId,
+        projectId: params.id
+    });
     return new NextResponse(error.message || "Failed to send invite", { status: 500 });
   }
 }
