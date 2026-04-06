@@ -20,6 +20,7 @@ interface TimelineEvent {
   hasChildren?: boolean;
   paddingDays?: number;
   externalPlannedEnd?: string;
+  isSummary?: boolean;
 }
 
 interface InteractiveGanttProps {
@@ -137,7 +138,7 @@ export default function InteractiveGantt({
   };
 
   const handleDragStart = (index: number, type: "move" | "left" | "right", clientX: number) => {
-    if (events[index].status === 'completed') return;
+    if (events[index].status === 'completed' || events[index].isSummary) return;
     setDragInfo({
       index,
       startX: clientX,
@@ -259,7 +260,7 @@ export default function InteractiveGantt({
                 const depth = e.depth || 0;
 
                 return (
-                  <div key={index} style={{ height: ROW_HEIGHT }} className={`flex border-b transition-colors group ${depth > 0 ? 'bg-slate-50/60 border-slate-100/80 hover:bg-slate-100/40' : 'bg-white border-slate-100 hover:bg-slate-50/40'}`}>
+                  <div key={index} style={{ height: ROW_HEIGHT }} className={`flex border-b transition-colors group ${e.isSummary ? 'bg-slate-50/20' : (depth > 0 ? 'bg-slate-50/60 border-slate-100/80 hover:bg-slate-100/40' : 'bg-white border-slate-100 hover:bg-slate-50/40')}`}>
                     <div
                       className={`w-[320px] shrink-0 sticky left-0 z-50 border-r flex flex-col justify-center px-5 shadow-[4px_0_12px_rgba(0,0,0,0.01)] cursor-pointer ${depth > 0 ? 'bg-slate-50/80' : 'bg-white'}`}
                       onClick={() => !dragOccurredRef.current && editingId !== e.id && onTaskClick?.(e.id)}
@@ -268,7 +269,7 @@ export default function InteractiveGantt({
                         <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ backgroundColor: `hsl(${(depth * 60 + 220) % 360}, 60%, 65%)`, marginLeft: depth * 20 - 4 }} />
                       )}
                       <div className="flex items-center gap-2 overflow-hidden" style={{ marginLeft: depth * 20 }}>
-                        {(e.hasChildren || depth === 0) && (
+                        {e.hasChildren && !e.isSummary && (
                           <button onClick={(ev) => { ev.stopPropagation(); onToggleExpand?.(e.id); }} className="p-1 hover:bg-slate-100 rounded transition-all shrink-0">
                              {e.expanded ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />}
                           </button>
@@ -293,7 +294,7 @@ export default function InteractiveGantt({
                             >
                               {e.subject}
                             </span>
-                            {onUpdateBuffer && (
+                            {onUpdateBuffer && !e.isSummary && (
                                <button 
                                  onClick={(ev) => { ev.stopPropagation(); onUpdateBuffer(e.id, e.paddingDays || 0); }}
                                  className="opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-primary transition-all rounded hover:bg-primary/5 shadow-sm"
@@ -305,31 +306,38 @@ export default function InteractiveGantt({
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-2.5 mt-1" style={{ marginLeft: (depth * 20) + 24 }}>
+                      <div className="flex items-center gap-2.5 mt-1" style={{ marginLeft: (depth * 20) + (e.isSummary ? 0 : 24) }}>
                          <span className="text-[8px] font-bold text-primary opacity-60">{e.taskCode}</span>
                          <span className="text-[8px] font-bold text-slate-300 uppercase">{e.owner}</span>
-                         <button
-                           onClick={(ev) => {
-                             ev.stopPropagation();
-                             const t = { id: e.id, subject: e.subject, plannedStart: e.startDate, plannedEnd: e.endDate };
-                             (window as any).dispatchAddTask?.(t);
-                           }}
-                           className="opacity-0 group-hover:opacity-100 p-1 hover:bg-primary/10 rounded transition-all text-primary"
-                           title="Add Subtask"
-                         >
-                           <Plus className="w-2.5 h-2.5" />
-                         </button>
+                         {!e.isSummary && (
+                            <button
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                const t = { id: e.id, subject: e.subject, plannedStart: e.startDate, plannedEnd: e.endDate };
+                                (window as any).dispatchAddTask?.(t);
+                              }}
+                              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-primary/10 rounded transition-all text-primary"
+                              title="Add Subtask"
+                            >
+                              <Plus className="w-2.5 h-2.5" />
+                            </button>
+                         )}
                       </div>
                     </div>
 
                     <div className="flex-1 relative h-full flex items-center">
                          {/* MAIN INTERNAL BAR */}
                          <div 
-                          style={{ left: `calc(${pos.left}px)`, width: `calc(${pos.width}px)` }}
-                          onMouseDown={(ev) => handleDragStart(index, "move", ev.clientX)}
-                          className={`absolute top-2.5 bottom-2.5 bg-gradient-to-r ${getProjectGradient(e.projectName, e.id)} rounded-lg shadow-sm border border-black/5 flex flex-col justify-center px-4 text-white z-20 group/bar transition-all ${isCompleted ? 'opacity-100 shadow-md ring-1 ring-black/5' : 'opacity-80 cursor-move border-dashed hover:opacity-100'}`}
+                           style={{ 
+                             left: `calc(${pos.left}px)`, 
+                             width: `calc(${pos.width}px)`,
+                             top: e.isSummary ? '6px' : '10px',
+                             bottom: e.isSummary ? '6px' : '10px'
+                           }}
+                           onMouseDown={(ev) => !e.isSummary && handleDragStart(index, "move", ev.clientX)}
+                           className={`absolute bg-gradient-to-r ${getProjectGradient(e.projectName, e.id)} rounded-lg shadow-sm border border-black/5 flex flex-col justify-center px-4 text-white z-20 group/bar transition-all ${e.isSummary ? 'ring-2 ring-white/20' : (isCompleted ? 'opacity-100 shadow-md ring-1 ring-black/5' : 'opacity-80 cursor-move border-dashed hover:opacity-100')}`}
                         >
-                           {!isCompleted && (
+                           {!isCompleted && !e.isSummary && (
                              <>
                                <div className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/30 active:bg-white/50 z-30" onMouseDown={(ev) => { ev.stopPropagation(); handleDragStart(index, "left", ev.clientX); }} />
                                <div className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/30 active:bg-white/50 z-30" onMouseDown={(ev) => { ev.stopPropagation(); handleDragStart(index, "right", ev.clientX); }} />
@@ -343,6 +351,12 @@ export default function InteractiveGantt({
                                  <Timer className="w-3 h-3" strokeWidth={2.5} />
                                </button>
                              </>
+                           )}
+                           {e.isSummary && (
+                              <div className="flex items-center justify-between pointer-events-none">
+                                 <span className="text-[10px] font-black uppercase tracking-widest truncate">{e.projectName}</span>
+                                 <span className="text-[8px] font-black opacity-60">STRATEGIC VIEW</span>
+                              </div>
                            )}
                         </div>
 

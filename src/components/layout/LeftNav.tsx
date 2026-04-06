@@ -165,13 +165,22 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
                     <span>All Projects</span>
                   </ForceLink>
                   
+                  <ForceLink 
+                    href="/tasks?project=ARCHIVE" 
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors ${activeProjectId === "ARCHIVE" ? "text-primary bg-primary/10 font-bold" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}
+                  >
+                    <div className={`w-1.5 h-1.5 rounded-full ${activeProjectId === "ARCHIVE" ? "bg-primary" : "bg-slate-200"}`} />
+                    <span className="flex-1">Archived Roadmaps</span>
+                    <div className="text-[9px] font-black opacity-30 px-1.5 py-0.5 border border-slate-200 rounded uppercase tracking-tighter">Library</div>
+                  </ForceLink>
+                  
                   <div className="py-1 px-2 text-[9px] font-black uppercase text-slate-300 tracking-widest mt-2 border-t border-slate-50 pt-2">Individual Roadmaps</div>
                   
                   {projectsLoading ? (
                     <div className="px-2 py-1 text-[10px] text-slate-300 animate-pulse uppercase font-bold tracking-widest">Loading Projects…</div>
-                  ) : projects.length === 0 ? (
+                  ) : projects.filter(p => !p.archived).length === 0 ? (
                     <div className="px-2 py-1 text-[10px] text-slate-300 uppercase font-bold tracking-widest">No active roadmaps</div>
-                  ) : projects.map(p => {
+                  ) : projects.filter(p => !p.archived).map(p => {
                     const projectHref = `/tasks?project=${p.id}`;
                     const active = activeProjectId === p.id;
                     return (

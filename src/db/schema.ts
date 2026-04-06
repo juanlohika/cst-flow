@@ -118,6 +118,16 @@ export const projects = sqliteTable("Project", {
   updatedAt:        text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+export const projectStakeholders = sqliteTable("ProjectStakeholder", {
+  id:               text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  projectId:        text("projectId").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  fullName:         text("fullName").notNull(),
+  email:            text("email"),
+  role:             text("role"), // e.g. "CEO", "IT Head"
+  hasPortalAccess:  integer("hasPortalAccess", { mode: "boolean" }).default(false).notNull(),
+  createdAt:        text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
+
 // ─── Timeline Templates ─────────────────────────────────────────
 
 export const timelineTemplates = sqliteTable("TimelineTemplate", {

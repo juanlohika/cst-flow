@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import TaskDashboard from "@/components/tasks/TaskDashboard";
 import PersonalDashboard from "@/components/tasks/PersonalDashboard";
+import ArchivedProjectList from "@/components/projects/ArchivedProjectList";
 
 function TasksContent() {
   const searchParams = useSearchParams();
@@ -49,6 +50,10 @@ function TasksContent() {
 
   if (isMyDashboard) {
     return <PersonalDashboard />;
+  }
+
+  if (projectId === "ARCHIVE") {
+    return <ArchivedProjectList />;
   }
 
   return <TaskDashboard projectId={projectId} projectName={projectName} profile={profile} />;

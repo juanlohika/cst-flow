@@ -143,6 +143,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"list" | "calendar" | "gantt" | "archive" | "kanban" | "summary" | "settings">("list");
+  const [isLevelZero, setIsLevelZero] = useState(false);
   const [kanbanBoard, setKanbanBoard] = useState<any>(null);
   const [kanbanLoading, setKanbanLoading] = useState(false);
   const [showKanbanSetup, setShowKanbanSetup] = useState(false);
@@ -640,6 +641,30 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
           <input className="w-24 bg-transparent border-none p-0 text-[10px] font-semibold text-slate-600 uppercase outline-none placeholder:text-slate-300" placeholder="Search..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
           {searchTerm && <button onClick={() => setSearchTerm("")} className="text-slate-300 hover:text-slate-500"><X className="w-2.5 h-2.5" /></button>}
         </div>
+
+        {viewMode === "gantt" && projectId === "ALL" && (
+          <>
+            <div className="w-px h-4 bg-slate-200 shrink-0" />
+            <div className="flex items-center gap-3">
+               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Gantt Mode</span>
+               <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                  <button 
+                    onClick={() => setIsLevelZero(false)}
+                    className={`px-3 py-1 text-[9px] font-black uppercase tracking-widest rounded-md transition-all ${!isLevelZero ? 'bg-white text-primary shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    Breakdown
+                  </button>
+                  <button 
+                    onClick={() => setIsLevelZero(true)}
+                    className={`px-3 py-1 text-[9px] font-black uppercase tracking-widest rounded-md transition-all ${isLevelZero ? 'bg-white text-primary shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    Summary (L0)
+                  </button>
+               </div>
+            </div>
+          </>
+        )}
+
         {(() => { const a = roleFilter !== "ALL"; return (
           <button onClick={cycleTeam} className={`h-6 flex items-center rounded-md border text-[10px] font-bold uppercase tracking-widest transition-all ${a ? "bg-primary/5 border-primary/20 text-primary" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"}`}>
             <span className="px-2">{a ? roleFilter : "Team"}</span>
@@ -933,31 +958,14 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
 
         {/* GANTT */}
         {viewMode === "gantt" && (
-          <div className="h-[600px] m-4 bg-white rounded-xl border border-slate-100 overflow-hidden shadow-sm">
-            <InteractiveGantt ganttRef={ganttRef}
-              events={filteredTasks.map((t: any) => {
-                const ua = t.status === "completed" && t.actualStart && t.actualEnd;
-                const sd = (ua ? t.actualStart : (t.plannedStart || new Date().toISOString())).split("T")[0];
-                const ed = (ua ? t.actualEnd : (t.plannedEnd || new Date().toISOString())).split("T")[0];
-                return { id: t.id, taskCode: t.taskCode, subject: t.subject, startDate: sd, endDate: ed, durationHours: 8, owner: t.owner || "Unassigned", description: "", projectName: t.project?.name || "Global", status: t.status, depth: t.depth, expanded: expandedTasks.has(t.id), hasChildren: Array.isArray(t.subtasks) && t.subtasks.length > 0 };
-              })}
-              onUpdateEvents={newEvents => {
-                const applyDates = (tl: Task[]): Task[] => tl.map(t => {
-                  const m = newEvents.find(ne => ne.id === t.id);
-                  const u = m ? { ...t, plannedStart: new Date(m.startDate).toISOString(), plannedEnd: new Date(m.endDate).toISOString() } : t;
-                  return { ...u, subtasks: u.subtasks ? applyDates(u.subtasks) : undefined };
-                });
-                setDisplayTasks(applyDates(displayTasks));
-              }}
-              onTaskClick={(id: string) => { const t = flattenTasks(tasks).find(x => x.id === id); if (t) setSelectedTask(t); }}
-              onToggleExpand={id => { const n = new Set(expandedTasks); if (n.has(id)) n.delete(id); else n.add(id); setExpandedTasks(n); }}
-              onReschedule={handleReschedule}
-              onAllocateHours={(tid, tsub, dur) => {
-                const t = flattenTasks(tasks).find((x: any) => x.id === tid);
-                setAllocateTask(t ? { ...t, durationHours: dur } : { id: tid, subject: tsub, durationHours: dur, projectId, status: "pending", archived: false, taskCode: "", plannedStart: "", plannedEnd: "", owner: "" });
-              }}
-              scale={ganttScale} />
-          </div>
+           <div className="h-full bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
+              <InteractiveGantt 
+                tasks={isLevelZero ? transformToLevelZero(displayTasks) : displayTasks} 
+                onUpdate={fetchTasks} 
+                onTaskClick={(id: string) => { const t = flattenTasks(tasks).find(x => x.id === id); if (t) setSelectedTask(t); }}
+                onToggleExpand={id => { const n = new Set(expandedTasks); if (n.has(id)) n.delete(id); else n.add(id); setExpandedTasks(n); }}
+              />
+           </div>
         )}
       </div>
 
@@ -1109,4 +1117,31 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
       )}
     </div>
   );
+}
+
+function transformToLevelZero(tasks: any[]): any[] {
+  const projectGroups: Record<string, any[]> = {};
+  tasks.forEach(t => {
+    const pid = t.projectId || "UNKNOWN";
+    if (!projectGroups[pid]) projectGroups[pid] = [];
+    projectGroups[pid].push(t);
+  });
+
+  return Object.entries(projectGroups).map(([pid, pTasks]) => {
+    const earliestStart = pTasks.reduce((min, t) => (t.plannedStart < min ? t.plannedStart : min), pTasks[0].plannedStart);
+    const latestEnd = pTasks.reduce((max, t) => (t.plannedEnd > max ? t.plannedEnd : max), pTasks[0].plannedEnd);
+    const projectName = pTasks[0].projectName || `Project: ${pid}`;
+    
+    return {
+      id: `L0_${pid}`,
+      projectId: pid,
+      projectName,
+      taskCode: "L0",
+      subject: projectName.toUpperCase(),
+      plannedStart: earliestStart,
+      plannedEnd: latestEnd,
+      status: pTasks.every(t => t.status === 'completed') ? 'completed' : 'in-progress',
+      isSummary: true
+    };
+  });
 }
