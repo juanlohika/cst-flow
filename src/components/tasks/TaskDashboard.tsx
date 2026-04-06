@@ -186,6 +186,10 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
   // DateTime popover (planned & actual)
   const [datePopover, setDatePopover] = useState<DatePopover | null>(null);
   const [popoverSaving, setPopoverSaving] = useState(false);
+  
+  // DEFERRED RESCHEDULING (Batching moves)
+  const [pendingReschedules, setPendingReschedules] = useState<Map<string, { start: string, end: string }>>(new Map());
+  
   const ganttRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
 
@@ -1036,8 +1040,14 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                 }))}
                 allExternalEvents={allExternalEvents}
                 onUpdateEvents={(evs) => {
-                  const updated = evs[0];
-                  handleReschedule(updated.id, updated.startDate, updated.endDate);
+                  const updatedMap = new Map(pendingReschedules);
+                  evs.forEach(ev => {
+                    const original = flattenTasks(tasks).find(t => t.id === ev.id);
+                    if (original && (original.plannedStart.split('T')[0] !== ev.startDate || original.plannedEnd.split('T')[0] !== ev.endDate)) {
+                      updatedMap.set(ev.id, { start: ev.startDate, end: ev.endDate });
+                    }
+                  });
+                  setPendingReschedules(updatedMap);
                 }}
                 scale={ganttScale}
                 ganttRef={ganttRef}
@@ -1210,6 +1220,40 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
             fetchTasks();
           }}
         />
+      )}
+      {/* FLOATING COMMIT BAR FOR BATCH RESCHEDULING */}
+      {pendingReschedules.size > 0 && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] bg-slate-900/90 backdrop-blur-md text-white px-6 py-4 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] border border-white/10 flex items-center gap-8 animate-in slide-in-from-bottom-10 transition-all">
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+               <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+               <span className="text-sm font-black uppercase tracking-tight text-white">Timeline Changes Pending</span>
+            </div>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{pendingReschedules.size} task(s) adjusted</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => {
+                const firstId = Array.from(pendingReschedules.keys())[0];
+                const info = pendingReschedules.get(firstId)!;
+                handleReschedule(firstId, info.start, info.end);
+                setPendingReschedules(new Map());
+              }}
+              className="bg-primary hover:bg-primary-dark px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase tracking-wider transition-all shadow-lg shadow-primary/30 flex items-center gap-2 group"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" /> Commit & Add Remarks
+            </button>
+            <button 
+              onClick={() => {
+                setPendingReschedules(new Map());
+                setRefreshKey(prev => prev + 1);
+              }}
+              className="bg-white/10 hover:bg-white/20 px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase tracking-wider transition-all border border-white/10"
+            >
+              Discard
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

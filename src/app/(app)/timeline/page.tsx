@@ -672,7 +672,7 @@ function TimelineApp() {
                </div>
             </div>
 
-            <div className="flex-1 overflow-hidden p-4 md:p-8 relative min-h-0 bg-surface-muted flex flex-col">
+            <div className="flex-1 overflow-hidden p-4 md:p-8 relative min-h-0 bg-surface-muted flex flex-col h-[calc(100vh-140px)]">
               {activeTab === "gantt" && viewMode === "static" && (
                 <div className="w-full bg-surface-default p-12 rounded-[2rem] border border-border-default shadow-2xl flex flex-col items-center min-h-[600px] overflow-x-auto">
                    <h2 className="text-2xl font-black text-text-primary mb-8 uppercase tracking-tight">{projectName || "Project Timeline"}</h2>

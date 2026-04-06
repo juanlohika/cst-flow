@@ -104,19 +104,25 @@ export default function InteractiveGantt({
     const extEnds = events.map(e => e.externalPlannedEnd ? new Date(e.externalPlannedEnd).getTime() : 0);
     const min = new Date(Math.min(...starts));
     const max = new Date(Math.max(...ends, ...extEnds));
+    
     const start = new Date(min);
-    start.setDate(start.getDate() - 3); 
+    start.setUTCHours(0, 0, 0, 0);
+    start.setUTCDate(start.getUTCDate() - 3); 
+    
     const end = new Date(max);
-    end.setDate(end.getDate() + 3);
+    end.setUTCHours(0, 0, 0, 0);
+    end.setUTCDate(end.getUTCDate() + 3);
+    
     return { minDate: start, maxDate: end };
   }, [events]);
 
   const dates = useMemo(() => {
     const list: Date[] = [];
     let curr = new Date(minDate);
+    curr.setUTCHours(0, 0, 0, 0);
     while (curr <= maxDate) {
       list.push(new Date(curr));
-      curr.setDate(curr.getDate() + 1);
+      curr.setUTCDate(curr.getUTCDate() + 1);
     }
     return list;
   }, [minDate, maxDate]);
@@ -131,14 +137,24 @@ export default function InteractiveGantt({
     return groups;
   }, [dates]);
 
-  const isWeekend = (date: Date) => (date.getDay() === 0 || date.getDay() === 6);
-  const isToday = (date: Date) => date.toDateString() === new Date().toDateString();
+  const isWeekend = (date: Date) => (date.getUTCDay() === 0 || date.getUTCDay() === 6);
+  const isToday = (date: Date) => {
+    const today = new Date();
+    return date.getUTCFullYear() === today.getFullYear() && 
+           date.getUTCMonth() === today.getMonth() && 
+           date.getUTCDate() === today.getDate();
+  };
 
   const calculatePosition = (startDate: string, endDate: string) => {
     const start = new Date(startDate);
+    start.setUTCHours(0, 0, 0, 0);
     const end = new Date(endDate);
-    const diffStart = (start.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24);
-    const diffEnd = (end.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24) + 1;
+    end.setUTCHours(0, 0, 0, 0);
+    
+    // Safety check for minDate being valid
+    const minTime = minDate.getTime();
+    const diffStart = Math.round((start.getTime() - minTime) / (1000 * 60 * 60 * 24));
+    const diffEnd = Math.round((end.getTime() - minTime) / (1000 * 60 * 60 * 24)) + 1;
     const unitWidth = colWidth / dayStep;
     return { left: diffStart * unitWidth, width: Math.max(unitWidth, (diffEnd - diffStart) * unitWidth) };
   };
@@ -147,7 +163,8 @@ export default function InteractiveGantt({
 
   const addDays = (dateStr: string, days: number) => {
     const d = new Date(dateStr);
-    d.setDate(d.getDate() + Math.round(days));
+    d.setUTCHours(0, 0, 0, 0);
+    d.setUTCDate(d.getUTCDate() + Math.round(days));
     return d.toISOString().split("T")[0];
   };
 
@@ -267,15 +284,15 @@ export default function InteractiveGantt({
 
   const hasConflict = (event: TimelineEvent) => {
     if (!smartMode) return false;
-    // An event has a conflict if ANY of its working days exceed 8h total for the owner
     const start = new Date(event.startDate);
     const end = new Date(event.endDate);
     const current = new Date(start);
+    current.setUTCHours(0, 0, 0, 0);
     while (current <= end) {
       const dateStr = formatToISODate(current);
       const load = loadMap.get(`${event.owner}-${dateStr}`) || 0;
-      if (load > 8.01) return true; // Floating point safety
-      current.setDate(current.getDate() + 1);
+      if (load > 8.01) return true;
+      current.setUTCDate(current.getUTCDate() + 1);
     }
     return false;
   };
@@ -316,11 +333,18 @@ export default function InteractiveGantt({
                           {scale === "day" ? d.getDate() : scale === "week" ? `Wk ${Math.ceil(d.getDate() / 7)}` : d.toLocaleDateString("en", { month: "short" })}
                         </span>
 
-                        {smartMode && totalLoad > 0 && (
-                          <div className={`mt-0.5 flex items-center justify-center min-w-[14px] h-[14px] rounded-full px-1 text-[7px] font-black tracking-tighter text-white shadow-sm transition-all ${
-                            totalLoad > 12 ? "bg-rose-500 animate-pulse" : totalLoad > 8 ? "bg-amber-500" : "bg-indigo-500"
-                          }`}>
-                            {totalLoad.toFixed(1)}h
+                        {smartMode && (
+                          <div className="absolute inset-x-0 bottom-0 flex justify-center pb-0.5">
+                            <div 
+                              className={`w-3.5 h-1 md:w-5 md:h-1.5 rounded-full transition-all peer ${
+                                totalLoad > 8.5 ? "bg-rose-500 animate-pulse" : totalLoad >= 8 ? "bg-amber-500" : totalLoad > 0 ? "bg-emerald-500" : "bg-transparent"
+                              }`}
+                            />
+                            {totalLoad > 0 && (
+                              <div className="absolute bottom-full mb-1 opacity-0 group-hover/date:opacity-100 transition-opacity bg-slate-800 text-white text-[8px] font-bold px-1.5 py-0.5 rounded pointer-events-none whitespace-nowrap z-[100] shadow-xl ring-1 ring-white/20">
+                                {totalLoad.toFixed(1)}h Total Load
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

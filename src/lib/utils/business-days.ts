@@ -15,9 +15,9 @@ export function addBusinessDays(date: Date | string, days: number): Date {
   
   let daysAdded = 0;
   while (daysAdded < days) {
-    result.setDate(result.getDate() + 1);
+    result.setUTCDate(result.getUTCDate() + 1);
     // 0 = Sunday, 6 = Saturday
-    const dayOfWeek = result.getDay();
+    const dayOfWeek = result.getUTCDay();
     if (dayOfWeek !== 0 && dayOfWeek !== 6) {
       daysAdded++;
     }
@@ -27,7 +27,7 @@ export function addBusinessDays(date: Date | string, days: number): Date {
 }
 
 /**
- * Formats a date for the SQLite-compatible ISO string.
+ * Formats a date for the SQLite-compatible ISO string using UTC.
  */
 export function formatToISODate(date: Date): string {
   return date.toISOString().split("T")[0];
@@ -39,8 +39,9 @@ export function formatToISODate(date: Date): string {
 export function calculateClientEndDate(internalEnd: string, padding: number): string | null {
   if (!internalEnd) return null;
   const d = new Date(internalEnd);
-  if (isNaN(d.getTime())) return null; // Prevent .toISOString() crash
+  if (isNaN(d.getTime())) return null;
 
+  // Use the UTC-aware adding logic
   const paddedDate = addBusinessDays(d, padding);
   return formatToISODate(paddedDate);
 }
