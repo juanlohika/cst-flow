@@ -260,9 +260,16 @@ function TimelineApp() {
       });
 
       const result = await res.json();
-      if (res.ok && Array.isArray(result.tasks)) {
-        const finalEvents: TimelineEvent[] = (result.tasks || []).map((t: any, i: number) => {
-          const padding = 0; // REQ: Removed 3-day global default
+      if (res.ok) {
+        const rawTasks = Array.isArray(result) ? result : (result.tasks || []);
+        
+        if (!Array.isArray(rawTasks)) {
+          showToast("AI returned invalid task structure. Try again.", "error");
+          return;
+        }
+
+        const finalEvents: TimelineEvent[] = rawTasks.map((t: any, i: number) => {
+          const padding = 0; 
           const externalEnd = calculateClientEndDate(t.endDate, padding);
           
           return {
@@ -716,7 +723,16 @@ function TimelineApp() {
         )}
       </div>
 
-      {showWalkthrough && <Walkthrough onClose={() => setShowWalkthrough(false)} />}
+      {isBufferModalOpen && (
+        <BufferModal 
+          isOpen={isBufferModalOpen}
+          taskId={bufferTaskId || ""}
+          taskSubject={events.find(e => e.id === bufferTaskId)?.subject || ""}
+          currentPadding={events.find(e => e.id === bufferTaskId)?.paddingDays || 0}
+          onClose={() => setIsBufferModalOpen(false)}
+          onSave={handleSaveBuffer}
+        />
+      )}
       </div>
     </div>
   );

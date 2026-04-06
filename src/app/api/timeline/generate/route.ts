@@ -20,19 +20,22 @@ RULES:
 2. If a task takes 8 hours, it ends on the same day it starts. If it takes 16 hours, it ends the next working day.
 3. DO NOT schedule any work on the provided 'restDays'. Skip over them.
 4. If there are 'customInstructions' provided by the user, adjust the plan accordingly (e.g. skip a task, expedite another).
-5. Output MUST be ONLY a raw JSON array. Do not include markdown formatting or backticks.
+5. If a task is scheduled on a Friday, and the next task requires a 3-day padding, ensure the next task starts on the following Wednesday.
+6. Output MUST be ONLY a raw JSON array. Do not include markdown formatting or backticks.
 
-OUTPUT JSON SCHEMA ARRAY:
-[
-  {
-    "subject": "Task Name",
-    "startDate": "YYYY-MM-DD",
-    "endDate": "YYYY-MM-DD",
-    "durationHours": Number,
-    "owner": "Who usually handles this (e.g. BA, Dev, Client, PM)",
-    "description": "Short reasoning or detail"
-  }
-]`;
+OUTPUT JSON SCHEMA:
+{
+  "tasks": [
+    {
+      "subject": "Task Name",
+      "startDate": "YYYY-MM-DD",
+      "endDate": "YYYY-MM-DD",
+      "durationHours": Number,
+      "userId": "Who usually handles this (e.g. BA, Dev, Client, PM)",
+      "description": "Short reasoning or detail"
+    }
+  ]
+}`;
 
     const userPrompt = `
 TEMPLATE: ${templateName}
