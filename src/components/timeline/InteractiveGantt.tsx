@@ -3,6 +3,8 @@
 import React, { useMemo, useState, useRef, useEffect } from "react";
 import { User, Clock, Plus, Trash2, Calendar, GripVertical, Briefcase, Lock, CheckCircle2, ChevronRight, ChevronDown, Timer } from "lucide-react";
 import { calculateClientEndDate } from "@/lib/utils/business-days";
+import { calculateUserDailyLoad, formatToISODate } from "@/lib/utils/conflict-utils";
+import { AlertTriangle } from "lucide-react";
 
 interface TimelineEvent {
   id: string;
@@ -37,6 +39,7 @@ interface InteractiveGanttProps {
   selectionMode?: boolean;
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
+  smartMode?: boolean;
 }
 
 export default function InteractiveGantt({
@@ -52,6 +55,7 @@ export default function InteractiveGantt({
   selectionMode = false,
   selectedIds,
   onToggleSelect,
+  smartMode = false,
 }: InteractiveGanttProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
@@ -86,7 +90,7 @@ export default function InteractiveGantt({
   const dragOccurredRef = useRef(false);
 
   // Constants for Compact Design
-  const ROW_HEIGHT = 60; 
+  const ROW_HEIGHT = 40; 
   const colWidth = scale === "day" ? 48 : scale === "week" ? 120 : 240;
   const dayStep = scale === "day" ? 1 : scale === "week" ? 7 : 30;
 
@@ -221,6 +225,41 @@ export default function InteractiveGantt({
     return colors[hash % colors.length];
   };
 
+  // Pre-calculate daily loads per owner for Smart Mode
+  const loadMap = useMemo(() => {
+    if (!smartMode) return new Map();
+    const map = new Map<string, number>();
+    
+    // Get unique owners and dates
+    const owners = Array.from(new Set(events.map(e => e.owner)));
+    
+    owners.forEach(owner => {
+       dates.forEach(date => {
+          const dateStr = formatToISODate(date);
+          const load = calculateUserDailyLoad(owner, date, events);
+          if (load > 0) {
+             map.set(`${owner}-${dateStr}`, load);
+          }
+       });
+    });
+    return map;
+  }, [events, dates, smartMode]);
+
+  const hasConflict = (event: TimelineEvent) => {
+    if (!smartMode) return false;
+    // An event has a conflict if ANY of its working days exceed 8h total for the owner
+    const start = new Date(event.startDate);
+    const end = new Date(event.endDate);
+    const current = new Date(start);
+    while (current <= end) {
+      const dateStr = formatToISODate(current);
+      const load = loadMap.get(`${event.owner}-${dateStr}`) || 0;
+      if (load > 8.01) return true; // Floating point safety
+      current.setDate(current.getDate() + 1);
+    }
+    return false;
+  };
+
   return (
     <div ref={ganttRef} className="flex flex-col h-full bg-white shadow-2xl rounded-[1.5rem] overflow-hidden border border-slate-200" style={{ "--col-width": `${colWidth}px` } as any}>
       <div className="flex-1 overflow-auto relative font-sans scroll-smooth thin-scrollbar" ref={containerRef}>
@@ -346,16 +385,21 @@ export default function InteractiveGantt({
                            style={{ 
                              left: `calc(${pos.left}px)`, 
                              width: `calc(${pos.width}px)`,
-                             top: e.isSummary ? '6px' : '10px',
-                             bottom: e.isSummary ? '6px' : '10px'
+                             top: '6px',
+                             bottom: '6px'
                            }}
                            onMouseDown={(ev) => !e.isSummary && handleDragStart(index, "move", ev.clientX)}
-                           className={`absolute bg-gradient-to-r ${getProjectGradient(e.projectName, e.id)} rounded-lg shadow-sm border border-black/5 flex flex-col justify-center px-4 text-white z-20 group/bar transition-all ${e.isSummary ? 'ring-2 ring-white/20' : (isCompleted ? 'opacity-100 shadow-md ring-1 ring-black/5' : 'opacity-80 cursor-move border-dashed hover:opacity-100')}`}
+                           className={`absolute bg-gradient-to-r ${getProjectGradient(e.projectName, e.id)} rounded-md shadow-sm border border-black/5 flex flex-col justify-center px-4 text-white z-20 group/bar transition-all ${e.isSummary ? 'h-[28px] ring-2 ring-white/20' : (isCompleted ? 'opacity-100 shadow-md ring-1 ring-black/5' : 'opacity-80 cursor-move border-dashed hover:opacity-100')} ${hasConflict(e) ? 'ring-2 ring-red-500 ring-offset-2 ring-offset-white animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]' : ''}`}
                         >
+                           {hasConflict(e) && (
+                             <div className="absolute -top-1 -left-1 z-50 bg-white rounded-full p-0.5 shadow-md border border-red-200">
+                               <AlertTriangle className="w-3 h-3 text-red-500" />
+                             </div>
+                           )}
                            {!isCompleted && !e.isSummary && (
                              <>
-                               <div className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/30 active:bg-white/50 z-30" onMouseDown={(ev) => { ev.stopPropagation(); handleDragStart(index, "left", ev.clientX); }} />
-                               <div className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/30 active:bg-white/50 z-30" onMouseDown={(ev) => { ev.stopPropagation(); handleDragStart(index, "right", ev.clientX); }} />
+                               <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/30 active:bg-white/50 z-30" onMouseDown={(ev) => { ev.stopPropagation(); handleDragStart(index, "left", ev.clientX); }} />
+                               <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/30 active:bg-white/50 z-30" onMouseDown={(ev) => { ev.stopPropagation(); handleDragStart(index, "right", ev.clientX); }} />
                                
                                {/* TERMINAL BUFFER ICON */}
                                <button 
@@ -389,9 +433,11 @@ export default function InteractiveGantt({
                                 onClick={(ev) => { ev.stopPropagation(); onUpdateBuffer?.(e.id, e.paddingDays || 0); }}
                                 style={{ 
                                   left: pos.left + pos.width, 
-                                  width: extPos.width
+                                  width: extPos.width,
+                                  top: '6px',
+                                  bottom: '6px'
                                 }}
-                                className="absolute top-4 bottom-4 bg-orange-400/30 border border-orange-400/50 rounded-r-lg z-10 flex items-center justify-end px-2 cursor-pointer hover:bg-orange-400/50 transition-all group/buffer"
+                                className="absolute bg-orange-400/30 border border-orange-400/50 rounded-r-md z-10 flex items-center justify-end px-2 cursor-pointer hover:bg-orange-400/50 transition-all group/buffer"
                                 title={`Client Buffer until ${e.externalPlannedEnd}. Click to edit.`}
                               >
                                 <span className="text-[7px] font-black text-orange-600/60 uppercase tracking-tighter opacity-0 group-hover/buffer:opacity-100 whitespace-nowrap">Client Buffer</span>

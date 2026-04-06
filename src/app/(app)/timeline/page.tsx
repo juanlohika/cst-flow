@@ -85,6 +85,7 @@ function TimelineApp() {
   
   // MULTI-SELECT BUFFER STATE
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [smartMode, setSmartMode] = useState(false);
   
   const [shareLink, setShareLink] = useState<string | null>(null);
   const mermaidRef = useRef<HTMLDivElement>(null);
@@ -585,18 +586,30 @@ function TimelineApp() {
                        </button>
                      ))}
                    </div>
-                   <button
-                     onClick={() => setSelectedIds(new Set())}
-                     disabled={selectedIds.size === 0}
-                     className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg border transition-all ${
-                       selectedIds.size > 0
-                         ? "bg-primary text-white border-primary shadow-md shadow-primary/20"
-                         : "bg-surface-default text-text-secondary border-border-default opacity-50"
-                     }`}
-                   >
-                     <Clock className="w-3.5 h-3.5" />
-                     {selectedIds.size > 0 ? `Selected: ${selectedIds.size}` : "No Selection"}
-                   </button>
+                    <button
+                      onClick={() => setSmartMode(!smartMode)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg border transition-all ${
+                        smartMode
+                          ? "bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20"
+                          : "bg-surface-default text-text-secondary border-border-default hover:bg-emerald-50/50 hover:text-emerald-600 hover:border-emerald-200"
+                      }`}
+                      title={smartMode ? "Smart Mode Active: Detecting 8h+ overloads" : "Turn on Smart Mode: 8h Daily Limit"}
+                    >
+                      <Zap className={`w-3.5 h-3.5 ${smartMode ? "animate-pulse" : ""}`} />
+                      {smartMode ? "Smart ON" : "Smart OFF"}
+                    </button>
+                    <button
+                      onClick={() => setSelectedIds(new Set())}
+                      disabled={selectedIds.size === 0}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg border transition-all ${
+                        selectedIds.size > 0
+                          ? "bg-primary text-white border-primary shadow-md shadow-primary/20"
+                          : "bg-surface-default text-text-secondary border-border-default opacity-50"
+                      }`}
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      {selectedIds.size > 0 ? `Selected: ${selectedIds.size}` : "No Selection"}
+                    </button>
                  </div>
                )}
 
@@ -629,7 +642,7 @@ function TimelineApp() {
                </div>
             </div>
 
-            <div className="flex-1 overflow-auto p-4 md:p-8 relative min-h-0 bg-surface-muted">
+            <div className="flex-1 overflow-hidden p-4 md:p-8 relative min-h-0 bg-surface-muted flex flex-col">
               {activeTab === "gantt" && viewMode === "static" && (
                 <div className="w-full bg-surface-default p-12 rounded-[2rem] border border-border-default shadow-2xl flex flex-col items-center min-h-[600px] overflow-x-auto">
                    <h2 className="text-2xl font-black text-text-primary mb-8 uppercase tracking-tight">{projectName || "Project Timeline"}</h2>
@@ -655,6 +668,7 @@ function TimelineApp() {
                             selectionMode={selectedIds.size > 0}
                             selectedIds={selectedIds}
                             onToggleSelect={handleToggleSelect}
+                            smartMode={smartMode}
                           />
                           {/* Bottom selection bar removed — now using integrated Floating Buffer Card */}
                         </div>
