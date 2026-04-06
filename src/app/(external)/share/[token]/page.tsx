@@ -24,11 +24,11 @@ export default function ClientPortalPage({ params }: { params: { token: string }
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.includes("@")) return;
-    
+
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/share/${params.token}`);
+      const res = await fetch(`/api/share/${params.token}?email=${encodeURIComponent(email)}`);
       const data = await res.json();
       if (res.ok) {
         setProject(data);
@@ -51,7 +51,7 @@ export default function ClientPortalPage({ params }: { params: { token: string }
                 <ShieldCheck className="w-8 h-8 text-primary" />
             </div>
             <h1 className="text-2xl font-bold text-slate-800 mb-2">Project Roadmap Access</h1>
-            <p className="text-slate-500 text-sm text-center mb-8">Enter your registered email address to view the latest project progress and timeline.</p>
+            <p className="text-slate-500 text-sm text-center mb-8">Enter the email address you were registered with as a project stakeholder to view the latest progress and timeline.</p>
             
             <form onSubmit={handleUnlock} className="w-full flex flex-col gap-4">
                 <div className="relative group">

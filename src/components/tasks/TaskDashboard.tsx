@@ -172,6 +172,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
     parentNewStart: string; parentNewEnd: string;
   } | null>(null);
   const [cascadeConfirmed, setCascadeConfirmed] = useState(false);
+  const [projectRecord, setProjectRecord] = useState<any>(null);
   const [allocateTask, setAllocateTask] = useState<Task | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [showExport, setShowExport] = useState(false);
@@ -186,6 +187,14 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
 
   useEffect(() => { setShowArchived(viewMode === "archive"); }, [viewMode]);
   useEffect(() => { fetchTasks(); }, [refreshKey, projectId, showArchived]);
+  useEffect(() => {
+    if (projectId && projectId !== "ALL") {
+      fetch(`/api/projects/${projectId}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data) setProjectRecord(data); })
+        .catch(() => {});
+    }
+  }, [projectId]);
   const assignDefaultKanbanLaneId = (task: Task): Task => {
     if (task.kanbanLaneId) return task;
     if (!kanbanBoard?.lanes?.length) return task;
@@ -722,9 +731,8 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
 
         {viewMode === "settings" && (
            <div className="max-w-5xl mx-auto pb-20">
-              <ProjectSettingsView 
-                project={{ id: projectId, name: projectName, assignedIds: tasks.map(t => t.owner).join(','), archived: showArchived }} 
-                profile={profile}
+              <ProjectSettingsView
+                project={projectRecord || { id: projectId, name: projectName, assignedIds: '', archived: showArchived, shareToken: null }}
                 onUpdate={fetchTasks}
               />
            </div>
