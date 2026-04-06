@@ -295,7 +295,7 @@ export default function InteractiveGantt({
                                  className="opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-primary transition-all rounded hover:bg-primary/5 shadow-sm"
                                  title="Add/Edit Client Buffer"
                                >
-                                 <Plus className="w-2.5 h-2.5" strokeWidth={3} />
+                                 <Timer className="w-2.5 h-2.5" strokeWidth={3} />
                                </button>
                             )}
                           </div>
@@ -333,7 +333,7 @@ export default function InteractiveGantt({
                                {/* TERMINAL BUFFER ICON */}
                                <button 
                                  onClick={(ev) => { ev.stopPropagation(); onUpdateBuffer?.(e.id, e.paddingDays || 0); }}
-                                 className="absolute -right-2 top-1/2 -translate-y-1/2 w-5 h-5 bg-white shadow-lg rounded-full flex items-center justify-center opacity-0 group-hover/bar:opacity-100 hover:scale-110 transition-all z-40 text-primary border border-slate-100"
+                                 className="absolute -right-5 top-1/2 -translate-y-1/2 w-5 h-5 bg-white shadow-lg rounded-full flex items-center justify-center opacity-0 group-hover/bar:opacity-100 hover:scale-110 transition-all z-40 text-primary border border-slate-100"
                                  title="Add Client Buffer"
                                >
                                  <Timer className="w-3 h-3" strokeWidth={2.5} />
@@ -343,7 +343,7 @@ export default function InteractiveGantt({
                         </div>
 
                         {/* EXTERNAL PADDING BAR (ORANGE) - ONLY SHOW IF PADDING > 0 */}
-                        {e.paddingDays && e.paddingDays > 0 && e.externalPlannedEnd && (
+                        {Boolean(e.paddingDays && e.paddingDays > 0 && e.externalPlannedEnd) && (
                           (() => {
                             const extPos = calculatePosition(e.endDate, e.externalPlannedEnd);
                             return (

@@ -697,6 +697,11 @@ function TimelineApp() {
                 onClose={() => setSelectedTask(null)}
                 onUpdated={() => {}}
                 onLocalUpdate={(updates) => {
+                  if (updates.archived) {
+                    setEvents(prev => prev.filter(ev => ev.id !== selectedTask.id));
+                    setSelectedTask(null);
+                    return;
+                  }
                   setEvents(prev => prev.map(ev => {
                     if (ev.id === selectedTask.id) {
                       const newEv = { ...ev, ...updates };
@@ -708,6 +713,8 @@ function TimelineApp() {
                   }));
                   // If subject changed, we need to update selectedTask too for the modal UI
                   if (updates.subject) setSelectedTask(prev => prev ? ({ ...prev, subject: updates.subject }) : null);
+                  // Auto-close modal after save
+                  setSelectedTask(null);
                 }}
               />
             )}
