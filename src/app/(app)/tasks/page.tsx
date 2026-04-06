@@ -10,6 +10,7 @@ function TasksContent() {
   const searchParams = useSearchParams();
   const projectParam = searchParams.get("project");
   const [projectName, setProjectName] = useState<string | null>(null);
+  const [profile, setProfile] = useState<any>(null);
 
   // No project param → show Personal Dashboard
   const showPersonalDashboard = !projectParam;
@@ -29,10 +30,18 @@ function TasksContent() {
           const list = Array.isArray(data) ? data : (data?.projects || []);
           const found = list.find((p: any) => p.id === projectId);
           setProjectName(found?.name ?? null);
+          
+          if (found?.clientProfileId) {
+             fetch(`/api/profiles/${found.clientProfileId}`)
+               .then(res => res.ok ? res.json() : null)
+               .then(pData => setProfile(pData))
+               .catch(() => {});
+          }
         })
         .catch(() => {});
     } else {
       setProjectName(null);
+      setProfile(null);
     }
   }, [projectId]);
 
@@ -40,7 +49,7 @@ function TasksContent() {
     return <PersonalDashboard />;
   }
 
-  return <TaskDashboard projectId={projectId} />;
+  return <TaskDashboard projectId={projectId} projectName={projectName} profile={profile} />;
 }
 
 export default function TasksPage() {

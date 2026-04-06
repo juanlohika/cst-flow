@@ -38,6 +38,8 @@ import KanbanView from "@/components/tasks/KanbanView";
 import KanbanSetupModal from "@/components/tasks/KanbanSetupModal";
 import KanbanTransitionModal from "@/components/tasks/KanbanTransitionModal";
 import UserSelect from "@/components/ui/UserSelect";
+import DonutChart from "@/components/charts/DonutChart";
+import ProjectSettingsView from "@/components/projects/ProjectSettingsView";
 
 interface Task {
   id: string;
@@ -60,6 +62,8 @@ interface Task {
 
 interface TaskDashboardProps {
   projectId: string;
+  projectName?: string | null;
+  profile?: any;
 }
 
 interface DatePopover {
@@ -138,7 +142,7 @@ export default function TaskDashboard({ projectId }: TaskDashboardProps) {
   const [displayTasks, setDisplayTasks] = useState<Task[]>([]);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<"list" | "calendar" | "gantt" | "archive" | "kanban">("list");
+  const [viewMode, setViewMode] = useState<"list" | "calendar" | "gantt" | "archive" | "kanban" | "summary" | "settings">("list");
   const [kanbanBoard, setKanbanBoard] = useState<any>(null);
   const [kanbanLoading, setKanbanLoading] = useState(false);
   const [showKanbanSetup, setShowKanbanSetup] = useState(false);
@@ -582,9 +586,12 @@ export default function TaskDashboard({ projectId }: TaskDashboardProps) {
       {/* Tabs + Actions */}
       <div className="h-10 flex items-end border-b border-slate-100 shrink-0">
         <div className="flex items-end h-full">
-          {(["list", "kanban", "calendar", "gantt", "archive"] as const).map(m => (
-            <button key={m} onClick={() => setViewMode(m)} className={`h-full px-4 text-[10px] font-bold uppercase tracking-widest border-b-2 transition-all ${viewMode === m ? "border-primary text-primary" : "border-transparent text-slate-400 hover:text-slate-600"}`}>{m}</button>
-          ))}
+          {(["list", "kanban", "calendar", "gantt", "archive", "summary", "settings"] as const).map(m => {
+            if ((m === "summary" || m === "settings") && projectId === "ALL") return null;
+            return (
+              <button key={m} onClick={() => setViewMode(m)} className={`h-full px-4 text-[10px] font-bold uppercase tracking-widest border-b-2 transition-all ${viewMode === m ? "border-primary text-primary" : "border-transparent text-slate-400 hover:text-slate-600"}`}>{m}</button>
+            );
+          })}
         </div>
         <div className="flex items-center gap-1.5 ml-auto px-4 pb-0.5" onClick={e => e.stopPropagation()}>
           {/* Export */}
@@ -655,7 +662,44 @@ export default function TaskDashboard({ projectId }: TaskDashboardProps) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto thin-scrollbar">
+      <div className="flex-1 overflow-auto thin-scrollbar p-6">
+
+        {viewMode === "summary" && (
+           <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="bg-white rounded-[2.5rem] border border-slate-100 p-12 shadow-sm flex flex-col items-center text-center">
+                 <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.3em] mb-12">Project Completion Tracking</h3>
+                 <DonutChart 
+                    completed={displayTasks.filter(t => t.status === 'completed').length}
+                    inProgress={displayTasks.filter(t => t.status === 'in-progress').length}
+                    pending={displayTasks.filter(t => t.status === 'pending').length}
+                 />
+                 <div className="grid grid-cols-3 gap-12 mt-12 w-full pt-12 border-t border-slate-50">
+                    <div className="flex flex-col">
+                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Items</span>
+                       <span className="text-2xl font-black text-slate-800">{displayTasks.length}</span>
+                    </div>
+                    <div className="flex flex-col">
+                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Status</span>
+                       <span className="text-2xl font-black text-emerald-500 uppercase">Active</span>
+                    </div>
+                    <div className="flex flex-col">
+                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Leader</span>
+                       <span className="text-xl font-black text-slate-800 truncate">{formatOwner(session?.user?.name)}</span>
+                    </div>
+                 </div>
+              </div>
+           </div>
+        )}
+
+        {viewMode === "settings" && (
+           <div className="max-w-5xl mx-auto pb-20">
+              <ProjectSettingsView 
+                project={{ id: projectId, name: projectName, assignedIds: tasks.map(t => t.owner).join(','), archived: showArchived }} 
+                profile={profile}
+                onUpdate={fetchTasks}
+              />
+           </div>
+        )}
 
         {/* LIST / ARCHIVE */}
         {(viewMode === "list" || viewMode === "archive") && (
