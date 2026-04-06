@@ -731,13 +731,14 @@ function TimelineApp() {
       </div>
 
       {isBufferModalOpen && (
-        <BufferModal 
-          isOpen={isBufferModalOpen}
+        <BufferModal
           taskId={bufferTaskId || ""}
-          taskSubject={events.find(e => e.id === bufferTaskId)?.subject || ""}
           currentPadding={events.find(e => e.id === bufferTaskId)?.paddingDays || 0}
+          plannedEnd={events.find(e => e.id === bufferTaskId)?.endDate}
           onClose={() => setIsBufferModalOpen(false)}
-          onSave={handleSaveBuffer}
+          onSuccess={(newPadding) => {
+            handleSaveBuffer(newPadding);
+          }}
         />
       )}
       </div>

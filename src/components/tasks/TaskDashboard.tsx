@@ -1133,7 +1133,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
           taskId={bufferTask.id}
           currentPadding={bufferTask.padding}
           onClose={() => setBufferTask(null)}
-          onSuccess={() => {
+          onSuccess={(_newPadding) => {
             setBufferTask(null);
             fetchTasks();
           }}
