@@ -40,6 +40,7 @@ import KanbanTransitionModal from "@/components/tasks/KanbanTransitionModal";
 import UserSelect from "@/components/ui/UserSelect";
 import DonutChart from "@/components/charts/DonutChart";
 import ProjectSettingsView from "@/components/projects/ProjectSettingsView";
+import BufferModal from "@/components/timeline/BufferModal";
 
 interface Task {
   id: string;
@@ -58,6 +59,8 @@ interface Task {
   project?: { id: string; name: string };
   history?: any[];
   kanbanLaneId?: string | null;
+  paddingDays?: number;
+  externalPlannedEnd?: string;
 }
 
 interface TaskDashboardProps {
@@ -144,6 +147,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"list" | "calendar" | "gantt" | "archive" | "kanban" | "summary" | "settings">("list");
   const [isLevelZero, setIsLevelZero] = useState(false);
+  const [bufferTask, setBufferTask] = useState<{ id: string; padding: number } | null>(null);
   const [kanbanBoard, setKanbanBoard] = useState<any>(null);
   const [kanbanLoading, setKanbanLoading] = useState(false);
   const [showKanbanSetup, setShowKanbanSetup] = useState(false);
@@ -964,6 +968,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                 onUpdate={fetchTasks} 
                 onTaskClick={(id: string) => { const t = flattenTasks(tasks).find(x => x.id === id); if (t) setSelectedTask(t); }}
                 onToggleExpand={id => { const n = new Set(expandedTasks); if (n.has(id)) n.delete(id); else n.add(id); setExpandedTasks(n); }}
+                onUpdateBuffer={(id, padding) => setBufferTask({ id, padding })}
               />
            </div>
         )}
@@ -1112,6 +1117,17 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
           onConfirm={async extra => {
             await applyKanbanMove(kanbanTransition.task.id, kanbanTransition.laneId, kanbanTransition.mappedStatus, extra);
             setKanbanTransition(null);
+          }}
+        />
+      )}
+      {bufferTask && (
+        <BufferModal
+          taskId={bufferTask.id}
+          currentPadding={bufferTask.padding}
+          onClose={() => setBufferTask(null)}
+          onSuccess={() => {
+            setBufferTask(null);
+            fetchTasks();
           }}
         />
       )}

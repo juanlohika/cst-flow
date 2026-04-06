@@ -395,3 +395,40 @@ After Gemini generates Minutes + BRD + Tasks:
 4. `RecurringConfig.tsx` component + new tab in `TaskDetailModal`
 5. `OverloadBadge.tsx` + `ConflictWarning.tsx` in `TaskDashboard`
 6. `PersonalDashboard.tsx` + `/api/dashboard` + `/api/ai/day-planner`
+
+---
+
+## Session: 2026-04-06 — Project Management Premium Overhaul & Gantt Buffer Fix
+
+### Changes completed this session
+
+**1. Premium Settings UI (Anti-Stitch)**
+- Completely redesigned `ProjectSettingsView.tsx` to align with the "Premium Light" theme.
+- Implemented **Stakeholder CRM** with full CRUD functionality for external contacts.
+- Added accurate internal team counting and assignment management.
+- Modernized the Project Sharing console with functional client portal previews.
+
+**2. Archived Roadmaps Library**
+- Implemented `ArchivedProjectList.tsx` for historic project management.
+- Sidebar updated to filter archived projects from the active roadmaps list.
+- Added a dedicated "Archived Roadmaps" explorer link in the main navigation.
+
+**3. Executive Gantt "Level 0" View**
+- Added a "Summary (L0)" toggle to the Gantt chart in the Task Dashboard.
+- Implemented `transformToLevelZero` logic to collapse tasks into strategic project-level summary bars.
+- Updated `InteractiveGantt.tsx` to support read-only summary rows with specialized styling.
+
+**4. Gantt Client Buffer (Leg Room) Fix**
+- Integrated `BufferModal.tsx` into the Task Dashboard with a functional "Clock" icon trigger.
+- Created `src/lib/date-utils.ts` with `addDaysSkippingWeekends` to ensure consistent delivery calculations.
+- Fixed Task Detail Modal and Buffer Modal to auto-calculate `externalPlannedEnd` using the shared utility.
+- Enabled visual orange "Client Buffer" indicators in the Gantt chart for all tasks with padding.
+- Logic: Wednesday after Friday (3-day padding) and Friday to Wednesday (3-day padding) handled via `addDaysSkippingWeekends`.
+
+**5. AI System Documentation**
+- Created `docs/AI_SYSTEM_CONTEXT.md` and `docs/PREMIUM_DESIGN_SYSTEM.md` for AI agent readiness (Claude Code).
+
+### Next planned session
+1. Finalize "Preview Portal" visibility logic to strictly enforce stakeholder roles.
+2. Enhance ROI analytics in the Project Info tab using the new stakeholder data.
+3. Consolidate ownership into `userId` across all `TimelineItem` records.

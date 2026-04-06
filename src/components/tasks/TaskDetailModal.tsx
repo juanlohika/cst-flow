@@ -24,6 +24,7 @@ import {
 import StitchTimePicker from "@/components/ui/StitchTimePicker";
 import { useToast } from "@/components/ui/ToastContext";
 import RecurringConfig from "@/components/tasks/RecurringConfig";
+import { addDaysSkippingWeekends } from "@/lib/date-utils";
 
 interface TaskDetailModalProps {
   task: any;
@@ -159,11 +160,8 @@ export default function TaskDetailModal({
   // AUTO-CALCULATE EXTERNAL DEADLINE (Leg Room)
   useEffect(() => {
     if (!pEnd) return;
-    const d = new Date(pEnd);
-    if (!isNaN(d.getTime())) {
-      d.setDate(d.getDate() + (editPaddingDays || 0));
-      setEditExternalEnd(d.toISOString().split("T")[0]);
-    }
+    const newEnd = addDaysSkippingWeekends(pEnd, editPaddingDays || 0);
+    setEditExternalEnd(newEnd);
   }, [pEnd, editPaddingDays]);
 
   // Confirmation step — which status action is pending confirmation
