@@ -1307,9 +1307,6 @@ export function ProjectsTab({ accountId, companyName, profile }: { accountId: st
     </div>
   );
 }
-    </div>
-  );
-}
 
 function TaskTable({ tasks }: { tasks: any[] }) {
   if (tasks.length === 0) {
