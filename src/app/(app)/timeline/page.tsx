@@ -86,6 +86,7 @@ function TimelineApp() {
   // MULTI-SELECT BUFFER STATE
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [smartMode, setSmartMode] = useState(false);
+  const [allExternalEvents, setAllExternalEvents] = useState<any[]>([]);
   
   const [shareLink, setShareLink] = useState<string | null>(null);
   const mermaidRef = useRef<HTMLDivElement>(null);
@@ -183,6 +184,35 @@ function TimelineApp() {
       localStorage.setItem("timeline_walkthrough_seen", "true");
     }
   }, []);
+
+  // Fetch Global Tasks for Smart Mode aggregation
+  useEffect(() => {
+    if (smartMode) {
+      const pId = new URLSearchParams(window.location.search).get("projectId");
+      fetch(`/api/tasks?projectId=ALL`)
+        .then(res => res.json())
+        .then(data => {
+            if (Array.isArray(data)) {
+                const external = data.filter((t: any) => t.projectId !== pId && t.status !== 'archived').map((item: any) => ({
+                    id: item.id,
+                    taskCode: item.taskCode,
+                    subject: item.subject,
+                    startDate: item.plannedStart.split('T')[0],
+                    endDate: item.plannedEnd.split('T')[0],
+                    durationHours: item.durationHours,
+                    owner: item.owner || "",
+                    description: item.description || "",
+                    projectName: item.project?.name || item.projectName || "External",
+                    status: item.status
+                }));
+                setAllExternalEvents(external);
+            }
+        })
+        .catch(console.error);
+    } else {
+      setAllExternalEvents([]);
+    }
+  }, [smartMode]);
 
   useEffect(() => {
     if (activeTab === "gantt" && viewMode === "static" && events.length > 0 && mermaidRef.current) {
@@ -651,15 +681,16 @@ function TimelineApp() {
               )}
 
                {activeTab === "gantt" && viewMode === "interactive" && (
-                 <div className="h-full">
+                 <div className="flex-1 min-h-0 flex flex-col">
                     {loading ? (
-                       <div className="h-full flex items-center justify-center bg-surface-default/80 backdrop-blur-sm rounded-[2rem] border border-border-default shadow-2xl">
+                       <div className="flex-1 flex items-center justify-center bg-surface-default/80 backdrop-blur-sm rounded-[2rem] border border-border-default shadow-2xl">
                           <StitchLoading />
                        </div>
                     ) : (
-                        <div className="flex-1 min-h-0 bg-white relative">
+                        <div className="flex-1 min-h-0 bg-white relative flex flex-col">
                           <InteractiveGantt
                             events={events}
+                            allExternalEvents={allExternalEvents}
                             onUpdateEvents={handleUpdateEvents}
                             onTaskClick={handleTaskClick}
                             onUpdateBuffer={id => handleToggleSelect(id)}
@@ -758,6 +789,8 @@ function TimelineApp() {
         )}
       </div>
 
+      </div>
+
       {/* INTEGRATED BUFFER MINI-CARD (FOR SINGLE & BULK) */}
       {selectedIds.size > 0 && (
         <BufferModal
@@ -784,7 +817,6 @@ function TimelineApp() {
           }}
         />
       )}
-      </div>
     </div>
   );
 }

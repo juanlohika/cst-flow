@@ -20,6 +20,8 @@ import {
   Calendar,
   RefreshCw,
   Repeat,
+  Zap,
+  Loader2,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { toPng } from "html-to-image";
@@ -147,7 +149,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"list" | "calendar" | "gantt" | "archive" | "kanban" | "summary" | "settings">("list");
   const [isLevelZero, setIsLevelZero] = useState(false);
-  const [bufferTask, setBufferTask] = useState<{ id: string; padding: number } | null>(null);
+  const [bufferTask, setBufferTask] = useState<{ id: string; padding: number; plannedEnd?: string } | null>(null);
   const [kanbanBoard, setKanbanBoard] = useState<any>(null);
   const [kanbanLoading, setKanbanLoading] = useState(false);
   const [showKanbanSetup, setShowKanbanSetup] = useState(false);
@@ -165,6 +167,8 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
   const [parentForNewSubtask, setParentForNewSubtask] = useState<Task | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [smartMode, setSmartMode] = useState(false);
+  const [allExternalEvents, setAllExternalEvents] = useState<any[]>([]);
   const [rescheduleInfo, setRescheduleInfo] = useState<{ id: string; newStart: string; newEnd: string } | null>(null);
   const [cascadeInfo, setCascadeInfo] = useState<{
     parentId: string; parentName: string;
@@ -184,6 +188,33 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
   const [popoverSaving, setPopoverSaving] = useState(false);
   const ganttRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
+
+  useEffect(() => {
+    if (smartMode) {
+      fetch("/api/tasks?projectId=ALL")
+        .then(res => res.json())
+        .then(data => {
+            if (Array.isArray(data)) {
+                // Filter out tasks that belong to the CURRENT project to avoid duplicates
+                const external = data.filter((t: any) => t.projectId !== projectId && t.status !== 'archived').map((item: any) => ({
+                    id: item.id,
+                    taskCode: item.taskCode,
+                    subject: item.subject,
+                    startDate: item.plannedStart.split('T')[0],
+                    endDate: item.plannedEnd.split('T')[0],
+                    durationHours: item.durationHours,
+                    owner: item.owner || "",
+                    projectName: item.project?.name || item.projectName || "External",
+                    status: item.status
+                }));
+                setAllExternalEvents(external);
+            }
+        })
+        .catch(console.error);
+    } else {
+      setAllExternalEvents([]);
+    }
+  }, [smartMode, projectId]);
 
   useEffect(() => { setShowArchived(viewMode === "archive"); }, [viewMode]);
   useEffect(() => { fetchTasks(); }, [refreshKey, projectId, showArchived]);
@@ -658,7 +689,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
         {viewMode === "gantt" && projectId === "ALL" && (
           <>
             <div className="w-px h-4 bg-slate-200 shrink-0" />
-            <div className="flex items-center gap-3">
+               <div className="flex items-center gap-3">
                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Gantt Mode</span>
                <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
                   <button 
@@ -675,6 +706,18 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                   </button>
                </div>
             </div>
+            <div className="w-px h-4 bg-slate-200 shrink-0 mx-2" />
+            <button
+               onClick={(e) => { e.stopPropagation(); setSmartMode(!smartMode); }}
+               className={`flex items-center gap-1.5 px-3 py-1.2 rounded-lg border text-[9px] font-black uppercase tracking-widest transition-all ${
+                 smartMode
+                   ? "bg-emerald-500 text-white border-emerald-500 shadow-sm shadow-emerald-500/20"
+                   : "bg-white text-slate-400 border-slate-200 hover:text-emerald-600 hover:border-emerald-200"
+               }`}
+             >
+               <Zap className={`w-3.5 h-3.5 ${smartMode ? "animate-pulse" : ""}`} />
+               {smartMode ? "Smart ON" : "Smart OFF"}
+            </button>
           </>
         )}
 
@@ -988,15 +1031,23 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                   depth: t.depth || 0,
                   parentId: t.parentId,
                   expanded: expandedTasks.has(t.id),
-                  isSummary: t.isSummary,
                   projectName: t.project?.name || t.projectName,
+                  description: t.description || ""
                 }))}
-                onUpdateEvents={() => {}}
+                allExternalEvents={allExternalEvents}
+                onUpdateEvents={(evs) => {
+                  const updated = evs[0];
+                  handleReschedule(updated.id, updated.startDate, updated.endDate);
+                }}
                 scale={ganttScale}
                 ganttRef={ganttRef}
+                smartMode={smartMode}
                 onTaskClick={(id: string) => { const t = flattenTasks(tasks).find(x => x.id === id); if (t) setSelectedTask(t); }}
                 onToggleExpand={id => { const n = new Set(expandedTasks); if (n.has(id)) n.delete(id); else n.add(id); setExpandedTasks(n); }}
-                onUpdateBuffer={(id, padding) => setBufferTask({ id, padding })}
+                onUpdateBuffer={(id, padding) => {
+                  const t = flattenTasks(tasks).find(x => x.id === id);
+                  if (t) setBufferTask({ id, padding, plannedEnd: t.plannedEnd });
+                }}
               />
            </div>
         )}
@@ -1152,6 +1203,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
         <BufferModal
           taskId={bufferTask.id}
           currentPadding={bufferTask.padding}
+          plannedEnd={bufferTask.plannedEnd}
           onClose={() => setBufferTask(null)}
           onSuccess={(_newPadding) => {
             setBufferTask(null);

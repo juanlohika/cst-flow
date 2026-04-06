@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useRef, useEffect } from "react";
-import { User, Clock, Plus, Trash2, Calendar, GripVertical, Briefcase, Lock, CheckCircle2, ChevronRight, ChevronDown, Timer } from "lucide-react";
+import { User, Clock, Plus, Trash2, X, Calendar, GripVertical, Briefcase, Lock, CheckCircle2, ChevronRight, ChevronDown, Timer } from "lucide-react";
 import { calculateClientEndDate } from "@/lib/utils/business-days";
 import { calculateUserDailyLoad, formatToISODate } from "@/lib/utils/conflict-utils";
 import { AlertTriangle } from "lucide-react";
@@ -40,6 +40,7 @@ interface InteractiveGanttProps {
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
   smartMode?: boolean;
+  allExternalEvents?: any[];
 }
 
 export default function InteractiveGantt({
@@ -56,9 +57,11 @@ export default function InteractiveGantt({
   selectedIds,
   onToggleSelect,
   smartMode = false,
+  allExternalEvents = [],
 }: InteractiveGanttProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
+  const [loadModalDate, setLoadModalDate] = useState<Date | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
 
   const startRename = (e: React.MouseEvent, event: TimelineEvent) => {
@@ -230,20 +233,37 @@ export default function InteractiveGantt({
     if (!smartMode) return new Map();
     const map = new Map<string, number>();
     
-    // Get unique owners and dates
-    const owners = Array.from(new Set(events.map(e => e.owner)));
+    // Get unique owners (Internal + External)
+    const allEvents = [...events, ...allExternalEvents];
+    const owners = Array.from(new Set(allEvents.map(e => e.owner)));
     
     owners.forEach(owner => {
        dates.forEach(date => {
           const dateStr = formatToISODate(date);
-          const load = calculateUserDailyLoad(owner, date, events);
+          const load = calculateUserDailyLoad(owner, date, events, allExternalEvents);
           if (load > 0) {
              map.set(`${owner}-${dateStr}`, load);
           }
        });
     });
     return map;
-  }, [events, dates, smartMode]);
+  }, [events, allExternalEvents, dates, smartMode]);
+
+  // Aggregate daily totals for the bubbles
+  const dailyTotals = useMemo(() => {
+    if (!smartMode) return new Map();
+    const map = new Map<string, number>();
+    dates.forEach(date => {
+      const dateStr = formatToISODate(date);
+      let total = 0;
+      const owners = Array.from(new Set([...events, ...allExternalEvents].map(e => e.owner)));
+      owners.forEach(owner => {
+        total += loadMap.get(`${owner}-${dateStr}`) || 0;
+      });
+      if (total > 0) map.set(dateStr, total);
+    });
+    return map;
+  }, [loadMap, dates, smartMode, events, allExternalEvents]);
 
   const hasConflict = (event: TimelineEvent) => {
     if (!smartMode) return false;
@@ -281,11 +301,31 @@ export default function InteractiveGantt({
             <div className="flex h-[28px] bg-slate-50/50">
                <div className="w-[320px] shrink-0 sticky left-0 z-[70] bg-slate-50/80 border-r" />
                <div className="flex">
-                 {dates.filter((_, idx) => idx % dayStep === 0).map((d, i) => (
-                    <div key={i} style={{ width: "var(--col-width)" }} className={`border-r h-full flex items-center justify-center text-[9px] font-bold uppercase ${isToday(d) ? 'bg-primary/10 text-primary border-primary/20' : 'text-slate-400'} border-slate-100`}>
-                      {scale === "day" ? d.getDate() : scale === "week" ? `Wk ${Math.ceil(d.getDate() / 7)}` : d.toLocaleDateString("en", { month: "short" })}
-                    </div>
-                 ))}
+                 {dates.filter((_, idx) => idx % dayStep === 0).map((d, i) => {
+                    const dateStr = formatToISODate(d);
+                    const totalLoad = dailyTotals.get(dateStr) || 0;
+                    return (
+                      <div 
+                        key={i} 
+                        style={{ width: "var(--col-width)" }} 
+                        className={`group/date border-r h-full flex flex-col items-center justify-center relative ${isToday(d) ? 'bg-primary/10 text-primary border-primary/20' : 'text-slate-400'} border-slate-100 cursor-pointer hover:bg-slate-100/80 transition-colors`}
+                        onClick={() => setLoadModalDate(d)}
+                        title="Click to view daily resource load details"
+                      >
+                        <span className="text-[9px] font-bold uppercase leading-none">
+                          {scale === "day" ? d.getDate() : scale === "week" ? `Wk ${Math.ceil(d.getDate() / 7)}` : d.toLocaleDateString("en", { month: "short" })}
+                        </span>
+
+                        {smartMode && totalLoad > 0 && (
+                          <div className={`mt-0.5 flex items-center justify-center min-w-[14px] h-[14px] rounded-full px-1 text-[7px] font-black tracking-tighter text-white shadow-sm transition-all ${
+                            totalLoad > 12 ? "bg-rose-500 animate-pulse" : totalLoad > 8 ? "bg-amber-500" : "bg-indigo-500"
+                          }`}>
+                            {totalLoad.toFixed(1)}h
+                          </div>
+                        )}
+                      </div>
+                    );
+                 })}
                </div>
             </div>
           </div>
@@ -432,7 +472,7 @@ export default function InteractiveGantt({
                               <div 
                                 onClick={(ev) => { ev.stopPropagation(); onUpdateBuffer?.(e.id, e.paddingDays || 0); }}
                                 style={{ 
-                                  left: pos.left + pos.width, 
+                                  left: extPos.left, 
                                   width: extPos.width,
                                   top: '6px',
                                   bottom: '6px'
@@ -453,6 +493,111 @@ export default function InteractiveGantt({
           </div>
         </div>
       </div>
+
+      {loadModalDate && (
+        <DailyLoadDetailModal
+          date={loadModalDate}
+          events={events}
+          externalEvents={allExternalEvents}
+          onClose={() => setLoadModalDate(null)}
+        />
+      )}
     </div>
   );
+}
+
+function DailyLoadDetailModal({ date, events, externalEvents, onClose }: { date: Date; events: any[]; externalEvents: any[]; onClose: () => void }) {
+  const dateStr = formatToISODate(date);
+  
+  const relevantTasks = useMemo(() => {
+    const all = [...events, ...externalEvents];
+    return all.filter(ev => {
+      if (ev.archived || ev.status === 'completed') return false;
+      const s = formatToISODate(new Date(ev.startDate));
+      const e = formatToISODate(new Date(ev.endDate));
+      return dateStr >= s && dateStr <= e;
+    }).sort((a, b) => (a.owner || "").localeCompare(b.owner || ""));
+  }, [dateStr, events, externalEvents]);
+
+  const loadByOwner = useMemo(() => {
+    const map = new Map<string, number>();
+    const owners = Array.from(new Set(relevantTasks.map(t => t.owner)));
+    owners.forEach(owner => {
+      const load = calculateUserDailyLoad(owner, date, events, externalEvents);
+      map.set(owner, load);
+    });
+    return map;
+  }, [relevantTasks, date, events, externalEvents]);
+
+  const totalHours = Array.from(loadByOwner.values()).reduce((a, b) => a + b, 0);
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-300" onClick={e => e.stopPropagation()}>
+        <div className="px-8 py-6 border-b flex items-center justify-between bg-slate-50">
+          <div>
+            <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-primary" /> {date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+            </h3>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Resource Overload Monitoring</p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-white rounded-full transition-all text-slate-400 hover:text-rose-500 shadow-sm border border-transparent hover:border-slate-100">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-8 max-h-[60vh] overflow-y-auto thin-scrollbar">
+          {relevantTasks.length === 0 ? (
+            <div className="text-center py-12">
+               <Briefcase className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+               <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">No tasks scheduled for this day</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {Array.from(new Set(relevantTasks.map(t => t.owner))).map(owner => {
+                const ownerTasks = relevantTasks.filter(t => t.owner === owner);
+                const ownerLoad = loadByOwner.get(owner) || 0;
+                return (
+                  <div key={owner} className="bg-slate-50/50 rounded-2xl p-4 border border-slate-100">
+                    <div className="flex items-center justify-between mb-3 border-b border-white pb-2">
+                       <span className="text-xs font-black text-primary uppercase tracking-wider flex items-center gap-2">
+                         <User className="w-3 h-3" /> {owner || "Unassigned"}
+                       </span>
+                       <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${ownerLoad > 8 ? "bg-rose-500 text-white" : "bg-indigo-100 text-indigo-600"}`}>
+                         {ownerLoad.toFixed(1)}h Daily Total
+                       </span>
+                    </div>
+                    <div className="space-y-2">
+                      {ownerTasks.map((t, idx) => (
+                        <div key={idx} className="flex items-start justify-between gap-4">
+                           <div className="min-w-0">
+                             <p className="text-[11px] font-bold text-slate-700 truncate">{t.subject}</p>
+                             <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{t.projectName || "Current Project"}</p>
+                           </div>
+                           <span className="text-[10px] font-mono text-slate-500 shrink-0">
+                             {(t.durationHours / Math.max(1, countDays(t.startDate, t.endDate))).toFixed(1)}h
+                           </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="px-8 py-6 bg-slate-50 border-t flex items-center justify-between">
+           <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Daily Aggregated Load</span>
+           <span className="text-xl font-black text-slate-800">{totalHours.toFixed(1)}h</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function countDays(start: string, end: string) {
+  const s = new Date(start);
+  const e = new Date(end);
+  return Math.max(1, Math.ceil((e.getTime() - s.getTime()) / 86400000) + 1);
 }

@@ -38,9 +38,14 @@ interface BasicTask {
 }
 
 /**
- * Calculates the total load for a specific user on a specific date across all provided tasks.
+ * Calculates the total load for a specific user on a specific date across all provided tasks (internal + external).
  */
-export function calculateUserDailyLoad(owner: string, date: Date | string, tasks: BasicTask[]): number {
+export function calculateUserDailyLoad(
+  owner: string, 
+  date: Date | string, 
+  tasks: BasicTask[],
+  externalTasks?: BasicTask[]
+): number {
   const targetDate = new Date(date);
   targetDate.setHours(0, 0, 0, 0);
   
@@ -48,9 +53,9 @@ export function calculateUserDailyLoad(owner: string, date: Date | string, tasks
   const dayOfWeek = targetDate.getDay();
   if (dayOfWeek === 0 || dayOfWeek === 6) return 0;
 
-  const targetDateStr = formatToISODate(targetDate);
+  const combinedTasks = externalTasks ? [...tasks, ...externalTasks] : tasks;
 
-  return tasks.reduce((total, task) => {
+  return combinedTasks.reduce((total, task) => {
     if (task.owner !== owner) return total;
     
     const start = new Date(task.startDate);
