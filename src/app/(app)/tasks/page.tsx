@@ -35,7 +35,7 @@ function TasksContent() {
           setProjectName(found?.name ?? null);
           
           if (found?.clientProfileId) {
-             fetch(`/api/profiles/${found.clientProfileId}`)
+             fetch(`/api/meeting-prep/profiles/${found.clientProfileId}`)
                .then(res => res.ok ? res.json() : null)
                .then(pData => setProfile(pData))
                .catch(() => {});
