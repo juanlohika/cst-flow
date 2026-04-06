@@ -5,6 +5,7 @@ import { Loader2, Calendar, FileText, CheckCircle2, LayoutList, Users, ShieldChe
 import { ClientOnly } from "@/components/ui/ClientOnly";
 import { PremiumSpinner } from "@/components/ui/PremiumSpinner";
 import InteractiveGantt from "@/components/timeline/InteractiveGantt";
+import DonutChart from "@/components/charts/DonutChart";
 
 /**
  * Client Portal Page: Indestructible Share Link.
@@ -119,23 +120,25 @@ export default function ClientPortalPage({ params }: { params: { token: string }
                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Global Status</span>
                        <div className="flex items-center gap-2">
                           <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse" />
-                          <span className="font-bold text-slate-700">{project?.status || "Active"}</span>
+                          <span className="font-bold text-slate-700 uppercase">{project?.status || "Active"}</span>
                        </div>
                     </div>
                     <div className="space-y-1">
                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Official Kickoff</span>
-                       <span className="block font-bold text-slate-700">{new Date(project?.startDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
+                       <span className="block font-bold text-slate-700">{project?.startDate ? new Date(project.startDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : "TBD"}</span>
                     </div>
-                 </div>
-                 <div className="flex flex-col gap-6">
-                    <div className="space-y-1">
+                    <div className="space-y-1 pt-4 border-t border-slate-50">
                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Deliverables</span>
                        <span className="block font-bold text-slate-700">{project?.tasks?.length || 0} Task Items</span>
                     </div>
-                    <div className="space-y-1">
-                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Last Sync</span>
-                       <span className="block font-bold text-slate-700">{new Date().toLocaleTimeString()}</span>
-                    </div>
+                 </div>
+
+                 <div className="flex flex-col items-center justify-center p-6 bg-slate-50/50 rounded-3xl border border-slate-50">
+                    <DonutChart 
+                      completed={project?.tasks?.filter((t: any) => t.status === 'completed').length || 0}
+                      inProgress={project?.tasks?.filter((t: any) => t.status === 'in-progress').length || 0}
+                      pending={project?.tasks?.filter((t: any) => !t.status || t.status === 'pending').length || 0}
+                    />
                  </div>
               </div>
            </div>

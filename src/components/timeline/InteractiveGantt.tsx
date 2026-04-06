@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState, useRef, useEffect } from "react";
 import { User, Clock, Plus, Trash2, Calendar, GripVertical, Briefcase, Lock, CheckCircle2, ChevronRight, ChevronDown, Timer } from "lucide-react";
+import { calculateClientEndDate } from "@/lib/utils/business-days";
 
 interface TimelineEvent {
   id: string;
@@ -164,6 +165,9 @@ export default function InteractiveGantt({
         ev.startDate = addDays(dragInfo.initialStart, deltaDays);
       } else if (dragInfo.type === "right") {
         ev.endDate = addDays(dragInfo.initialEnd, deltaDays);
+      }
+      if (ev.paddingDays && ev.paddingDays > 0) {
+        ev.externalPlannedEnd = calculateClientEndDate(ev.endDate, ev.paddingDays);
       }
       newEvents[dragInfo.index] = ev;
       onUpdateEvents(newEvents);

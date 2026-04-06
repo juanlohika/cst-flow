@@ -16,6 +16,8 @@ import { useToast } from "@/components/ui/ToastContext";
 import { formatRef } from "@/lib/utils/format";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import InteractiveGantt from "@/components/timeline/InteractiveGantt";
+import DonutChart from "@/components/charts/DonutChart";
+import ProjectSettingsView from "@/components/projects/ProjectSettingsView";
 import BufferModal from "@/components/timeline/BufferModal";
 import ProjectSettingsModal from "@/components/projects/ProjectSettingsModal";
 import { Share, Mail, Copy, Check, X, Settings } from "lucide-react";
@@ -1113,7 +1115,8 @@ export function ProjectsTab({ accountId, companyName, profile }: { accountId: st
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"projects" | "tasks">("tasks");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [projectSubTab, setProjectSubTab] = useState<"list" | "gantt">("list");
+  const [projectSubTab, setProjectSubTab] = useState<"list" | "gantt" | "settings">("list");
+  const [showArchived, setShowArchived] = useState(false);
   
   // SETTINGS/SHARING STATE
   const [sharingProject, setSharingProject] = useState<any>(null);
@@ -1122,14 +1125,15 @@ export function ProjectsTab({ accountId, companyName, profile }: { accountId: st
 
   const loadData = useCallback(() => {
     setLoading(true);
+    const query = showArchived ? "?showArchived=true" : "";
     Promise.all([
-      fetch(`/api/accounts/${accountId}/projects`).then(r => r.ok ? r.json() : []),
+      fetch(`/api/accounts/${accountId}/projects${query}`).then(r => r.ok ? r.json() : []),
       fetch(`/api/accounts/${accountId}/tasks`).then(r => r.ok ? r.json() : [])
     ]).then(([projData, taskData]) => {
       setProjects(projData);
       setTasks(taskData);
     }).finally(() => setLoading(false));
-  }, [accountId]);
+  }, [accountId, showArchived]);
 
   useEffect(() => {
     loadData();
@@ -1199,6 +1203,12 @@ export function ProjectsTab({ accountId, companyName, profile }: { accountId: st
                 >
                   Visual Roadmap (Gantt)
                 </button>
+                <button 
+                  onClick={() => setProjectSubTab("settings")}
+                  className={`h-full flex items-center px-1 text-[12px] border-b-2 transition-all relative ${projectSubTab === "settings" ? "border-primary text-primary font-bold" : "border-transparent text-text-muted font-medium"}`}
+                >
+                  Project Settings & Team
+                </button>
               </div>
               <div className="flex gap-2 pb-2">
                  <button 
@@ -1218,34 +1228,61 @@ export function ProjectsTab({ accountId, companyName, profile }: { accountId: st
               </div>
            </div>
 
-           {projectSubTab === "list" ? (
-             <TaskTable tasks={projectTasks} />
-           ) : (
-             <div className="h-[500px] border border-border-default rounded-2xl overflow-hidden bg-white shadow-xl">
-                <InteractiveGantt 
-                  events={projectTasks.map(t => ({
-                    id: t.id,
-                    taskCode: t.taskCode || "T-00",
-                    subject: t.title || t.subject,
-                    startDate: t.startDate || t.plannedStart,
-                    endDate: t.endDate || t.plannedEnd,
-                    durationHours: t.durationHours || 1,
-                    owner: t.owner || "Team",
-                    description: t.description || "",
-                    status: t.status,
-                    paddingDays: t.paddingDays || 0,
-                    externalPlannedEnd: t.externalPlannedEnd
-                  }))}
-                  onUpdateEvents={() => {}} 
-                  scale="day" 
-                />
-             </div>
-           )}
+            {projectSubTab === "list" ? (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                 <div className="lg:col-span-2 space-y-4">
+                    <TaskTable tasks={projectTasks} />
+                 </div>
+                 <div className="bg-white rounded-[2rem] border border-slate-100 p-8 shadow-sm">
+                    <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-6 text-center">Progress Analytics</h4>
+                    <DonutChart 
+                      completed={projectTasks.filter(t => t.status === 'completed').length}
+                      inProgress={projectTasks.filter(t => t.status === 'in-progress').length}
+                      pending={projectTasks.filter(t => t.status === 'pending').length}
+                    />
+                 </div>
+              </div>
+            ) : projectSubTab === "gantt" ? (
+              <div className="h-[500px] border border-border-default rounded-2xl overflow-hidden bg-white shadow-xl">
+                 <InteractiveGantt 
+                   events={projectTasks.map(t => ({
+                     id: t.id,
+                     taskCode: t.taskCode || "T-00",
+                     subject: t.title || t.subject,
+                     startDate: t.startDate || t.plannedStart,
+                     endDate: t.endDate || t.plannedEnd,
+                     durationHours: t.durationHours || 1,
+                     owner: t.owner || "Team",
+                     description: t.description || "",
+                     status: t.status,
+                     paddingDays: t.paddingDays || 0,
+                     externalPlannedEnd: t.externalPlannedEnd
+                   }))}
+                   onUpdateEvents={() => {}} 
+                   scale="day" 
+                 />
+              </div>
+            ) : (
+              <ProjectSettingsView 
+                project={selectedProject}
+                profile={profile}
+                onUpdate={loadData}
+              />
+            )}
         </div>
       ) : viewMode === "projects" ? (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-[12px] font-semibold text-text-primary">{projects.length} Project{projects.length !== 1 ? "s" : ""}</p>
+            <div className="flex items-center gap-4">
+               <p className="text-[12px] font-semibold text-text-primary">{projects.length} {showArchived ? "Archived " : ""}Project{projects.length !== 1 ? "s" : ""}</p>
+               <button 
+                 onClick={() => setShowArchived(!showArchived)}
+                 className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all border ${showArchived ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-slate-50 border-slate-200 text-slate-400 hover:text-slate-600'}`}
+               >
+                 {showArchived ? <RotateCcw className="w-3 h-3" /> : <Archive className="w-3 h-3" />}
+                 {showArchived ? "Exit Archives" : "View Archives"}
+               </button>
+            </div>
             <button className="flex items-center gap-1 text-[11px] text-primary hover:underline border-none bg-transparent cursor-pointer font-medium uppercase tracking-tighter">
               <Plus className="w-3 h-3" strokeWidth={3} /> New Project
             </button>

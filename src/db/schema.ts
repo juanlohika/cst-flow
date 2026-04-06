@@ -112,6 +112,7 @@ export const projects = sqliteTable("Project", {
   templateId:       text("templateId").references(() => timelineTemplates.id),
   defaultPaddingDays: integer("defaultPaddingDays").default(3).notNull(),
   shareToken:       text("shareToken").unique().$defaultFn(() => crypto.randomUUID()),
+  archived:         integer("archived", { mode: "boolean" }).default(false).notNull(),
   createdBy:        text("createdBy"),
   createdAt:        text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:        text("updatedAt").default(sql`(datetime('now'))`).notNull(),

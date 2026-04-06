@@ -242,11 +242,15 @@ export async function GET(req: Request) {
             eq(projectsTable.templateId, timelineTemplatesTable.id)
         );
 
+        // ARCHIVING FILTER
+        const showArchived = searchParams.get('showArchived') === 'true';
+        const archiveFilter = eq(projectsTable.archived, showArchived);
+
         if (isAdmin) {
-             // Admin Bypass: See all
-             data = await baseQuery.orderBy(desc(projectsTable.updatedAt));
+             // Admin Bypass: See all (but still filtered by archive status)
+             data = await baseQuery.where(archiveFilter).orderBy(desc(projectsTable.updatedAt));
         } else if (filter === 'mine') {
-             data = await baseQuery.where(eq(projectsTable.userId, userId)).orderBy(desc(projectsTable.updatedAt));
+             data = await baseQuery.where(and(eq(projectsTable.userId, userId), archiveFilter)).orderBy(desc(projectsTable.updatedAt));
         } else {
              // COLLABORATIVE FILTER: Owner OR Assigned OR Subordinate
              const filters = [
@@ -258,7 +262,7 @@ export async function GET(req: Request) {
                 filters.push(inArray(projectsTable.userId, subordinateIds));
              }
 
-             data = await baseQuery.where(or(...filters)).orderBy(desc(projectsTable.updatedAt));
+             data = await baseQuery.where(and(or(...filters), archiveFilter)).orderBy(desc(projectsTable.updatedAt));
         }
     } catch (dbError: any) {
         console.warn("[api/projects] JOIN ERROR - Falling back to simple query:", dbError.message);
