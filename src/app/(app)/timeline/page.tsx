@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { Loader2, Calendar, FileText, Download, Save, Clock, HelpCircle, Image as ImageIcon, Zap, LayoutList, Users, MousePointerClick, CheckSquare } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
