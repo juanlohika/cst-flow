@@ -43,7 +43,7 @@ async function getSmtpConfig() {
     console.warn("SMTP config read error:", err);
   }
   return {
-    host:   cfg.smtpHost   || process.env.SMTP_HOST   || "smtp.gmail.com",
+    host:   (cfg.smtpHost || process.env.SMTP_HOST || "smtp.gmail.com").replace("smpt", "smtp"),
     port:   parseInt(cfg.smtpPort || process.env.SMTP_PORT || "587"),
     secure: cfg.smtpSecure === "true" || process.env.SMTP_SECURE === "true",
     user:   cfg.smtpUser   || process.env.SMTP_USER,

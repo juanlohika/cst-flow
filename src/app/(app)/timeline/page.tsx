@@ -88,6 +88,7 @@ function TimelineApp() {
   const [smartMode, setSmartMode] = useState(false);
   const [allExternalEvents, setAllExternalEvents] = useState<any[]>([]);
   
+  const [filterMode, setFilterMode] = useState<"my" | "team">("my");
   const [shareLink, setShareLink] = useState<string | null>(null);
   const mermaidRef = useRef<HTMLDivElement>(null);
   const interactiveGanttRef = useRef<HTMLDivElement>(null);
@@ -97,6 +98,21 @@ function TimelineApp() {
   }, []);
 
   // Wire up the Gantt's + button to add a subtask below the parent
+  // --------------------------------------------------------------------------
+  // FILTERING LOGIC
+  // --------------------------------------------------------------------------
+  const filteredEvents = useMemo(() => {
+    if (filterMode === "team") return events;
+    const userName = session?.user?.name || session?.user?.email || "";
+    return events.filter(e => e.owner === userName);
+  }, [events, filterMode, session]);
+
+  const filteredExternalEvents = useMemo(() => {
+    if (filterMode === "team") return allExternalEvents;
+    const userName = session?.user?.name || session?.user?.email || "";
+    return allExternalEvents.filter(e => e.owner === userName || e.userName === userName);
+  }, [allExternalEvents, filterMode, session]);
+
   useEffect(() => {
     (window as any).dispatchAddTask = (parent: { id: string; subject: string; plannedStart: string; plannedEnd: string }) => {
       const parentIdx = events.findIndex(e => e.id === parent.id);
@@ -644,6 +660,22 @@ function TimelineApp() {
                )}
 
                <div className="flex items-center gap-3">
+                 <div className="flex bg-surface-muted p-1 rounded-lg border border-border-default h-9 items-center">
+                   <button
+                     onClick={() => setFilterMode("my")}
+                      className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-tight rounded-md transition-all flex items-center gap-1.5 ${filterMode === "my" ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}
+                   >
+                     <Users className="w-3 h-3" />
+                     My Tasks
+                   </button>
+                   <button
+                     onClick={() => setFilterMode("team")}
+                      className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-tight rounded-md transition-all flex items-center gap-1.5 ${filterMode === "team" ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}
+                   >
+                     <LayoutList className="w-3 h-3" />
+                     Team
+                   </button>
+                 </div>
                  <button onClick={() => setShowWalkthrough(true)} className="p-2 text-text-secondary hover:text-primary transition-colors">
                     <HelpCircle className="w-5 h-5" />
                  </button>
@@ -689,8 +721,8 @@ function TimelineApp() {
                     ) : (
                         <div className="flex-1 min-h-0 bg-white relative flex flex-col">
                           <InteractiveGantt
-                            events={events}
-                            allExternalEvents={allExternalEvents}
+                            events={filteredEvents}
+                            allExternalEvents={filteredExternalEvents}
                             onUpdateEvents={handleUpdateEvents}
                             onTaskClick={handleTaskClick}
                             onUpdateBuffer={id => handleToggleSelect(id)}

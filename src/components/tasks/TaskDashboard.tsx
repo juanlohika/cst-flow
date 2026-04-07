@@ -28,6 +28,7 @@ import { toPng } from "html-to-image";
 import AddTaskModal from "./AddTaskModal";
 import AllocateHoursModal from "./AllocateHoursModal";
 import GlobalCalendar from "./GlobalCalendar";
+import { calculateClientEndDate } from "@/lib/utils/business-days";
 import InteractiveGantt from "@/components/timeline/InteractiveGantt";
 import TaskDetailModal from "./TaskDetailModal";
 import ConfirmRescheduleModal from "./ConfirmRescheduleModal";
@@ -304,14 +305,17 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
 
   const updateRecursiveTaskDates = (items: Task[], id: string, start: string, end: string): Task[] => {
     return items.map(t => {
-      if (t.id === id) return { ...t, plannedStart: start, plannedEnd: end };
+      if (t.id === id) {
+        const updated = { ...t, plannedStart: start, plannedEnd: end };
+        if (t.paddingDays && t.paddingDays > 0) {
+          updated.externalPlannedEnd = calculateClientEndDate(end, t.paddingDays) || undefined;
+        }
+        return updated;
+      }
       if (t.subtasks) return { ...t, subtasks: updateRecursiveTaskDates(t.subtasks, id, start, end) };
       return t;
     });
-  };
-
-  const toggleExpand = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  };  const toggleExpand = (id: string, e: React.MouseEvent) => {
     const next = new Set(expandedTasks);
     if (next.has(id)) next.delete(id); else next.add(id);
     setExpandedTasks(next);

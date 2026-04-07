@@ -252,12 +252,20 @@ export async function POST(req: Request) {
       .where(eq(projectsTable.id, projectId))
       .limit(1);
     const project = projectRows[0];
+    const prefix = "CFD";
+    const allTasks = await db.select({ taskCode: timelineItemsTable.taskCode })
+      .from(timelineItemsTable)
+      .where(sql`${timelineItemsTable.taskCode} LIKE 'CFD-%'`);
+    
+    let nextNum = 1001;
+    if (allTasks.length > 0) {
+      const nums = allTasks
+        .map(t => parseInt(t.taskCode.split("-")[1]))
+        .filter(n => !isNaN(n));
+      if (nums.length > 0) nextNum = Math.max(...nums) + 1;
+    }
 
-    const prefix = project?.companyName 
-      ? project.companyName.split(" ")[0].replace(/[^a-zA-Z]/g, "").toUpperCase().substring(0, 3)
-      : "GEN";
-
-    const taskCode = `TASK-${Math.floor(100000 + Math.random() * 900000)}`;
+    const taskCode = `${prefix}-${nextNum}`;
     const taskId = `task_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
     const now = new Date().toISOString();
 
