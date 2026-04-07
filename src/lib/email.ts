@@ -22,7 +22,7 @@ async function getGlobalSettings() {
     
     return {
       appName: config.app_name || "CST OS",
-      logoUrl: config.bottom_logo_url || ""
+      logoUrl: config.bottom_logo_url || config.company_logo || ""
     };
   } catch (error) {
     console.error("error fetching global settings for email:", error);
@@ -553,9 +553,15 @@ function portalInviteEmailHtml({
     </div>
 
     <div class="hero">
+      ${logoUrl ? `
+      <div class="hero-icon" style="background: rgba(255,255,255,0.2); padding: 4px; border: 1px solid rgba(255,255,255,0.3);">
+        <img src="${logoUrl}" alt="${appName}" style="width: 42px; height: auto; object-fit: contain; filter: brightness(0) invert(1);" />
+      </div>
+      ` : `
       <div class="hero-icon">
         <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
       </div>
+      `}
       <div class="hero-title">Your Project Roadmap is Ready</div>
       <div class="hero-sub">View the latest progress and timeline updates</div>
     </div>
@@ -576,7 +582,7 @@ function portalInviteEmailHtml({
       </div>
 
       <div class="notice">
-        <strong>How to access:</strong> Click the button below, then enter <strong>this email address</strong> to unlock the portal. Delivery dates shown include your agreed buffer window.
+        <strong>How to access:</strong> Click the button below, then enter <strong>this email address</strong> to unlock the portal. You can view the full project schedule and upcoming delivery dates.
       </div>
 
       <div class="cta-wrap">
