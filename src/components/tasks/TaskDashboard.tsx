@@ -643,6 +643,47 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
     }
   };
 
+  const healthStats = useMemo(() => {
+    if (projectId === "ALL" || !tasks.length) return { actual: 0, expected: 0 };
+    
+    const all = deepFlattenTasks(tasks).filter(t => t.status !== 'archived');
+    if (all.length === 0) return { actual: 0, expected: 0 };
+
+    // 1. Time range
+    const taskStarts = all.map(t => t.plannedStart ? new Date(t.plannedStart.replace(" ", "T")).getTime() : Infinity);
+    const taskEnds = all.map(t => t.plannedEnd ? new Date(t.plannedEnd.replace(" ", "T")).getTime() : 0);
+    
+    // Fallback to projectRecord.startDate if available
+    let startTs = Math.min(...taskStarts);
+    if (projectRecord?.startDate) {
+      const pStart = new Date(projectRecord.startDate).getTime();
+      if (!isNaN(pStart)) startTs = Math.min(startTs, pStart);
+    }
+    
+    const endTs = Math.max(...taskEnds);
+    const nowTs = new Date().getTime();
+
+    let expected = 0;
+    if (startTs !== Infinity && endTs !== 0 && endTs > startTs) {
+      expected = Math.round(((nowTs - startTs) / (endTs - startTs)) * 100);
+      expected = Math.max(0, Math.min(100, expected));
+    }
+
+    // 2. Completion progress (Weighted by hours)
+    const totalHours = all.reduce((sum, t) => sum + (t.durationHours || 0), 0);
+    const completedHours = all.filter(t => t.status === 'completed').reduce((sum, t) => sum + (t.durationHours || 0), 0);
+    
+    let actual = 0;
+    if (totalHours > 0) {
+      actual = Math.round((completedHours / totalHours) * 100);
+    } else {
+      // Fallback to task count if no hours are set
+      actual = Math.round((all.filter(t => t.status === 'completed').length / all.length) * 100);
+    }
+
+    return { actual, expected, totalHours, completedHours, totalTasks: all.length };
+  }, [tasks, projectRecord, projectId]);
+
   const closeAll = () => { setOpenMenuId(null); setShowExport(false); setEditingCell(null); setDatePopover(null); };
 
   return (
@@ -779,15 +820,60 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
       <div className="flex-1 overflow-auto thin-scrollbar p-6">
 
         {viewMode === "summary" && (
-           <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="bg-white rounded-[2.5rem] border border-slate-100 p-12 shadow-sm flex flex-col items-center text-center">
-                 <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.3em] mb-12">Project Completion Tracking</h3>
-                 <DonutChart 
-                    completed={displayTasks.filter(t => t.status === 'completed').length}
-                    inProgress={displayTasks.filter(t => t.status === 'in-progress').length}
-                    pending={displayTasks.filter(t => t.status === 'pending').length}
-                 />
-                 <div className="grid grid-cols-3 gap-12 mt-12 w-full pt-12 border-t border-slate-50">
+           <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
+              <div className="bg-white rounded-[2.5rem] border border-slate-100 p-12 shadow-sm flex flex-col items-center">
+                 <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.3em] mb-12 text-center">Project Health Monitor</h3>
+                 
+                 <div className="flex flex-col lg:flex-row items-center gap-16 lg:gap-24">
+                    <DonutChart 
+                       completed={displayTasks.filter(t => t.status === 'completed').length}
+                       inProgress={displayTasks.filter(t => t.status === 'in-progress').length}
+                       pending={displayTasks.filter(t => t.status === 'pending').length}
+                       actualProgressOverride={healthStats.actual}
+                       expectedProgress={healthStats.expected}
+                    />
+
+                    <div className="lg:w-px lg:h-48 bg-slate-100 shrink-0 hidden lg:block" />
+
+                    <div className="space-y-10 flex-1">
+                       <div className="space-y-2">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Project Status</span>
+                          <div className="flex items-center gap-3">
+                             <div className={`w-2 h-2 rounded-full animate-pulse ${healthStats.actual >= healthStats.expected ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                             <span className={`text-2xl font-black uppercase ${healthStats.actual >= healthStats.expected ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                {healthStats.actual >= healthStats.expected ? "On Track" : "Delayed"}
+                             </span>
+                          </div>
+                          <p className="text-[10px] font-bold text-slate-400 leading-relaxed uppercase tracking-tight">
+                             Performance is measured by comparing hours achieved vs time burned.
+                          </p>
+                       </div>
+
+                       <div className="grid grid-cols-2 gap-8">
+                          <div className="flex flex-col">
+                             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Scope</span>
+                             <span className="text-2xl font-black text-slate-800">{healthStats.totalTasks} <span className="text-[10px] text-slate-400">Tasks</span></span>
+                          </div>
+                          <div className="flex flex-col">
+                             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Budget</span>
+                             <span className="text-2xl font-black text-slate-800">{healthStats.totalHours?.toFixed(1)} <span className="text-[10px] text-slate-400">Hours</span></span>
+                          </div>
+                       </div>
+
+                       <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                          <div className="flex items-center gap-3 mb-3">
+                             <Timer className="w-4 h-4 text-slate-400" />
+                             <span className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Ownership</span>
+                          </div>
+                          <span className="text-sm font-black text-slate-600 block">
+                             {projectRecord?.internalInCharge ? formatOwner(projectRecord.internalInCharge) : formatOwner(session?.user?.name)}
+                          </span>
+                          <span className="text-[10px] font-bold text-slate-400 mt-1 block uppercase tracking-tight">Lead Project Manager</span>
+                       </div>
+                    </div>
+                 </div>
+
+                 <div className="grid grid-cols-3 gap-12 mt-12 w-full pt-12 border-t border-slate-50 opacity-0 h-0 overflow-hidden">
                     <div className="flex flex-col">
                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Items</span>
                        <span className="text-2xl font-black text-slate-800">{displayTasks.length}</span>
@@ -1050,7 +1136,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
         {viewMode === "gantt" && (
            <div className="h-full bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
               <InteractiveGantt
-                events={(isLevelZero ? transformToLevelZero(displayTasks) : displayTasks).map((t: any) => ({
+                events={(isLevelZero ? transformToLevelZero(displayTasks) : filteredTasks).map((t: any) => ({
                   id: t.id,
                   taskCode: t.taskCode || "",
                   subject: t.subject || "",
@@ -1058,12 +1144,13 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                   endDate: (t.plannedEnd || t.plannedStart || "").split("T")[0],
                   owner: t.owner || "",
                   status: t.status || "pending",
-                  durationHours: t.durationHours,
+                  durationHours: t.durationHours || 0,
                   paddingDays: t.paddingDays || 0,
                   externalPlannedEnd: t.externalPlannedEnd,
                   depth: t.depth || 0,
                   parentId: t.parentId,
                   expanded: expandedTasks.has(t.id),
+                  hasChildren: (t.subtasks?.length || 0) > 0,
                   projectName: t.project?.name || t.projectName,
                   description: t.description || ""
                 }))}
