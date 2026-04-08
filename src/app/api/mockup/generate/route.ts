@@ -26,9 +26,15 @@ const CSS_VARS_BLOCK = `
   --color-yellow-500: #F79009;
 `.trim();
 
+const TAGLISH_RULE = `
+SUPPORTED LANGUAGE (TAGLISH): The input description or feedback may contain a mix of English and Filipino (Taglish). You must comprehend the meaning in both languages and ensure the final mockup UI (labels, buttons, placeholder data) is written in formal, professional English.
+`;
+
 const BASE_SYSTEM_INSTRUCTION = `You are a senior UI engineer who converts designs and descriptions into pixel-perfect, self-contained HTML mockups.
+${TAGLISH_RULE}
 
 OUTPUT FORMAT — NON-NEGOTIABLE:
+`;
 - Return ONLY a complete valid HTML document. No markdown. No code fences. No explanation. No comments outside the HTML.
 - The <style> tag in <head> MUST begin with a :root block that defines ALL CSS custom properties used. Copy the token values exactly as given below.
 - Use Inter font via Google Fonts: <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">

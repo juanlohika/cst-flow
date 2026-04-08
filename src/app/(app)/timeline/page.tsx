@@ -42,6 +42,7 @@ interface TimelineEvent {
   endDate: string;
   durationHours: number;
   owner: string;
+  userId?: string;
   description: string;
   projectName?: string;
   status?: string;
@@ -286,8 +287,10 @@ function TimelineApp() {
       return;
     }
 
-    setLoading(true);
-    setEvents([]);
+    // Prepare member list for AI to use for assignment
+    const assignedMembers = members
+      .filter(m => assignedIds.includes(m.id))
+      .map(m => ({ id: m.id, name: m.name || m.email, role: m.role || 'Member' }));
 
     try {
       const res = await fetch("/api/timeline/generate", {
@@ -299,6 +302,7 @@ function TimelineApp() {
           startDate,
           restDays: template.restDays,
           customInstructions,
+          assignedMembers,
         }),
       });
 
@@ -318,6 +322,9 @@ function TimelineApp() {
           return {
             ...t,
             id: t.id || `temp-${Date.now()}-${i}`,
+            // AI returns userId and owner based on our assignedMembers list
+            userId: t.userId || "", 
+            owner: t.owner || "",
             paddingDays: padding,
             externalPlannedEnd: externalEnd || t.endDate,
             depth: t.depth || 0,

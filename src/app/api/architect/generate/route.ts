@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { getModelForApp } from "@/lib/ai";
 
+const TAGLISH_RULE = `
+SUPPORTED LANGUAGE (TAGLISH): The input source text/description may contain a mix of English and Filipino (Taglish). You must comprehend the meaning in both languages and ensure the final flowchart labels and text are written in formal, professional English.
+`;
+
 const MERMAID_PROMPT = `You are an expert Business Analyst. Analyze the process and extract a structured flowchart using **Mermaid.js Markdown syntax**.
+${TAGLISH_RULE}
 
 CRITICAL RULES:
 1. You MUST use exactly this wrapper:
@@ -15,6 +20,7 @@ flowchart TD
 5. NO OTHER TEXT. ONLY THE MERMAID CODE BLOCK!`;
 
 const MERMAID_SEQUENCE_PROMPT = `You are an expert Business Analyst. Extract the process into a Mermaid.js Sequence Diagram.
+${TAGLISH_RULE}
 
 CRITICAL RULES:
 1. You MUST use exactly this wrapper:
@@ -29,6 +35,7 @@ sequenceDiagram
 
 
 const REACT_FLOW_PROMPT = `You are an expert AI Architect mapping process flowcharts.
+${TAGLISH_RULE}
 Extract the process into highly structured raw JSON. Do NOT wrap inside markdown blocks. Output only parseable JSON!
 
 {

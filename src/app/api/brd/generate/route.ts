@@ -29,6 +29,10 @@ CRITICAL BEHAVIOR RULE:
 - Only generate the "STEP 5 — GENERATE BRD DRAFT" once you have enough details about the Field App, Dashboard, and Manager App capabilities.
 `.trim();
 
+const TAGLISH_RULE = `
+SUPPORTED LANGUAGE (TAGLISH): The input transcript or conversation may contain a mix of English and Filipino (Taglish). You must comprehend the meaning in both languages and ensure the final BRD content is written in formal, professional English.
+`;
+
 export async function POST(req: Request) {
   try {
     const { prompt, messages, systemInstruction, attachments } = await req.json();
@@ -65,6 +69,9 @@ export async function POST(req: Request) {
 ${baseInstruction}
 
 CURRENT DATE: ${currentDate}
+
+---
+${TAGLISH_RULE}
 
 ---
 ${DOCUMENT_STANDARDS}

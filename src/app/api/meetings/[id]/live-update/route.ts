@@ -12,6 +12,10 @@ const TARKIE_INTEGRITY_RULE = `
 IMPORTANT: "Tarkie" is our product name. Never mishear or transcribe it as "Turkey" (the animal or country) or "Starkey". If the transcript contains "Turkey" or "Starkey" where it refers to our product or ecosystem, ALWAYS correct it to "Tarkie". This is a non-negotiable rule.
 `;
 
+const TAGLISH_RULE = `
+SUPPORTED LANGUAGE (TAGLISH): The input transcript may contain a mix of English and Filipino (Taglish). You must comprehend the meaning in both languages and ensure the final output is written in formal, professional English.
+`;
+
 /**
  * POST /api/meetings/[id]/live-update
  * MIGRATED TO DRIZZLE
@@ -109,6 +113,7 @@ function buildMinutesPrompt(newTranscript: string, currentState: any, notes: str
   const skillSection = skillContent ? `\n\nOPERATING SKILLS & INSTRUCTIONS:\n${skillContent}\n` : '';
   
   return `You are a live meeting scribe. Update the minutes based on the new transcript and notes.
+${TAGLISH_RULE}
 ${skillSection}
 ${notesSection}
 NEW TRANSCRIPT CONTENT:
@@ -143,6 +148,7 @@ function buildBrdPrompt(newTranscript: string, currentState: any, prepContext: a
   }
 
   return `You are a Senior Business Analyst updating a BRD in real-time.
+${TAGLISH_RULE}
 ${skillSection}
 ${notesSection}
 PREP QUESTIONNAIRE CONTEXT:
