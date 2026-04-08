@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { X, Clock, Calendar, CheckCircle, Loader2, ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import React, { useState, useEffect, useCallback } from "react";
+import { X, Clock, Calendar, CheckCircle, Loader2, ChevronDown, ChevronRight, Plus, Trash2, Users, Shield } from "lucide-react";
 import { useToast } from "@/components/ui/ToastContext";
+import MultiUserSelect from "@/components/ui/MultiUserSelect";
 
 interface AllocateHoursModalProps {
   projectId: string;
@@ -15,7 +16,10 @@ interface DayRow {
   date: string; // YYYY-MM-DD
   title: string;
   hours: number;
-  assignee: string;
+  startTime: string; // HH:MM
+  endTime: string;   // HH:MM
+  assignedIds: string[];
+  role: string;
 }
 
 interface ExistingSubtask {
@@ -44,19 +48,11 @@ function datesBetween(start: string, end: string): string[] {
   return dates;
 }
 
-// Build ISO for planned start/end from a date + hour allocation
-// Start at 9:00 AM UTC; end at 9:00 AM + durationHours
-function buildTimeISO(dateStr: string, offsetHours: number, durationHours: number): { start: string; end: string } {
-  const startMinutes = 9 * 60 + Math.round(offsetHours); // 9 AM baseline
-  const endMinutes = startMinutes + Math.round(durationHours * 60);
-  const startH = Math.floor(startMinutes / 60) % 24;
-  const startM = startMinutes % 60;
-  const endH = Math.floor(endMinutes / 60) % 24;
-  const endM = endMinutes % 60;
-  return {
-    start: `${dateStr}T${String(startH).padStart(2, "0")}:${String(startM).padStart(2, "0")}:00.000Z`,
-    end:   `${dateStr}T${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}:00.000Z`,
-  };
+// Build ISO for planned start/end from a date + specific time string
+function buildTimeISO(dateStr: string, timeStr: string): string {
+  if (!timeStr) return `${dateStr}T09:00:00.000Z`;
+  const [h, m] = timeStr.split(":").map(s => s.padStart(2, "0"));
+  return `${dateStr}T${h}:${m}:00.000Z`;
 }
 
 function flattenAll(tasks: any[]): any[] {
@@ -124,13 +120,37 @@ export default function AllocateHoursModal({ projectId, parentTask, onClose, onS
     }).finally(() => setLoadingExisting(false));
   }, [parentTask.id, projectId]);
 
+  const timeToFloat = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    return h + (m || 0) / 60;
+  };
+
+  const floatToTime = (f: number) => {
+    const h = Math.floor(f);
+    const m = Math.round((f - h) * 60);
+    return `${String(h % 24).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  };
+
   // Rebuild new rows when date range changes
   useEffect(() => {
     if (!dateRange.start || !dateRange.end || dateRange.start > dateRange.end) { setRows([]); return; }
     const dates = datesBetween(dateRange.start, dateRange.end);
     const remaining = Math.max(0, parentTask.durationHours - existingAllocated);
-    const evenHours = dates.length > 0 ? Math.round((remaining / dates.length) * 4) / 4 : 0;
-    setRows(dates.map(date => ({ date, title: "", hours: evenHours, assignee: "" })));
+    const evenHours = dates.length > 0 ? Math.round((remaining / dates.length) * 4) / 4 : 1;
+    
+    // Default start at 9:00 AM
+    const startT = "09:00";
+    const endT = floatToTime(timeToFloat(startT) + evenHours);
+
+    setRows(dates.map(date => ({ 
+      date, 
+      title: "", 
+      hours: evenHours, 
+      startTime: startT, 
+      endTime: endT,
+      assignedIds: [],
+      role: ""
+    })));
   }, [dateRange.start, dateRange.end, parentTask.durationHours, existingAllocated]);
 
   const budget = parentTask.durationHours;
@@ -140,14 +160,39 @@ export default function AllocateHoursModal({ projectId, parentTask, onClose, onS
   const overBudget = totalUsed > budget;
   const [showExceedWarning, setShowExceedWarning] = useState(false);
 
-  const updateRow = (idx: number, field: keyof DayRow, value: string | number) => {
-    setRows(prev => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r));
+  const updateRow = (idx: number, field: keyof DayRow, value: any) => {
+    setRows(prev => prev.map((r, i) => {
+      if (i !== idx) return r;
+      let next = { ...r, [field]: value };
+
+      // Sync logic
+      if (field === "hours") {
+        // Sync EndTime: End = Start + Hours
+        const startF = timeToFloat(next.startTime);
+        next.endTime = floatToTime(startF + Number(value));
+      } else if (field === "startTime" || field === "endTime") {
+        // Sync Hours: Hours = End - Start
+        const s = timeToFloat(next.startTime);
+        const e = timeToFloat(next.endTime);
+        next.hours = Math.max(0, Math.round((e - s) * 100) / 100);
+      }
+
+      return next;
+    }));
     setShowExceedWarning(false);
   };
 
   const addRow = () => {
     const lastDate = rows.length > 0 ? rows[rows.length - 1].date : (dateRange.end || dateRange.start || today);
-    setRows(prev => [...prev, { date: lastDate, title: "", hours: 1, assignee: "" }]);
+    setRows(prev => [...prev, { 
+      date: lastDate, 
+      title: "", 
+      hours: 1, 
+      startTime: "09:00", 
+      endTime: "10:00",
+      assignedIds: [],
+      role: ""
+    }]);
   };
 
   const removeRow = (idx: number) => {
@@ -179,7 +224,8 @@ export default function AllocateHoursModal({ projectId, parentTask, onClose, onS
 
       // 2. Create subtasks
       for (const row of rows) {
-        const { start: startISO, end: endISO } = buildTimeISO(row.date, 0, row.hours);
+        const startISO = buildTimeISO(row.date, row.startTime);
+        const endISO = buildTimeISO(row.date, row.endTime);
         const res = await fetch("/api/tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -187,7 +233,8 @@ export default function AllocateHoursModal({ projectId, parentTask, onClose, onS
             projectId,
             parentId: parentTask.id,
             subject: row.title.trim(),
-            owner: row.assignee || "TBD",
+            owner: row.role || (row.assignedIds.length > 0 ? "" : "TBD"),
+            assignedIds: row.assignedIds,
             plannedStart: startISO,
             plannedEnd: endISO,
             durationHours: row.hours,
@@ -207,59 +254,50 @@ export default function AllocateHoursModal({ projectId, parentTask, onClose, onS
     }
   };
 
-  const AssigneeSelect = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => {
+  const AssigneeSelect = ({ row, onChange }: { row: DayRow; onChange: (ids: string[], role: string) => void }) => {
     const [open, setOpen] = useState(false);
+    
+    // Display labels
+    let label = "— Unassigned —";
+    if (row.role) label = row.role;
+    else if (row.assignedIds.length > 0) {
+      if (row.assignedIds.length === 1) {
+        const u = users.find(u => u.id === row.assignedIds[0]);
+        label = u?.name || u?.email || "1 User";
+      } else {
+        label = `${row.assignedIds.length} Users`;
+      }
+    }
+
     return (
       <div className="relative">
         <button
           type="button"
           onClick={() => setOpen(!open)}
-          className="w-full flex items-center justify-between border border-slate-100 rounded-lg px-2 py-1.5 text-[10px] font-bold text-slate-600 bg-white outline-none focus:ring-2 focus:ring-primary h-7"
+          className={`w-full flex items-center justify-between border rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none transition-all h-7 ${
+            open ? "ring-2 ring-primary border-primary bg-white" : "border-slate-100 bg-white text-slate-600 hover:border-slate-200"
+          }`}
         >
-          <span className="truncate">{value || "— Unassigned —"}</span>
-          <ChevronDown className="w-2.5 h-2.5 opacity-50 shrink-0" />
+          <div className="flex items-center gap-1.5 truncate">
+            {row.role ? <Shield className="w-2.5 h-2.5 text-primary opacity-60" /> : row.assignedIds.length > 0 ? <Users className="w-2.5 h-2.5 text-primary opacity-60" /> : null}
+            <span className="truncate uppercase tracking-tight">{label}</span>
+          </div>
+          <ChevronDown className={`w-2.5 h-2.5 transition-transform duration-200 ${open ? "rotate-180 opacity-100" : "opacity-30"}`} />
         </button>
         {open && (
           <>
-            <div className="fixed inset-0 z-[150]" onClick={() => setOpen(false)} />
-            <div className="absolute left-0 right-0 top-full mt-1 z-[160] bg-white border border-slate-100 rounded-lg shadow-xl max-h-48 overflow-y-auto thin-scrollbar p-1">
-              <button
-                type="button"
-                onClick={() => { onChange(""); setOpen(false); }}
-                className="w-full text-left px-2 py-1.5 text-[10px] font-bold text-slate-400 hover:bg-slate-50 rounded-md"
-              >
-                — Unassigned —
-              </button>
-              {users.length > 0 && (
-                <div className="mt-1">
-                  <div className="px-2 py-1 text-[8px] font-black text-slate-300 uppercase tracking-widest bg-slate-50/50 rounded">Team Members</div>
-                  {users.map(u => (
-                    <button
-                      key={u.id}
-                      type="button"
-                      onClick={() => { onChange(u.name || u.email); setOpen(false); }}
-                      className="w-full text-left px-2 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-primary/5 hover:text-primary rounded-md"
-                    >
-                      {u.name || u.email}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {roles.length > 0 && (
-                <div className="mt-1">
-                  <div className="px-2 py-1 text-[8px] font-black text-slate-300 uppercase tracking-widest bg-slate-50/50 rounded">Roles</div>
-                  {roles.map(r => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => { onChange(r.name); setOpen(false); }}
-                      className="w-full text-left px-2 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-primary/5 hover:text-primary rounded-md"
-                    >
-                      {r.name}
-                    </button>
-                  ))}
-                </div>
-              )}
+            <div className="fixed inset-0 z-[200]" onClick={() => setOpen(false)} />
+            <div className="absolute left-0 top-full mt-1 z-[210]">
+              <MultiUserSelect
+                assignedIds={row.assignedIds}
+                role={row.role}
+                users={users}
+                roles={roles}
+                onChange={(ids, r) => {
+                  onChange(ids, r);
+                }}
+                onClose={() => setOpen(false)}
+              />
             </div>
           </>
         )}
@@ -390,40 +428,65 @@ export default function AllocateHoursModal({ projectId, parentTask, onClose, onS
             {rows.length === 0 ? (
               <div className="py-6 text-center text-slate-400 text-[11px]">Pick a date range above to generate rows</div>
             ) : (
-              <div className="divide-y">
-                <div className="grid grid-cols-[130px_1fr_56px_130px_28px] gap-2 px-4 py-1.5 bg-slate-50 text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                  <span>Date</span><span>Task Title</span><span>Hrs</span><span>Assignee</span><span />
-                </div>
-                {rows.map((row, idx) => (
-                  <div key={idx} className="grid grid-cols-[130px_1fr_56px_130px_28px] gap-2 px-4 py-2 items-center hover:bg-slate-50/50 group">
-                    <input
-                      type="date"
-                      value={row.date}
-                      onChange={e => updateRow(idx, "date", e.target.value)}
-                      className="w-full border border-slate-100 rounded-md px-2 py-1 text-[10px] font-semibold text-slate-600 bg-white outline-none focus:ring-2 focus:ring-primary"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Task title..."
-                      value={row.title}
-                      onChange={e => updateRow(idx, "title", e.target.value)}
-                      className="w-full border border-slate-100 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-700 bg-white outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                    />
-                    <input
-                      type="number"
-                      min={0.25}
-                      step={0.25}
-                      value={row.hours}
-                      onChange={e => updateRow(idx, "hours", parseFloat(e.target.value) || 0)}
-                      className="w-full border border-slate-100 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-700 bg-white outline-none focus:ring-2 focus:ring-primary text-center"
-                    />
-                    <AssigneeSelect value={row.assignee} onChange={v => updateRow(idx, "assignee", v)} />
-                    <button onClick={() => removeRow(idx)} title="Remove row"
-                      className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center text-slate-300 hover:text-red-400 transition-all rounded">
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+              <div className="divide-y overflow-x-auto thin-scrollbar">
+                <div className="min-w-[800px]">
+                  <div className="grid grid-cols-[120px_1fr_160px_50px_150px_32px] gap-2 px-4 py-1.5 bg-slate-50 text-[9px] font-bold text-slate-400 uppercase tracking-widest border-b">
+                    <span>Date</span><span>Task Title</span><span>Time Window</span><span>Hrs</span><span>Assignee</span><span />
                   </div>
-                ))}
+                  {rows.map((row, idx) => (
+                    <div key={idx} className="grid grid-cols-[120px_1fr_160px_50px_150px_32px] gap-2 px-4 py-2 items-center hover:bg-slate-50/50 group border-b last:border-b-0">
+                      <input
+                        type="date"
+                        value={row.date}
+                        onChange={e => updateRow(idx, "date", e.target.value)}
+                        className="w-full border border-slate-100 rounded-md px-2 py-1 text-[10px] font-semibold text-slate-600 bg-white outline-none focus:ring-2 focus:ring-primary"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Task title..."
+                        value={row.title}
+                        onChange={e => updateRow(idx, "title", e.target.value)}
+                        className="w-full border border-slate-100 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-700 bg-white outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                      />
+                      
+                      {/* Time Window */}
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="time"
+                          value={row.startTime}
+                          onChange={e => updateRow(idx, "startTime", e.target.value)}
+                          className="w-full border border-slate-100 rounded-md px-1.5 py-1 text-[10px] font-semibold text-slate-600 bg-white outline-none focus:ring-2 focus:ring-primary h-7"
+                        />
+                        <span className="text-slate-300">—</span>
+                        <input
+                          type="time"
+                          value={row.endTime}
+                          onChange={e => updateRow(idx, "endTime", e.target.value)}
+                          className="w-full border border-slate-100 rounded-md px-1.5 py-1 text-[10px] font-semibold text-slate-600 bg-white outline-none focus:ring-2 focus:ring-primary h-7"
+                        />
+                      </div>
+
+                      <input
+                        type="number"
+                        min={0.25}
+                        step={0.25}
+                        value={row.hours}
+                        onChange={e => updateRow(idx, "hours", parseFloat(e.target.value) || 0)}
+                        className="w-full border border-slate-100 rounded-md px-1 py-1 text-[11px] font-bold text-primary bg-white outline-none focus:ring-2 focus:ring-primary text-center h-7"
+                      />
+                      
+                      <AssigneeSelect row={row} onChange={(ids, role) => {
+                        updateRow(idx, "assignedIds", ids);
+                        updateRow(idx, "role", role);
+                      }} />
+
+                      <button onClick={() => removeRow(idx)} title="Remove row"
+                        className="w-8 h-8 flex items-center justify-center text-slate-300 hover:text-red-400 hover:bg-red-50 transition-all rounded-md">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             {/* Add row button — always visible once date range is picked or manually */}
