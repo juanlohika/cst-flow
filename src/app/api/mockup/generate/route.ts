@@ -34,7 +34,6 @@ const BASE_SYSTEM_INSTRUCTION = `You are a senior UI engineer who converts desig
 ${TAGLISH_RULE}
 
 OUTPUT FORMAT — NON-NEGOTIABLE:
-`;
 - Return ONLY a complete valid HTML document. No markdown. No code fences. No explanation. No comments outside the HTML.
 - The <style> tag in <head> MUST begin with a :root block that defines ALL CSS custom properties used. Copy the token values exactly as given below.
 - Use Inter font via Google Fonts: <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
