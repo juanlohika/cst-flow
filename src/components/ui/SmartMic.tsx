@@ -24,7 +24,8 @@ export default function SmartMic({
   const [error, setError] = useState<string | null>(null);
 
   // Refs for logic
-  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recognitionRef = useRef<any>(null); // For Native SpeechRecognition (Normal Mode)
+  const recorderRef = useRef<MediaRecorder | null>(null); // For System/Mic Mixer (Meeting Mode)
   const chunksRef = useRef<Blob[]>([]);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const streamsRef = useRef<{ mic?: MediaStream; system?: MediaStream }>({});
@@ -92,6 +93,14 @@ export default function SmartMic({
 
   const stopCapture = useCallback(() => {
     setIsListening(false);
+    
+    // Stop Normal Mode
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    
+    // Stop Meeting Mode
     if (recorderRef.current && recorderRef.current.state !== "inactive") {
       recorderRef.current.stop();
     }
@@ -110,6 +119,59 @@ export default function SmartMic({
   const startCapture = useCallback(async () => {
     setError(null);
     try {
+      if (!captureSystem) {
+        // ─── NORMAL MODE (Smart / Native SpeechRecognition) ─────────────────────
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          throw new Error("Smart Voice typing is not natively supported in this browser. Please use Chrome/Edge or switch to Meeting Mode.");
+        }
+        
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        // Omit lang to let the browser autodetect (best for Taglish) or fallback to OS default
+        
+        recognition.onresult = (event: any) => {
+          let interimTranscript = "";
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              const text = event.results[i][0].transcript;
+              if (text.trim()) {
+                onTranscriptionRef.current(text.trim());
+              }
+            } else {
+              interimTranscript += event.results[i][0].transcript;
+            }
+          }
+          if (interimTranscript && onInterimRef.current) {
+            onInterimRef.current(interimTranscript);
+          } else if (!interimTranscript && onInterimRef.current) {
+            onInterimRef.current("");
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          console.error("Speech Recognition Error", event.error);
+          if (event.error !== 'no-speech') {
+            setError(`Microphone error: ${event.error}`);
+            stopCapture();
+          }
+        };
+
+        recognition.onend = () => {
+          // The browser might shut it down after silence. We just mark it stopped.
+          setIsListening(false);
+          onToggle?.(false);
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
+        setIsListening(true);
+        onToggle?.(true);
+        return;
+      }
+
+      // ─── MEETING MODE (System Audio + Mic via MediaRecorder API) ─────────────
       // 1. Get Microphone
       const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamsRef.current.mic = micStream;
@@ -165,8 +227,8 @@ export default function SmartMic({
         }
       };
 
-      // Record in 4-second slices for near-real-time feedback
-      recorder.start(4000); 
+      // Record in larger 8-second slices to preserve Whisper chunk context and stop word chopping
+      recorder.start(8000); 
       setIsListening(true);
       onToggle?.(true);
 

@@ -187,6 +187,41 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
   // DateTime popover (planned & actual)
   const [datePopover, setDatePopover] = useState<DatePopover | null>(null);
   const [popoverSaving, setPopoverSaving] = useState(false);
+
+  // Column settings for Notion-like table
+  type ColumnId = "task" | "project" | "assignee" | "schedule" | "status";
+  interface ColumnDef { id: ColumnId; label: string; visible: boolean; width: string; order: number; }
+  
+  const [columns, setColumns] = useState<ColumnDef[]>([
+    { id: "task", label: "Task", visible: true, width: "min-w-[300px]", order: 1 },
+    { id: "project", label: "Project", visible: projectId === "ALL", width: "w-[150px]", order: 2 },
+    { id: "assignee", label: "Assignee", visible: true, width: "w-[110px]", order: 3 },
+    { id: "schedule", label: "Schedule / Budget", visible: true, width: "w-[320px]", order: 4 },
+    { id: "status", label: "Status", visible: true, width: "w-[120px]", order: 5 },
+  ]);
+  const [draggedColId, setDraggedColId] = useState<string | null>(null);
+  const [showColSettings, setShowColSettings] = useState(false);
+
+  const handleDragColStart = (e: React.DragEvent, id: string) => {
+    e.dataTransfer.setData("colId", id);
+    setDraggedColId(id);
+  };
+  const handleDragColOver = (e: React.DragEvent) => { e.preventDefault(); };
+  const handleDropCol = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    const sourceId = e.dataTransfer.getData("colId");
+    if (sourceId === targetId || !sourceId) return;
+    setColumns(prev => {
+      const arr = [...prev].sort((a,b) => a.order - b.order);
+      const sIdx = arr.findIndex(c => c.id === sourceId);
+      const tIdx = arr.findIndex(c => c.id === targetId);
+      const [moved] = arr.splice(sIdx, 1);
+      arr.splice(tIdx, 0, moved);
+      return arr.map((col, idx) => ({ ...col, order: idx + 1 }));
+    });
+    setDraggedColId(null);
+  };
+
   
   // SELECTION MODE FOR BUFFER
   const [selectionMode, setSelectionMode] = useState(false);
@@ -234,6 +269,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
         .then(data => { if (data) setProjectRecord(data); })
         .catch(() => {});
     }
+    setColumns(prev => prev.map(c => c.id === "project" ? { ...c, visible: projectId === "ALL" } : c));
   }, [projectId]);
   const assignDefaultKanbanLaneId = (task: Task): Task => {
     if (task.kanbanLaneId) return task;
@@ -684,7 +720,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
     return { actual, expected, totalHours, completedHours, totalTasks: all.length };
   }, [tasks, projectRecord, projectId]);
 
-  const closeAll = () => { setOpenMenuId(null); setShowExport(false); setEditingCell(null); setDatePopover(null); };
+  const closeAll = () => { setShowColSettings(false); setOpenMenuId(null); setShowExport(false); setEditingCell(null); setDatePopover(null); };
 
   return (
     <div className="flex flex-col h-full bg-white font-sans" onClick={closeAll}>
@@ -746,6 +782,32 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
           <input className="w-24 bg-transparent border-none p-0 text-[10px] font-semibold text-slate-600 uppercase outline-none placeholder:text-slate-300" placeholder="Search..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
           {searchTerm && <button onClick={() => setSearchTerm("")} className="text-slate-300 hover:text-slate-500"><X className="w-2.5 h-2.5" /></button>}
         </div>
+
+        {/* Column Settings Toggle */}
+        {(viewMode === "list" || viewMode === "archive") && (
+          <>
+            <div className="w-px h-4 bg-slate-200 shrink-0 mx-2" />
+            <div className="relative flex items-center">
+              <button key="cols-toggle" onClick={(e) => { e.stopPropagation(); setShowColSettings(!showColSettings); setOpenMenuId(null); }} className="flex items-center gap-1.5 px-2 bg-white border border-slate-100 rounded-md h-6 py-0 text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:bg-slate-50 transition-all focus-within:border-primary/40">
+                Columns <ChevronDown className="w-2.5 h-2.5 opacity-60" />
+              </button>
+              {showColSettings && (
+                <div className="absolute top-8 left-0 z-[200] w-48 bg-white border border-slate-100 rounded-lg shadow-xl py-2 px-2" onClick={e => e.stopPropagation()}>
+                   <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2 px-2">Visible Columns</div>
+                   {columns.map(c => (
+                     <label key={c.id} className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                        <input type="checkbox" checked={c.visible} onChange={(e) => {
+                           setColumns(prev => prev.map(col => col.id === c.id ? { ...col, visible: e.target.checked } : col));
+                        }} className="w-3 h-3 rounded accent-primary" />
+                        <span className="text-[11px] font-semibold text-slate-600">{c.label}</span>
+                     </label>
+                   ))}
+                   <div className="text-[8px] text-slate-400 mt-2 px-2 leading-tight">Drag column headers to reorder them natively.</div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
 
         {viewMode === "gantt" && projectId === "ALL" && (
           <>
@@ -903,22 +965,31 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
         )}
 
         {/* LIST / ARCHIVE */}
-        {(viewMode === "list" || viewMode === "archive") && (
+        {(viewMode === "list" || viewMode === "archive") && (() => {
+          const visibleCols = [...columns].filter(c => c.visible).sort((a,b) => a.order - b.order);
+          return (
           <table ref={tableRef} className="w-full border-collapse">
             <thead>
               <tr className="bg-[#FCFCFC] border-b border-slate-100">
-                <th className="text-left text-[10px] font-bold uppercase tracking-widest text-slate-400 px-4 h-10 align-middle font-normal">Task</th>
-                <th className="text-left text-[10px] font-bold uppercase tracking-widest text-slate-400 px-3 h-10 align-middle font-normal w-[110px]">Assignee</th>
-                <th className="text-left text-[10px] font-bold uppercase tracking-widest text-slate-400 px-3 h-10 align-middle font-normal w-[320px]">Schedule / Budget</th>
-                <th className="text-left text-[10px] font-bold uppercase tracking-widest text-slate-400 px-3 h-10 align-middle font-normal w-[120px]">Status</th>
+                {visibleCols.map(col => (
+                  <th key={col.id}
+                      draggable
+                      onDragStart={e => handleDragColStart(e, col.id)}
+                      onDragOver={handleDragColOver}
+                      onDrop={e => handleDropCol(e, col.id)}
+                      onDragEnd={() => setDraggedColId(null)}
+                      className={`text-left text-[10px] font-bold uppercase tracking-widest text-slate-400 px-3 h-10 align-middle font-normal cursor-grab active:cursor-grabbing hover:bg-slate-100 transition-colors ${col.width} ${draggedColId === col.id ? 'opacity-30 border-l border-primary' : ''}`}>
+                      {col.label}
+                  </th>
+                ))}
                 <th className="h-10 w-[44px]" />
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={5} className="py-12 text-center text-[10px] font-bold text-slate-300 uppercase tracking-widest animate-pulse">Loading tasks...</td></tr>
+                <tr><td colSpan={visibleCols.length + 1} className="py-12 text-center text-[10px] font-bold text-slate-300 uppercase tracking-widest animate-pulse">Loading tasks...</td></tr>
               ) : filteredTasks.length === 0 ? (
-                <tr><td colSpan={5} className="py-16 text-center text-[11px] font-semibold text-slate-300 uppercase tracking-widest">No tasks found</td></tr>
+                <tr><td colSpan={visibleCols.length + 1} className="py-16 text-center text-[11px] font-semibold text-slate-300 uppercase tracking-widest">No tasks found</td></tr>
               ) : filteredTasks.map((task: any) => {
                 const useActual = task.status === "completed" && task.actualStart && task.actualEnd;
                 const startISO = useActual ? task.actualStart : task.plannedStart;
@@ -931,8 +1002,9 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                 return (
                   <tr key={task.id} className={`group border-b transition-colors ${task.depth > 0 ? "bg-slate-50/60 border-slate-100/70" : "bg-white border-slate-100"} hover:bg-blue-50/20`}>
 
-                    {/* Col 1: Subject */}
-                    <td className="py-2 min-h-12 align-middle" style={{ paddingLeft: `${16 + task.depth * 20}px`, paddingRight: "8px" }}>
+                    {visibleCols.map(col => {
+                      if (col.id === "task") return (
+                    <td key="task" className="py-2 min-h-12 align-middle" style={{ paddingLeft: `${16 + task.depth * 20}px`, paddingRight: "8px" }}>
                       <div className="flex items-center gap-1 min-w-0">
                         {task.subtasks?.length > 0 ? (
                           <button onClick={e => toggleExpand(task.id, e)} className="w-4 h-4 flex items-center justify-center text-slate-400 hover:text-slate-600 shrink-0">
@@ -968,8 +1040,16 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                       </div>
                     </td>
 
-                    {/* Col 2: Assignee */}
-                    <td className="px-3 py-2 align-middle w-[110px] relative">
+                    {/* Col 2: Project (Conditional) */}
+                      if (col.id === "project") return (
+                        <td key="project" className="px-3 py-2 align-middle w-[150px]">
+                           <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-50 px-2 py-0.5 rounded border border-slate-100 truncate inline-block max-w-[130px]" title={task.project?.name || task.projectName}>{task.project?.name || task.projectName || "UNKNOWN"}</span>
+                        </td>
+                      );
+
+                    {/* Col 3: Assignee */}
+                      if (col.id === "assignee") return (
+                        <td key="assignee" className="px-3 py-2 align-middle w-[110px] relative">
                       {isEditingOwner ? (
                         <div className="absolute top-0 left-0 z-[150]" onClick={e => e.stopPropagation()}>
                           <UserSelect
@@ -996,8 +1076,9 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                       )}
                     </td>
 
-                    {/* Col 3: Schedule + budget */}
-                    <td className="px-3 py-2 align-middle w-[320px]">
+                    {/* Col 4: Schedule + budget */}
+                      if (col.id === "schedule") return (
+                        <td key="schedule" className="px-3 py-2 align-middle w-[320px]">
                       <div className="flex items-center gap-3">
                         <div onClick={e => openPlannedPopover(task, e)} className="flex flex-col leading-tight cursor-pointer group/sched min-w-0" title="Click to edit schedule">
                           <div className="flex items-center gap-1.5 overflow-hidden">
@@ -1039,8 +1120,9 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                       </div>
                     </td>
 
-                    {/* Col 4: Status + allocate */}
-                    <td className="px-3 py-2 align-middle w-[120px]">
+                    {/* Col 5: Status + allocate */}
+                      if (col.id === "status") return (
+                        <td key="status" className="px-3 py-2 align-middle w-[120px]">
                       <div className="flex items-center gap-1.5">
                         {isEditingStatus ? (
                           <select autoFocus value={editValue}
@@ -1075,7 +1157,11 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                       </div>
                     </td>
 
-                    {/* Col 5: Actions */}
+                    {/* End Cells Loop */}
+                      return null;
+                    })}
+
+                    {/* Fixed Actions Column */}
                     <td className="px-1 py-0 h-10 align-middle w-[44px] relative" onClick={e => e.stopPropagation()}>
                       <button onClick={e => { e.stopPropagation(); setOpenMenuId(isMenuOpen ? null : task.id); setDatePopover(null); }}
                         className="w-7 h-7 flex items-center justify-center text-slate-300 hover:text-slate-600 hover:bg-slate-100 rounded transition-all opacity-0 group-hover:opacity-100 mx-auto">
@@ -1111,7 +1197,8 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
               })}
             </tbody>
           </table>
-        )}
+          );
+        })()}
 
         {/* CALENDAR */}
         {viewMode === "calendar" && (
