@@ -1039,6 +1039,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                         </div>
                       </div>
                     </td>
+                  );
 
                     {/* Col 2: Project (Conditional) */}
                       if (col.id === "project") return (
@@ -1075,6 +1076,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                         </div>
                       )}
                     </td>
+                  );
 
                     {/* Col 4: Schedule + budget */}
                       if (col.id === "schedule") return (
@@ -1119,6 +1121,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                         )}
                       </div>
                     </td>
+                  );
 
                     {/* Col 5: Status + allocate */}
                       if (col.id === "status") return (
@@ -1156,6 +1159,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                         )}
                       </div>
                     </td>
+                  );
 
                     {/* End Cells Loop */}
                       return null;
