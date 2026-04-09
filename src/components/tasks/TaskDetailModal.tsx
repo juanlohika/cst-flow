@@ -88,7 +88,7 @@ export default function TaskDetailModal({
     task.assignments ? task.assignments.map((a: any) => a.userId) : []
   );
   const [editDescription, setEditDescription] = useState(task.description || "");
-  const [editBudgetHours, setEditBudgetHours] = useState<number>(task.durationHours ?? 8);
+  const [editBudgetHours, setEditBudgetHours] = useState<number | string>(task.durationHours ?? 8);
   const [editPaddingDays, setEditPaddingDays] = useState<number>(task.paddingDays ?? 0);
   const [editExternalEnd, setEditExternalEnd] = useState<string>(task.externalPlannedEnd || "");
 
@@ -219,7 +219,7 @@ export default function TaskDetailModal({
         description: editDescription.trim() || null,
         plannedStart: pStartISO,
         plannedEnd: pEndISO,
-        durationHours: editBudgetHours,
+        durationHours: Number(editBudgetHours) || 0,
         paddingDays: editPaddingDays,
         externalPlannedEnd: editExternalEnd,
         comment: comment.trim() || undefined,
@@ -537,10 +537,13 @@ export default function TaskDetailModal({
                         step={0.25}
                         value={editBudgetHours}
                         onChange={e => {
-                          const h = parseFloat(e.target.value) || 0;
-                          setEditBudgetHours(h);
-                          const startF = timeToFloat(pStartTime);
-                          setPEndTime(floatToTime(startF + h));
+                          const val = e.target.value;
+                          setEditBudgetHours(val);
+                          const h = parseFloat(val);
+                          if (!isNaN(h) && h >= 0) {
+                            const startF = timeToFloat(pStartTime);
+                            setPEndTime(floatToTime(startF + h));
+                          }
                         }}
                         className="w-20 text-sm font-semibold text-text-primary bg-surface-subtle border border-border rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-center"
                       />
@@ -583,7 +586,7 @@ export default function TaskDetailModal({
                               const startF = timeToFloat(s);
                               const endF = timeToFloat(e);
                               const h = Math.round((endF - startF) * 100) / 100;
-                              if (Math.abs(h - editBudgetHours) > 0.01) setEditBudgetHours(h);
+                              setEditBudgetHours(h);
                             }}
                           />
                         </>

@@ -92,20 +92,27 @@ export default function StitchTimePicker({ onSelect, defaultValue, value }: Stit
     if (!isDragging) return;
     const h = xToHour(e.clientX);
 
+    let ns = startH;
+    let ne = endH;
+
     if (isDragging === "start") {
-      setStartH(Math.max(RANGE_START, Math.min(h, endH - MIN_DURATION)));
+      ns = Math.max(RANGE_START, Math.min(h, endH - MIN_DURATION));
+      setStartH(ns);
     } else if (isDragging === "end") {
-      setEndH(Math.min(RANGE_END, Math.max(h, startH + MIN_DURATION)));
+      ne = Math.min(RANGE_END, Math.max(h, startH + MIN_DURATION));
+      setEndH(ne);
     } else if (isDragging === "both") {
       const duration = endH - startH;
-      let ns = h - dragOffset;
-      let ne = ns + duration;
+      ns = h - dragOffset;
+      ne = ns + duration;
       if (ns < RANGE_START) { ns = RANGE_START; ne = RANGE_START + duration; }
       if (ne > RANGE_END) { ne = RANGE_END; ns = RANGE_END - duration; }
       setStartH(ns);
       setEndH(ne);
     }
-  }, [isDragging, startH, endH, dragOffset, xToHour]);
+
+    onSelect(toHHMM(snapM(ns)), toHHMM(snapM(ne)));
+  }, [isDragging, startH, endH, dragOffset, xToHour, onSelect]);
 
   const handleMouseUp = useCallback(() => setIsDragging(null), []);
 
@@ -120,11 +127,9 @@ export default function StitchTimePicker({ onSelect, defaultValue, value }: Stit
     };
   }, [isDragging, handleMouseMove, handleMouseUp]);
 
-  useEffect(() => {
-    // Only trigger onSelect if internal state changed due to dragging OR if props changed
-    // But to prevent feedback loop, we can just always call it since parent will handle sync
-    onSelect(toHHMM(snapM(startH)), toHHMM(snapM(endH)));
-  }, [startH, endH, onSelect]);
+  // Removed auto-firing useEffect to prevent recursive feedback loops with parent components.
+  // We only notify the parent when the user actually changes the slider (via handleMouseMove).
+
 
   const startPct = ((startH - RANGE_START) / RANGE_SPAN) * 100;
   const endPct = ((endH - RANGE_START) / RANGE_SPAN) * 100;
