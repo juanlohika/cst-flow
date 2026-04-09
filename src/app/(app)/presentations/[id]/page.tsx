@@ -120,10 +120,18 @@ function BuilderContent() {
       });
       if (res.ok) {
         const data = await res.json();
-        await saveBlockContent(block.id, data.content);
+        let finalContent = data.content;
+        try {
+          const parsed = typeof data.content === "string" ? JSON.parse(data.content) : data.content;
+          if (attachedImages.length > 0) {
+            parsed.images = attachedImages; // Append Local base64 images directly to block JSON
+          }
+          finalContent = JSON.stringify(parsed);
+        } catch (e) {
+          console.warn("Could not inject images to raw text content");
+        }
+        await saveBlockContent(block.id, finalContent);
       }
-    } catch (err) {
-      console.error("Generate failed:", err);
     } finally {
       setGenerating(null);
     }
@@ -374,7 +382,25 @@ function BuilderContent() {
               onUpdatePrompt={(prompt) => saveBlockContent(selectedBlock.id, JSON.stringify({...JSON.parse(selectedBlock.content || "{}"), prompt}))}
             />
           ) : currentSlide ? (
-            <SlideConfigPanel slide={currentSlide} />
+            <SlideConfigPanel 
+              slide={currentSlide} 
+              onUpdate={async (updates) => {
+                const newSlides = [...slides];
+                newSlides[currentSlideIdx] = { ...currentSlide, ...updates };
+                setSlides(newSlides);
+
+                try {
+                  const res = await fetch(`/api/presentations/${presId}/slides`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: "update_slide", slideId: currentSlide.id, ...updates })
+                  });
+                  if(!res.ok) throw new Error("Failed to update slide metadata");
+                } catch(e) {
+                  console.error(e);
+                }
+              }} 
+            />
           ) : (
             <p className="text-sm text-slate-400">Select a slide or block</p>
           )}
@@ -675,15 +701,35 @@ function BlockRenderer({ block, isDark, onClick, isSelected, onSave, isGeneratin
 
     case "image":
       return (
-        <div onClick={onClick} className={`${wrapperClass} flex items-center justify-center p-4 border-2 border-dashed rounded-lg`} style={{ borderColor: isDark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.1)" }}>
-          <span className="text-xs opacity-40">{content.alt || "Image placeholder"}</span>
+        <div onClick={onClick} className={`${wrapperClass} flex flex-col items-center justify-center p-4 border rounded-lg gap-2`} style={{ borderColor: isDark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.1)", background: 'rgba(0,0,0,0.05)' }}>
+          {content.images && content.images.length > 0 ? (
+            <div className={`grid gap-4 ${content.images.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+              {content.images.map((img: string, i: number) => (
+                <img key={i} src={img} className="max-w-full h-auto rounded-md shadow-sm" alt={`Generated image ${i}`} />
+              ))}
+            </div>
+          ) : (
+            <span className="text-xs opacity-40">{content.alt || "Image placeholder"}</span>
+          )}
         </div>
       );
 
     default:
+      // If we find raw images inside a generic block but not matched to a specific block type (fallback)
+      if (content.images && content.images.length > 0) {
+        return (
+          <div onClick={onClick} className={wrapperClass}>
+            <div className={`grid gap-4 ${content.images.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+              {content.images.map((img: string, i: number) => (
+                <img key={i} src={img} className="max-w-full h-auto rounded-md shadow-sm" alt={`Attached UI image ${i}`} />
+              ))}
+            </div>
+          </div>
+        );
+      }
       return (
-        <div onClick={onClick} className={`${wrapperClass} text-xs opacity-50`}>
-          [{block.blockType}]
+        <div onClick={onClick} className={`${wrapperClass} text-xs opacity-50 p-4 border rounded`}>
+          [Unknown Block: {block.blockType}]
         </div>
       );
   }
@@ -953,22 +999,35 @@ function BlockConfigPanel({ block, onGenerate, generating, onSave, onUpdatePromp
   );
 }
 
-function SlideConfigPanel({ slide }: { slide: any }) {
+function SlideConfigPanel({ slide, onUpdate }: { slide: any, onUpdate: (data: any) => void }) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
-        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Slide Title</span>
-        <p className="text-sm font-bold text-slate-700 mt-1">{slide.title}</p>
+        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5 block">Slide Title</label>
+        <input 
+          type="text" 
+          value={slide.title} 
+          onChange={(e) => onUpdate({ title: e.target.value })}
+          className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-[#2162F9]/20 font-bold focus:border-[#2162F9] outline-none" 
+        />
       </div>
       <div>
-        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Layout</span>
-        <p className="text-sm font-medium text-slate-600 mt-1 capitalize">{slide.layout?.replace(/-/g, " ")}</p>
+        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5 block">Slide Layout</label>
+        <select 
+          value={slide.layout} 
+          onChange={(e) => onUpdate({ layout: e.target.value })}
+          className="w-full px-3 py-2 border rounded-lg text-sm font-medium focus:ring-2 focus:ring-[#2162F9]/20 focus:border-[#2162F9] outline-none bg-white"
+        >
+          {Object.keys(LAYOUT_BG).map((l) => (
+            <option key={l} value={l}>{l.replace(/-/g, " ")}</option>
+          ))}
+        </select>
       </div>
-      <div>
-        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Blocks</span>
-        <p className="text-sm text-slate-500 mt-1">{slide.blocks?.length || 0} blocks</p>
+      <div className="pt-2 border-t border-slate-100">
+        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Content Blocks</span>
+        <p className="text-sm text-slate-500 mt-1">{slide.blocks?.length || 0} active blocks</p>
       </div>
-      <p className="text-xs text-slate-400 italic">Click a block on the canvas to configure it</p>
+      <p className="text-xs text-slate-400 italic">Click any block on the canvas to configure AI & content.</p>
     </div>
   );
 }
@@ -985,105 +1044,73 @@ function PresentationMode({ slides, currentIdx, onChangeSlide, onExit, onSaveBlo
   onSaveBlock: (blockId: string, content: any) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
 
   useEffect(() => {
-    // Enter Full Screen
     if (containerRef.current && !document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch((err) => {
-        console.error("Error attempting to enable fullscreen:", err);
-      });
+      containerRef.current.requestFullscreen().catch((err) => console.error(err));
     }
-
-    const handleFullscreenChange = () => {
-      if (!document.fullscreenElement) {
-        onExit();
-      }
-    };
-
+    const handleFullscreenChange = () => { if (!document.fullscreenElement) onExit(); };
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    const computeScale = () => {
+      // We know our master SlideCanvas is perfectly built for 1280x720, so we literally just scale it up via CSS!
+      const availableWidth = window.innerWidth;
+      // Reserve 0px for footer since it's going to be absolute/overlay or we just let it be on top.
+      const availableHeight = window.innerHeight; 
+      const newScale = Math.min(availableWidth / 1280, availableHeight / 720);
+      setScale(newScale);
+    };
+    computeScale();
+    window.addEventListener("resize", computeScale);
+    return () => window.removeEventListener("resize", computeScale);
   }, []);
 
   const slide = slides[currentIdx];
   if (!slide) return null;
 
-  const layout = LAYOUT_BG[slide.layout] || LAYOUT_BG["content-light"];
-  const isDark = slide.layout.includes("dark");
-
-  const getBackgroundStyle = () => {
-    if (slide.backgroundOverride) return slide.backgroundOverride;
-    if (slide.layout === "full-bleed-dark") return `radial-gradient(circle at 80% 20%, #2C448A 0%, ${DESIGN.primary} 100%)`;
-    if (slide.layout === "content-dark") return `linear-gradient(135deg, ${DESIGN.primaryDark} 0%, #172B63 100%)`;
-    return layout.bg;
-  };
-
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 z-[9999] flex flex-col items-center justify-center"
-      style={{ background: "#000000" }} // Pitch black background letterboxing
+      className="fixed inset-0 z-[9999] flex items-center justify-center overflow-hidden"
+      style={{ background: "#000000" }} 
     >
       <div 
-        className="relative flex flex-col shadow-2xl overflow-hidden"
         style={{ 
-          background: getBackgroundStyle(), 
-          color: layout.text,
-          width: '100vw',
-          height: '100vh',
-          aspectRatio: '16/9',
-          maxHeight: '56.25vw', // Enforce 16:9 bounding box in ultra-wide screens
-          maxWidth: '177.78vh'  // Enforce 16:9 bounding box in tall screens
+          transform: `scale(${scale})`, 
+          transformOrigin: 'center center',
+          width: 1280, 
+          height: 720,
+          position: 'relative'
         }}
       >
-        {isDark && (
-          <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(rgba(255, 255, 255, 1) 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
-        )}
-      {/* Confidential */}
-      <div
-        className="absolute top-4 right-6 text-[10px] font-bold uppercase tracking-widest z-10"
-        style={{ color: isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.3)" }}
-      >
-        CONFIDENTIAL
+        <SlideCanvas
+           slide={slide}
+           onBlockClick={() => {}}
+           selectedBlockId={null}
+           onSaveBlock={onSaveBlock}
+           generating={null}
+        />
       </div>
 
-      {/* Content */}
-      <div className="flex-1 flex items-center justify-center p-12 lg:p-20 relative z-10 w-full h-full">
-        <div className="w-full h-full flex flex-col">
-          {slide.layout === "full-bleed-dark" ? (
-            <FullBleedSlide slide={slide} onBlockClick={() => {}} selectedBlockId={null} onSaveBlock={onSaveBlock} generating={null} />
-          ) : slide.layout === "two-column" ? (
-            <TwoColumnSlide slide={slide} onBlockClick={() => {}} selectedBlockId={null} onSaveBlock={onSaveBlock} generating={null} />
-          ) : (
-            <ContentSlide slide={slide} onBlockClick={() => {}} selectedBlockId={null} onSaveBlock={onSaveBlock} generating={null} />
-          )}
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div
-        className="h-12 flex items-center justify-between px-8"
-        style={{ background: DESIGN.primaryDark }}
-      >
-        <span className="text-[10px] font-bold text-white/80 tracking-widest">TARKIE</span>
-        <div className="flex items-center gap-4">
-          <button onClick={() => onChangeSlide(Math.max(0, currentIdx - 1))} className="text-white/60 hover:text-white">
-            <ChevronLeft size={20} />
+      {/* Footer Navigation Controls Overlay */}
+      <div className="absolute bottom-0 inset-x-0 h-16 flex items-center justify-between px-8 bg-gradient-to-t from-black/80 to-transparent opacity-0 hover:opacity-100 transition-opacity z-50">
+        <span className="text-[14px] font-black text-white/50 tracking-widest">TARKIE</span>
+        <div className="flex items-center gap-6">
+          <button onClick={() => onChangeSlide(Math.max(0, currentIdx - 1))} className="text-white hover:text-[#43EB7C] transition-colors p-2">
+            <ChevronLeft size={32} />
           </button>
-          <span className="text-xs font-bold text-white/70">{currentIdx + 1} / {slides.length}</span>
-          <button onClick={() => onChangeSlide(Math.min(slides.length - 1, currentIdx + 1))} className="text-white/60 hover:text-white">
-            <ChevronRight size={20} />
+          <span className="text-xl font-bold text-white tracking-widest">{currentIdx + 1} / {slides.length}</span>
+          <button onClick={() => onChangeSlide(Math.min(slides.length - 1, currentIdx + 1))} className="text-white hover:text-[#43EB7C] transition-colors p-2">
+            <ChevronRight size={32} />
           </button>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] text-white/40 font-bold">©2012-2025 MobileOptima, Inc.</span>
-          <button onClick={() => {
-            if (document.fullscreenElement) document.exitFullscreen();
-            onExit();
-          }} className="text-white/60 hover:text-white p-2">
-            <Maximize2 size={16} />
-          </button>
-        </div>
-      </div>
+        <button onClick={() => { if (document.fullscreenElement) document.exitFullscreen(); onExit(); }} className="text-white p-2 hover:bg-white/20 rounded-lg">
+          <Maximize2 size={20} />
+        </button>
       </div>
     </div>
   );
