@@ -6,7 +6,7 @@ import { useSession } from "next-auth/react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import {
   Loader2, ChevronLeft, ChevronRight, Play, Download, Plus, Trash2, Copy, GripVertical,
-  Lock, Unlock, Sparkles, RotateCcw, Maximize2, Settings, Eye
+  Lock, Unlock, Sparkles, RotateCcw, Maximize2, Settings, Eye, ZoomIn, ZoomOut, CheckSquare
 } from "lucide-react";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 
@@ -50,6 +50,7 @@ function BuilderContent() {
   const [generating, setGenerating] = useState<string | null>(null);
   const [isPresenting, setIsPresenting] = useState(false);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(0.75);
 
   useBreadcrumbs([
     { label: "Presentations", href: "/presentations" },
@@ -101,8 +102,8 @@ function BuilderContent() {
   }, [presId]);
 
   // ── AI Generate block ──────────────────────────────────────────
-  const generateBlock = useCallback(async (block: any) => {
-    if (!block.prompt && !block.intelligenceMapping) return;
+  const generateBlock = useCallback(async (block: any, attachedImages: string[] = []) => {
+    if (!block.prompt && !block.intelligenceMapping && attachedImages.length === 0) return;
     setGenerating(block.id);
     try {
       const res = await fetch("/api/presentations/generate-block", {
@@ -111,6 +112,7 @@ function BuilderContent() {
         body: JSON.stringify({
           blockType: block.blockType,
           prompt: block.prompt || `Generate content for ${block.blockType} block`,
+          images: attachedImages,
           accountIntelligence: presentation?.intelligenceSnapshot || "",
           designSkill: presentation?.designSnapshot || "",
           slideBackground: slides[currentSlideIdx]?.layout?.includes("dark") ? "dark" : "light",
@@ -126,6 +128,62 @@ function BuilderContent() {
       setGenerating(null);
     }
   }, [presId, presentation, slides, currentSlideIdx, saveBlockContent]);
+
+  // ── Slide Management ──────────────────────────────────────────
+  const addNewSlide = async () => {
+    setSaving(true);
+    const newSlideId = `slide_${Date.now().toString(36)}_${Math.random().toString(36).substring(2,6)}`;
+    const newSlide = {
+      id: newSlideId,
+      presentationId: presId,
+      order: slides.length,
+      title: "New Slide",
+      layout: "content-light",
+      blocks: [],
+    };
+    try {
+      await fetch(`/api/presentations/${presId}/slides`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newSlide),
+      });
+      setSlides([...slides, newSlide]);
+      setCurrentSlideIdx(slides.length);
+    } catch (err) { console.error("Add slide failed", err); }
+    setSaving(false);
+  };
+
+  const duplicateSlide = async () => {
+    if (!slides[currentSlideIdx]) return;
+    setSaving(true);
+    const current = slides[currentSlideIdx];
+    const newSlideId = `slide_${Date.now().toString(36)}_${Math.random().toString(36).substring(2,6)}`;
+    const newSlide = {
+      ...current,
+      id: newSlideId,
+      order: current.order + 1,
+      title: `${current.title} (Copy)`,
+      blocks: current.blocks?.map((b: any) => ({
+        ...b,
+        id: `block_${Date.now().toString(36)}_${Math.random().toString(36).substring(2,6)}`,
+        slideId: newSlideId,
+      })) || []
+    };
+    try {
+      await fetch(`/api/presentations/${presId}/slides`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newSlide),
+      });
+      const newSlides = [...slides];
+      newSlides.splice(currentSlideIdx + 1, 0, newSlide);
+      // Re-normalize orders
+      newSlides.forEach((s, i) => s.order = i);
+      setSlides(newSlides);
+      setCurrentSlideIdx(currentSlideIdx + 1);
+    } catch (err) { console.error("Duplicate slide failed", err); }
+    setSaving(false);
+  };
 
   // ── Keyboard navigation ──────────────────────────────────────────
   useEffect(() => {
@@ -208,6 +266,14 @@ function BuilderContent() {
             </div>
           ))}
         </div>
+        <div className="p-3 border-t flex items-center justify-between gap-2 bg-slate-50">
+          <button onClick={addNewSlide} disabled={saving} className="flex items-center justify-center gap-1.5 flex-1 py-1.5 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 transition-colors">
+            <Plus size={12} /> Add
+          </button>
+          <button onClick={duplicateSlide} disabled={saving} className="flex items-center justify-center gap-1.5 flex-1 py-1.5 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 transition-colors">
+            <Copy size={12} /> Duplicate
+          </button>
+        </div>
       </div>
 
       {/* CENTER: Canvas */}
@@ -240,18 +306,33 @@ function BuilderContent() {
         </div>
 
         {/* Slide canvas */}
-        <div className="flex-1 overflow-auto flex items-center justify-center p-8">
-          {currentSlide ? (
-            <SlideCanvas
-              slide={currentSlide}
-              onBlockClick={(blockId) => setSelectedBlockId(blockId)}
-              selectedBlockId={selectedBlockId}
-              onSaveBlock={saveBlockContent}
-              generating={generating}
-            />
-          ) : (
-            <div className="text-slate-300 text-sm">No slides</div>
-          )}
+        <div className="flex-1 overflow-auto flex flex-col bg-[#E6EBED] shadow-inner relative styled-scroll">
+          {/* Zoom controls floating */}
+          <div className="sticky top-4 w-full flex justify-center z-20 pointer-events-none">
+            <div className="bg-white/90 backdrop-blur-sm shadow-md rounded-full px-3 py-1.5 flex items-center gap-3 pointer-events-auto border border-slate-200/50">
+              <button onClick={() => setZoom(z => Math.max(0.25, z - 0.1))} className="text-slate-500 hover:text-primary transition-colors"><ZoomOut size={16} /></button>
+              <span className="text-[10px] font-black w-10 text-center font-mono opacity-60">{Math.round(zoom * 100)}%</span>
+              <button onClick={() => setZoom(z => Math.min(2.0, z + 0.1))} className="text-slate-500 hover:text-primary transition-colors"><ZoomIn size={16} /></button>
+              <div className="w-[1px] h-3 bg-slate-200"></div>
+              <button onClick={() => setZoom(0.75)} className="text-[9px] font-bold text-slate-400 hover:text-primary uppercase tracking-wider">Reset</button>
+            </div>
+          </div>
+
+          <div className="flex-1 flex justify-center pt-8 pb-16">
+            {currentSlide ? (
+              <div style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', width: 1280, height: 720, transition: 'transform 0.15s ease-out' }}>
+                <SlideCanvas
+                  slide={currentSlide}
+                  onBlockClick={(blockId) => setSelectedBlockId(blockId)}
+                  selectedBlockId={selectedBlockId}
+                  onSaveBlock={saveBlockContent}
+                  generating={generating}
+                />
+              </div>
+            ) : (
+              <div className="text-slate-400 font-bold text-sm mt-32">No slides found.</div>
+            )}
+          </div>
         </div>
 
         {/* Bottom slide navigation */}
@@ -287,9 +368,10 @@ function BuilderContent() {
           {selectedBlock ? (
             <BlockConfigPanel
               block={selectedBlock}
-              onGenerate={() => generateBlock(selectedBlock)}
+              onGenerate={(images) => generateBlock(selectedBlock, images)}
               generating={generating === selectedBlock.id}
               onSave={(content) => saveBlockContent(selectedBlock.id, content)}
+              onUpdatePrompt={(prompt) => saveBlockContent(selectedBlock.id, JSON.stringify({...JSON.parse(selectedBlock.content || "{}"), prompt}))}
             />
           ) : currentSlide ? (
             <SlideConfigPanel slide={currentSlide} />
@@ -316,11 +398,22 @@ function SlideCanvas({ slide, onBlockClick, selectedBlockId, onSaveBlock, genera
   const layout = LAYOUT_BG[slide.layout] || LAYOUT_BG["content-light"];
   const isDark = slide.layout.includes("dark");
 
+  const getBackgroundStyle = () => {
+    if (slide.backgroundOverride) return slide.backgroundOverride;
+    if (slide.layout === "full-bleed-dark") return `radial-gradient(circle at 80% 20%, #2C448A 0%, ${DESIGN.primary} 100%)`;
+    if (slide.layout === "content-dark") return `linear-gradient(135deg, ${DESIGN.primaryDark} 0%, #172B63 100%)`;
+    return layout.bg;
+  };
+
   return (
     <div
-      className="w-full max-w-[960px] aspect-video rounded-2xl shadow-2xl overflow-hidden relative flex flex-col"
-      style={{ background: slide.backgroundOverride || layout.bg, color: layout.text }}
+      className="w-full h-full rounded-md shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] overflow-hidden relative flex flex-col ring-1 ring-black/5"
+      style={{ background: getBackgroundStyle(), color: layout.text }}
     >
+      {/* Decorative circuitry faint watermark (optional approximation) */}
+      {isDark && (
+        <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(rgba(255, 255, 255, 1) 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
+      )}
       {/* Confidential tag */}
       <div
         className="absolute top-3 right-4 text-[8px] font-bold uppercase tracking-widest z-10"
@@ -529,51 +622,12 @@ function BlockRenderer({ block, isDark, onClick, isSelected, onSave, isGeneratin
 
     case "table":
       return (
-        <div onClick={onClick} className={`${wrapperClass} overflow-auto`}>
-          <table className="w-full text-[9px] border-collapse">
-            <thead>
-              <tr>
-                {(content.columns || []).map((col: string, i: number) => (
-                  <th
-                    key={i}
-                    className="px-2 py-1.5 text-left font-bold uppercase tracking-wider"
-                    style={{
-                      background: DESIGN.primaryDark,
-                      color: DESIGN.white,
-                      borderBottom: `2px solid ${DESIGN.accentGreen}`,
-                    }}
-                  >
-                    {col}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {(content.rows || []).map((row: string[], ri: number) => (
-                <tr key={ri} style={{ background: ri % 2 === 1 ? DESIGN.surfaceBlue : DESIGN.white }}>
-                  {row.map((cell: string, ci: number) => (
-                    <td
-                      key={ci}
-                      className="px-2 py-1 border-b border-slate-200"
-                      contentEditable suppressContentEditableWarning
-                      onBlur={(e) => {
-                        const newRows = content.rows.map((r: string[], idx: number) =>
-                          idx === ri ? r.map((c: string, cidx: number) => cidx === ci ? (e.currentTarget.textContent || "") : c) : r
-                        );
-                        onSave(JSON.stringify({ ...content, rows: newRows }));
-                      }}
-                    >
-                      {cell}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {(!content.rows || content.rows.length === 0) && (
-            <p className="text-xs opacity-40 italic text-center py-2">No data — use AI Generate or add rows</p>
-          )}
-        </div>
+        <TableBlockUI
+          content={content}
+          onClick={onClick}
+          wrapperClass={wrapperClass}
+          onSave={onSave}
+        />
       );
 
     case "phase-card":
@@ -636,18 +690,189 @@ function BlockRenderer({ block, isDark, onClick, isSelected, onSave, isGeneratin
 }
 
 // ════════════════════════════════════════════════════════════════
+// TABLE BLOCK INTERACTIVE UI
+// ════════════════════════════════════════════════════════════════
+function TableBlockUI({ content, onClick, wrapperClass, onSave }: any) {
+  const [hoveredRow, setHoveredRow] = useState<number | null>(null);
+  const [hoveredCol, setHoveredCol] = useState<number | null>(null);
+
+  const addRow = (index: number) => {
+    const newRows = [...(content.rows || [])];
+    const emptyRow = Array((content.columns || []).length).fill("New Cell");
+    newRows.splice(index, 0, emptyRow);
+    onSave(JSON.stringify({ ...content, rows: newRows }));
+  };
+
+  const addCol = (index: number) => {
+    const newCols = [...(content.columns || [])];
+    newCols.splice(index, 0, "NEW COL");
+    const newRows = (content.rows || []).map((row: string[]) => {
+      const r = [...row];
+      r.splice(index, 0, "Data");
+      return r;
+    });
+    onSave(JSON.stringify({ ...content, columns: newCols, rows: newRows }));
+  };
+
+  const removeRow = (index: number) => {
+    const newRows = [...(content.rows || [])];
+    newRows.splice(index, 1);
+    onSave(JSON.stringify({ ...content, rows: newRows }));
+  };
+
+  const removeCol = (index: number) => {
+    const newCols = [...(content.columns || [])];
+    newCols.splice(index, 1);
+    const newRows = (content.rows || []).map((row: string[]) => {
+      const r = [...row];
+      r.splice(index, 1);
+      return r;
+    });
+    onSave(JSON.stringify({ ...content, columns: newCols, rows: newRows }));
+  };
+
+  return (
+    <div onClick={onClick} className={`${wrapperClass} overflow-visible block relative group/table`} onMouseLeave={() => { setHoveredRow(null); setHoveredCol(null); }}>
+      <table className="w-full text-sm border-collapse table-fixed">
+        <thead>
+          <tr>
+            {(content.columns || []).map((col: string, i: number) => (
+              <th
+                key={i}
+                onMouseEnter={() => setHoveredCol(i)}
+                className="px-4 py-3 text-left font-bold uppercase tracking-wider relative group/th"
+                style={{
+                  background: DESIGN.primaryDark,
+                  color: DESIGN.white,
+                  borderBottom: `3px solid ${DESIGN.accentGreen}`,
+                }}
+              >
+                <span contentEditable suppressContentEditableWarning onBlur={(e) => {
+                  const newCols = [...content.columns];
+                  newCols[i] = e.currentTarget.textContent || "";
+                  onSave(JSON.stringify({ ...content, columns: newCols }));
+                }}>{col}</span>
+
+                {/* Column controls */}
+                {hoveredCol === i && (
+                  <div className="absolute -top-7 left-1/2 -translate-x-1/2 flex items-center bg-white shadow-md rounded border text-black p-0.5 z-20">
+                    <button onClick={() => addCol(i)} className="p-1 hover:bg-slate-100 rounded text-slate-500" title="Add Left"><Plus size={12} /></button>
+                    <button onClick={() => removeCol(i)} className="p-1 hover:bg-red-100 text-red-500 rounded" title="Delete Column"><Trash2 size={12} /></button>
+                    <button onClick={() => addCol(i+1)} className="p-1 hover:bg-slate-100 rounded text-slate-500" title="Add Right"><Plus size={12} /></button>
+                  </div>
+                )}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {(content.rows || []).map((row: string[], ri: number) => (
+            <tr key={ri} className="relative group/tr" onMouseEnter={() => setHoveredRow(ri)} style={{ background: ri % 2 === 1 ? DESIGN.surfaceBlue : DESIGN.white }}>
+              {row.map((cell: string, ci: number) => (
+                <td
+                  key={ci}
+                  className="px-4 py-2.5 border-b border-slate-200"
+                  contentEditable suppressContentEditableWarning
+                  onBlur={(e) => {
+                    const newRows = content.rows.map((r: string[], idx: number) =>
+                      idx === ri ? r.map((c: string, cidx: number) => cidx === ci ? (e.currentTarget.textContent || "") : c) : r
+                    );
+                    onSave(JSON.stringify({ ...content, rows: newRows }));
+                  }}
+                >
+                  {cell}
+                </td>
+              ))}
+              
+              {/* Row controls */}
+              {hoveredRow === ri && (
+                <td className="absolute -left-16 top-1/2 -translate-y-1/2 flex items-center bg-white shadow-md rounded border text-black p-0.5 z-20 w-max">
+                  <button onClick={() => addRow(ri)} className="p-1 hover:bg-slate-100 rounded text-slate-500" title="Add Above"><Plus size={12} /></button>
+                  <button onClick={() => removeRow(ri)} className="p-1 hover:bg-red-100 text-red-500 rounded" title="Delete Row"><Trash2 size={12} /></button>
+                  <button onClick={() => addRow(ri+1)} className="p-1 hover:bg-slate-100 rounded text-slate-500" title="Add Below"><Plus size={12} /></button>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {(!content.rows || content.rows.length === 0) && (
+        <div className="flex flex-col items-center py-6 gap-2">
+          <p className="text-xs opacity-40 italic text-center">No data — use AI Generate or add manually</p>
+          <button onClick={() => addRow(0)} className="px-3 py-1 bg-slate-100 text-slate-600 rounded text-xs font-bold hover:bg-slate-200">
+            + Add First Row
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
 // BLOCK CONFIG PANEL (Right sidebar)
 // ════════════════════════════════════════════════════════════════
 
-function BlockConfigPanel({ block, onGenerate, generating, onSave }: {
+// ════════════════════════════════════════════════════════════════
+// BLOCK CONFIG PANEL (Right sidebar)
+// ════════════════════════════════════════════════════════════════
+
+import SmartMic from "@/components/ui/SmartMic";
+import { Image as ImageIcon, X } from "lucide-react";
+
+function BlockConfigPanel({ block, onGenerate, generating, onSave, onUpdatePrompt }: {
   block: any;
-  onGenerate: () => void;
+  onGenerate: (images: string[]) => void;
   generating: boolean;
   onSave: (content: any) => void;
+  onUpdatePrompt?: (prompt: string) => void;
 }) {
   const [editPrompt, setEditPrompt] = useState(block.prompt || "");
+  const [attachedImages, setAttachedImages] = useState<{url: string, file: File}[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { setEditPrompt(block.prompt || ""); }, [block.id]);
+  useEffect(() => { setEditPrompt(block.prompt || ""); setAttachedImages([]); }, [block.id]);
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf("image") !== -1) {
+        const file = items[i].getAsFile();
+        if (file) {
+          const url = URL.createObjectURL(file);
+          setAttachedImages(prev => [...prev, { url, file }]);
+        }
+      }
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const newImages = Array.from(e.target.files).map(file => ({
+        url: URL.createObjectURL(file), file
+      }));
+      setAttachedImages(prev => [...prev, ...newImages]);
+    }
+  };
+
+  const handleGenerateClick = async () => {
+    // Read all files as base64
+    const base64Images = await Promise.all(attachedImages.map(img => {
+      return new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(img.file);
+      });
+    }));
+    
+    // Save prompt first
+    if (onUpdatePrompt && editPrompt !== block.prompt) {
+      onUpdatePrompt(editPrompt);
+    }
+    
+    // Pass images to generator
+    onGenerate(base64Images);
+  };
 
   return (
     <div className="space-y-5">
@@ -664,19 +889,51 @@ function BlockConfigPanel({ block, onGenerate, generating, onSave }: {
       )}
 
       <div>
-        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block">
-          AI Prompt
-        </label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+            AI Prompt
+          </label>
+          <SmartMic
+            onTranscription={(text) => setEditPrompt(prev => prev ? prev + " " + text : text)}
+          />
+        </div>
         <textarea
           value={editPrompt}
           onChange={(e) => setEditPrompt(e.target.value)}
-          placeholder="Describe what this block should contain..."
+          onPaste={handlePaste}
+          placeholder="Describe content or paste an image/screenshot here..."
           className="w-full h-24 px-3 py-2 border rounded-xl text-xs focus:ring-2 focus:ring-[#2162F9]/20 focus:border-[#2162F9] outline-none resize-none"
         />
+        
+        {/* Attachment preview / upload controls */}
+        <div className="mt-2 flex flex-col gap-2">
+          {attachedImages.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {attachedImages.map((img, idx) => (
+                <div key={idx} className="relative w-12 h-12 rounded border bg-slate-50 flex items-center justify-center overflow-hidden group">
+                  <img src={img.url} className="object-cover w-full h-full" alt="attachment" />
+                  <button
+                    onClick={() => setAttachedImages(prev => prev.filter((_, i) => i !== idx))}
+                    className="absolute top-0.5 right-0.5 bg-black/50 text-white rounded-sm p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <input type="file" accept="image/*" multiple className="hidden" ref={fileInputRef} onChange={handleFileChange} />
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-slate-400 hover:text-[#2162F9] transition-colors"
+          >
+            <ImageIcon size={12} /> Attach Image/Screenshot
+          </button>
+        </div>
       </div>
 
       <button
-        onClick={onGenerate}
+        onClick={handleGenerateClick}
         disabled={generating}
         className="w-full flex items-center justify-center gap-2 bg-[#2162F9] text-white py-2.5 rounded-xl font-bold text-xs hover:shadow-lg transition-all disabled:opacity-50"
       >
@@ -727,17 +984,60 @@ function PresentationMode({ slides, currentIdx, onChangeSlide, onExit, onSaveBlo
   onExit: () => void;
   onSaveBlock: (blockId: string, content: any) => void;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Enter Full Screen
+    if (containerRef.current && !document.fullscreenElement) {
+      containerRef.current.requestFullscreen().catch((err) => {
+        console.error("Error attempting to enable fullscreen:", err);
+      });
+    }
+
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) {
+        onExit();
+      }
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
   const slide = slides[currentIdx];
   if (!slide) return null;
 
   const layout = LAYOUT_BG[slide.layout] || LAYOUT_BG["content-light"];
   const isDark = slide.layout.includes("dark");
 
+  const getBackgroundStyle = () => {
+    if (slide.backgroundOverride) return slide.backgroundOverride;
+    if (slide.layout === "full-bleed-dark") return `radial-gradient(circle at 80% 20%, #2C448A 0%, ${DESIGN.primary} 100%)`;
+    if (slide.layout === "content-dark") return `linear-gradient(135deg, ${DESIGN.primaryDark} 0%, #172B63 100%)`;
+    return layout.bg;
+  };
+
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col"
-      style={{ background: slide.backgroundOverride || layout.bg, color: layout.text }}
+      ref={containerRef}
+      className="fixed inset-0 z-[9999] flex flex-col items-center justify-center"
+      style={{ background: "#000000" }} // Pitch black background letterboxing
     >
+      <div 
+        className="relative flex flex-col shadow-2xl overflow-hidden"
+        style={{ 
+          background: getBackgroundStyle(), 
+          color: layout.text,
+          width: '100vw',
+          height: '100vh',
+          aspectRatio: '16/9',
+          maxHeight: '56.25vw', // Enforce 16:9 bounding box in ultra-wide screens
+          maxWidth: '177.78vh'  // Enforce 16:9 bounding box in tall screens
+        }}
+      >
+        {isDark && (
+          <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(rgba(255, 255, 255, 1) 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
+        )}
       {/* Confidential */}
       <div
         className="absolute top-4 right-6 text-[10px] font-bold uppercase tracking-widest z-10"
@@ -747,8 +1047,8 @@ function PresentationMode({ slides, currentIdx, onChangeSlide, onExit, onSaveBlo
       </div>
 
       {/* Content */}
-      <div className="flex-1 flex items-center justify-center p-12">
-        <div className="w-full max-w-[1200px]">
+      <div className="flex-1 flex items-center justify-center p-12 lg:p-20 relative z-10 w-full h-full">
+        <div className="w-full h-full flex flex-col">
           {slide.layout === "full-bleed-dark" ? (
             <FullBleedSlide slide={slide} onBlockClick={() => {}} selectedBlockId={null} onSaveBlock={onSaveBlock} generating={null} />
           ) : slide.layout === "two-column" ? (
@@ -775,11 +1075,15 @@ function PresentationMode({ slides, currentIdx, onChangeSlide, onExit, onSaveBlo
           </button>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-[7px] text-white/40">©2012-2025 MobileOptima, Inc.</span>
-          <button onClick={onExit} className="text-white/60 hover:text-white">
-            <Maximize2 size={14} />
+          <span className="text-[10px] text-white/40 font-bold">©2012-2025 MobileOptima, Inc.</span>
+          <button onClick={() => {
+            if (document.fullscreenElement) document.exitFullscreen();
+            onExit();
+          }} className="text-white/60 hover:text-white p-2">
+            <Maximize2 size={16} />
           </button>
         </div>
+      </div>
       </div>
     </div>
   );
