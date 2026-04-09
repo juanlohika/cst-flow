@@ -24,9 +24,17 @@ export default function SmartMic({
 
   // Refs for logic
   const recognitionRef = useRef<any>(null); // For Native SpeechRecognition
-  
+  const intentToListen = useRef(false); // Controls intentional looping to prevent memory leaks
+
   const onTranscriptionRef = useRef(onTranscription);
   const onInterimRef = useRef(onInterim);
+
+  // Custom Dictionary Filter for CST FlowDesk
+  const applyDictionary = useCallback((text: string) => {
+    return text
+      .replace(/\b(turkey|starkey|tarkey|tar key)\b/gi, "Tarkie")
+      .replace(/\b(filled up|fill up|field up|build up)\b/gi, "Field App");
+  }, []);
 
   useEffect(() => { onTranscriptionRef.current = onTranscription; }, [onTranscription]);
   useEffect(() => { onInterimRef.current = onInterim; }, [onInterim]);
@@ -64,11 +72,12 @@ export default function SmartMic({
   }, [isListening]);
 
   const stopCapture = useCallback(() => {
+    intentToListen.current = false;
     setIsListening(false);
     
     // Stop Smart Mode
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
+      try { recognitionRef.current.stop(); } catch (e) {}
       recognitionRef.current = null;
     }
     
@@ -77,6 +86,7 @@ export default function SmartMic({
 
   const startCapture = useCallback(async () => {
     setError(null);
+    intentToListen.current = true;
     try {
       // ─── SMART DICTATION MODE (Native SpeechRecognition) ─────────────────────
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -85,19 +95,23 @@ export default function SmartMic({
       }
       
       const recognition = new SpeechRecognition();
-      recognition.continuous = true;
+      // MEMORY LEAK FIX: We explicitly set continuous = false.
+      // If continuous is true, the `results` array grows infinitely into RAM causing severe browser lag.
+      // By using false, it flushes the array on every natural pause, and we auto-restart in `onend`.
+      recognition.continuous = false;
       recognition.interimResults = true;
       
       recognition.onresult = (event: any) => {
         let interimTranscript = "";
         for (let i = event.resultIndex; i < event.results.length; i++) {
           if (event.results[i].isFinal) {
-            const text = event.results[i][0].transcript;
-            if (text.trim()) {
-              onTranscriptionRef.current(text.trim());
+            const rawText = event.results[i][0].transcript;
+            const correctedText = applyDictionary(rawText);
+            if (correctedText.trim()) {
+              onTranscriptionRef.current(correctedText.trim());
             }
           } else {
-            interimTranscript += event.results[i][0].transcript;
+            interimTranscript += applyDictionary(event.results[i][0].transcript);
           }
         }
         if (interimTranscript && onInterimRef.current) {
@@ -108,16 +122,25 @@ export default function SmartMic({
       };
 
       recognition.onerror = (event: any) => {
-        console.error("Speech Recognition Error", event.error);
-        if (event.error !== 'no-speech') {
-          setError(`Microphone error: ${event.error}`);
-          stopCapture();
+        if (event.error === 'no-speech' || event.error === 'aborted' || event.error === 'network') {
+          // Ignore ambient browser drops, `onend` will gracefully restart it
+          return;
         }
+        console.error("Speech Recognition Error", event.error);
+        setError(`Microphone error: ${event.error}`);
+        stopCapture();
       };
 
       recognition.onend = () => {
-        setIsListening(false);
-        onToggle?.(false);
+        // AUTO-RESTART: Simulates continuous listening without exploding RAM
+        if (intentToListen.current && recognitionRef.current) {
+          try {
+            recognitionRef.current.start();
+          } catch (e) {}
+        } else {
+          setIsListening(false);
+          onToggle?.(false);
+        }
       };
 
       recognitionRef.current = recognition;
@@ -128,8 +151,9 @@ export default function SmartMic({
     } catch (e: any) {
       console.error("Start capture error:", e);
       setError(e.message || "Could not start recording.");
+      intentToListen.current = false;
     }
-  }, [onToggle, stopCapture]);
+  }, [onToggle, stopCapture, applyDictionary]);
 
   return (
     <div className="flex items-center gap-1.5 relative">
