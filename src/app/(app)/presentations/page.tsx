@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { Loader2, Plus, Presentation, FileText, Clock } from "lucide-react";
@@ -59,7 +60,11 @@ function PresentationsContent() {
       });
       if (res.ok) {
         const data = await res.json();
+        setShowNewModal(false);
         router.push(`/presentations/${data.id}`);
+      } else {
+        const err = await res.json();
+        console.error("API error:", err);
       }
     } catch (err) {
       console.error("Failed to create presentation:", err);
@@ -120,10 +125,10 @@ function PresentationsContent() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {presentations.map((pres) => (
-              <div
+              <Link
                 key={pres.id}
-                onClick={() => router.push(`/presentations/${pres.id}`)}
-                className="bg-white border border-slate-200 rounded-2xl p-6 cursor-pointer hover:shadow-xl hover:translate-y-[-2px] transition-all group"
+                href={`/presentations/${pres.id}`}
+                className="bg-white border border-slate-200 rounded-2xl p-6 cursor-pointer hover:shadow-xl hover:translate-y-[-2px] transition-all group block"
               >
                 <div className="flex items-start justify-between mb-4">
                   <div className="bg-[#2162F9]/10 p-3 rounded-xl group-hover:bg-[#2162F9]/20 transition-colors">
@@ -138,7 +143,7 @@ function PresentationsContent() {
                   <Clock size={10} />
                   {new Date(pres.createdAt).toLocaleDateString()}
                 </p>
-              </div>
+              </Link>
             ))}
           </div>
         )}

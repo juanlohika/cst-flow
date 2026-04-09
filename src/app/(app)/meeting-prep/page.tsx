@@ -9,6 +9,7 @@ import {
   FileText, ClipboardList, Search, Pencil, ChevronLeft,
   ChevronDown, ChevronUp, User, BarChart2, GitBranch,
   FolderOpen, ExternalLink, Clock, Users, Paintbrush, Download,
+  Brain, MonitorPlay, Save
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useSearchParams } from "next/navigation";
@@ -627,10 +628,12 @@ function SortHeader({ label, col, sortKey, sortDir, onSort }: {
 
 // ─── Account Hub (5-Tab) ───────────────────────────────────────────────────────
 
-type HubTab = "profile" | "meetings" | "brd" | "flows" | "projects" | "mockups";
+type HubTab = "profile" | "meetings" | "brd" | "flows" | "projects" | "mockups" | "intelligence" | "presentations";
 
 const HUB_TABS: { id: HubTab; label: string; icon: React.ElementType }[] = [
   { id: "profile", label: "Profile", icon: User },
+  { id: "intelligence", label: "Intelligence", icon: Brain },
+  { id: "presentations", label: "Presentations", icon: MonitorPlay },
   { id: "meetings", label: "Meetings", icon: CalendarCheck },
   { id: "brd", label: "BRD", icon: FileText },
   { id: "flows", label: "Process Flow", icon: GitBranch },
@@ -706,6 +709,8 @@ export function AccountHub({ profile, onEdit, onBack }: {
       <div className="flex-1 overflow-y-auto bg-white styled-scroll">
         <div className="min-w-0">
           {activeTab === "profile" && <ProfileTab profile={profile} modules={modules} />}
+          {activeTab === "intelligence" && <IntelligenceTab accountId={profile.id} />}
+          {activeTab === "presentations" && <PresentationsTab accountId={profile.id} />}
           {activeTab === "meetings" && <MeetingsTab accountId={profile.id} companyName={profile.companyName} />}
           {activeTab === "brd" && <BRDTab accountId={profile.id} companyName={profile.companyName} />}
           {activeTab === "flows" && <FlowsTab accountId={profile.id} companyName={profile.companyName} />}
@@ -1641,6 +1646,122 @@ export function MockupsTab({ accountId, companyName }: { accountId: string; comp
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Intelligence Tab ────────────────────────────────────────────────────────
+
+export function IntelligenceTab({ accountId }: { accountId: string }) {
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const { addToast } = useToast();
+
+  useEffect(() => {
+    fetch(`/api/accounts/${accountId}/intelligence`)
+      .then(r => r.ok ? r.json() : { intelligenceContent: "" })
+      .then(data => setContent(data.intelligenceContent || ""))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [accountId]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/accounts/${accountId}/intelligence`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intelligenceContent: content }),
+      });
+      if (res.ok) {
+        addToast("Intelligence content saved successfully");
+      }
+    } catch {
+      addToast("Failed to save intelligence", "error");
+    }
+    setSaving(false);
+  };
+
+  if (loading) return <TabLoading />;
+
+  return (
+    <div className="max-w-4xl mx-auto p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-[14px] font-bold text-text-primary flex items-center gap-2">
+            <Brain className="w-4 h-4 text-primary" />
+            Account Intelligence
+          </h3>
+          <p className="text-[12px] text-text-secondary mt-1">
+            Write down specific rules, terminology, and product mappings for this account.
+            The Presentation Builder AI will read this when generating content.
+          </p>
+        </div>
+        <button
+          onClick={save}
+          disabled={saving}
+          className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-md text-[12px] font-bold shadow-sm shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          {saving ? "Saving…" : "Save Rules"}
+        </button>
+      </div>
+
+      <div className="border border-border-default rounded-lg overflow-hidden bg-white shadow-sm focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary transition-all">
+        <textarea
+          value={content}
+          onChange={e => setContent(e.target.value)}
+          placeholder="Example: Keep it professional. Refer to Tarkie as 'The Field App'. Highlight that they are interested in the CRM module..."
+          className="w-full h-[500px] p-4 text-[13px] text-text-primary bg-transparent resize-none focus:outline-none font-mono"
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Presentations Tab ───────────────────────────────────────────────────────
+
+export function PresentationsTab({ accountId }: { accountId: string }) {
+  const [presentations, setPresentations] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`/api/presentations?accountId=${accountId}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(setPresentations)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [accountId]);
+
+  if (loading) return <TabLoading />;
+
+  return (
+    <div className="p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-[12px] font-semibold text-text-primary">{presentations.length} presentation{presentations.length !== 1 ? "s" : ""}</p>
+        <a href={`/presentations`} className="flex items-center gap-1 text-[12px] text-primary font-bold hover:underline">
+          <Plus className="w-3 h-3" /> New Presentation
+        </a>
+      </div>
+
+      {presentations.length === 0 ? (
+        <TabEmpty icon={MonitorPlay} message="No presentations generated for this account yet." action={{ label: "Open Slide Builder", href: "/presentations" }} />
+      ) : (
+        <div className="grid grid-cols-3 gap-4">
+          {presentations.map((pres: any) => (
+            <a key={pres.id} href={`/presentations/${pres.id}`} className="block border border-border-default rounded-xl overflow-hidden bg-white hover:border-primary/50 hover:shadow-md transition-all group">
+              <div className="aspect-video bg-surface-subtle flex items-center justify-center border-b border-border-default">
+                <MonitorPlay className="w-8 h-8 text-text-muted opacity-30 group-hover:text-primary group-hover:scale-110 transition-all" />
+              </div>
+              <div className="p-3">
+                <p className="text-[13px] font-bold text-text-primary truncate">{pres.name}</p>
+                <p className="text-[11px] text-text-secondary mt-1">{new Date(pres.updatedAt).toLocaleDateString()}</p>
+              </div>
+            </a>
+          ))}
         </div>
       )}
     </div>

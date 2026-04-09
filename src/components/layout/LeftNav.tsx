@@ -4,12 +4,13 @@ import React, { useState, useEffect } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import ForceLink from "@/components/ui/ForceLink";
 import {
-  ChevronLeft, ChevronRight, ChevronDown,
+  ChevronLeft, ChevronRight, ChevronDown, MonitorPlay,
   Compass, Zap, Building2, Sparkles, LayoutDashboard
 } from "lucide-react";
 
 const ICON_MAP: Record<string, React.ReactNode> = {
   Sparkles: <Sparkles size={14} />,
+  MonitorPlay: <MonitorPlay size={14} />,
 };
 
 interface LeftNavProps {
