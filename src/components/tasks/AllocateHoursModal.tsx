@@ -165,15 +165,19 @@ export default function AllocateHoursModal({ projectId, parentTask, onClose, onS
       if (i !== idx) return r;
       let next = { ...r, [field]: value };
 
-      // Sync logic
+      // REAL-TIME SYNC Logic
       if (field === "hours") {
         // Sync EndTime: End = Start + Hours
         const startF = timeToFloat(next.startTime);
         next.endTime = floatToTime(startF + Number(value));
-      } else if (field === "startTime" || field === "endTime") {
-        // Sync Hours: Hours = End - Start
+      } else if (field === "startTime") {
+        // Moving start time should move end time to PRESERVE hours
+        const s = timeToFloat(value);
+        next.endTime = floatToTime(s + next.hours);
+      } else if (field === "endTime") {
+        // Moving end time updates hours
         const s = timeToFloat(next.startTime);
-        const e = timeToFloat(next.endTime);
+        const e = timeToFloat(value);
         next.hours = Math.max(0, Math.round((e - s) * 100) / 100);
       }
 
@@ -275,7 +279,7 @@ export default function AllocateHoursModal({ projectId, parentTask, onClose, onS
           type="button"
           onClick={() => setOpen(!open)}
           className={`w-full flex items-center justify-between border rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none transition-all h-7 ${
-            open ? "ring-2 ring-primary border-primary bg-white" : "border-slate-100 bg-white text-slate-600 hover:border-slate-200"
+            open ? "ring-2 ring-primary border-primary bg-white shadow-lg" : "border-slate-100 bg-white text-slate-600 hover:border-slate-200"
           }`}
         >
           <div className="flex items-center gap-1.5 truncate">
@@ -286,8 +290,8 @@ export default function AllocateHoursModal({ projectId, parentTask, onClose, onS
         </button>
         {open && (
           <>
-            <div className="fixed inset-0 z-[200]" onClick={() => setOpen(false)} />
-            <div className="absolute left-0 top-full mt-1 z-[210]">
+            <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
+            <div className="absolute right-0 top-full mt-1 z-[310] drop-shadow-2xl">
               <MultiUserSelect
                 assignedIds={row.assignedIds}
                 role={row.role}
@@ -428,7 +432,7 @@ export default function AllocateHoursModal({ projectId, parentTask, onClose, onS
             {rows.length === 0 ? (
               <div className="py-6 text-center text-slate-400 text-[11px]">Pick a date range above to generate rows</div>
             ) : (
-              <div className="divide-y overflow-x-auto thin-scrollbar">
+              <div className="divide-y overflow-x-auto thin-scrollbar pb-32">
                 <div className="min-w-[800px]">
                   <div className="grid grid-cols-[120px_1fr_160px_50px_150px_32px] gap-2 px-4 py-1.5 bg-slate-50 text-[9px] font-bold text-slate-400 uppercase tracking-widest border-b">
                     <span>Date</span><span>Task Title</span><span>Time Window</span><span>Hrs</span><span>Assignee</span><span />

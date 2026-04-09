@@ -7,6 +7,7 @@ import { Clock } from "lucide-react";
 interface StitchTimePickerProps {
   onSelect: (startTime: string, endTime: string) => void;
   defaultValue?: { start: string; end: string };
+  value?: { start: string; end: string };
 }
 
 // Parse "HH:MM" or "H:MM" → float hours (e.g. "09:30" → 9.5)
@@ -52,19 +53,33 @@ const RANGE_END = 22;    // 10 PM
 const RANGE_SPAN = RANGE_END - RANGE_START; // 15 hours
 const MIN_DURATION = 0.25; // 15 minutes
 
-export default function StitchTimePicker({ onSelect, defaultValue }: StitchTimePickerProps) {
+export default function StitchTimePicker({ onSelect, defaultValue, value }: StitchTimePickerProps) {
   const [startH, setStartH] = useState(() => {
-    const v = defaultValue?.start ? timeToFloat(defaultValue.start) : 9;
+    const v = (value?.start || defaultValue?.start) ? timeToFloat(value?.start || defaultValue?.start || "09:00") : 9;
     return snapM(Math.max(RANGE_START, Math.min(v, RANGE_END - MIN_DURATION)));
   });
   const [endH, setEndH] = useState(() => {
-    const v = defaultValue?.end ? timeToFloat(defaultValue.end) : 17;
+    const v = (value?.end || defaultValue?.end) ? timeToFloat(value?.end || defaultValue?.end || "17:00") : 17;
     return snapM(Math.max(RANGE_START + MIN_DURATION, Math.min(v, RANGE_END)));
   });
 
   const trackRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState<"start" | "end" | "both" | null>(null);
   const [dragOffset, setDragOffset] = useState(0);
+
+  // Sync internal state with props
+  useEffect(() => {
+    if (value?.start) {
+      const v = timeToFloat(value.start);
+      const snapped = snapM(v);
+      if (Math.abs(snapped - startH) > 0.001) setStartH(snapped);
+    }
+    if (value?.end) {
+      const v = timeToFloat(value.end);
+      const snapped = snapM(v);
+      if (Math.abs(snapped - endH) > 0.001) setEndH(snapped);
+    }
+  }, [value?.start, value?.end]);
 
   const xToHour = useCallback((x: number): number => {
     if (!trackRef.current) return RANGE_START;
@@ -106,6 +121,8 @@ export default function StitchTimePicker({ onSelect, defaultValue }: StitchTimeP
   }, [isDragging, handleMouseMove, handleMouseUp]);
 
   useEffect(() => {
+    // Only trigger onSelect if internal state changed due to dragging OR if props changed
+    // But to prevent feedback loop, we can just always call it since parent will handle sync
     onSelect(toHHMM(snapM(startH)), toHHMM(snapM(endH)));
   }, [startH, endH, onSelect]);
 

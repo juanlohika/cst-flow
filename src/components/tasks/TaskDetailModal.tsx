@@ -164,6 +164,17 @@ export default function TaskDetailModal({
   const [aStartTime, setAStartTime] = useState(() => toTimePart(task.actualStart, "09:00"));
   const [aEndTime, setAEndTime] = useState(() => toTimePart(task.actualStart, "11:00"));
 
+  const timeToFloat = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    return h + (m || 0) / 60;
+  };
+
+  const floatToTime = (f: number) => {
+    const h = Math.floor(f);
+    const m = Math.round((f - h) * 60);
+    return `${String(h % 24).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  };
+
   // AUTO-CALCULATE EXTERNAL DEADLINE
   useEffect(() => {
     if (!pEnd) return;
@@ -525,7 +536,12 @@ export default function TaskDetailModal({
                         min={0.25}
                         step={0.25}
                         value={editBudgetHours}
-                        onChange={e => setEditBudgetHours(parseFloat(e.target.value) || 0)}
+                        onChange={e => {
+                          const h = parseFloat(e.target.value) || 0;
+                          setEditBudgetHours(h);
+                          const startF = timeToFloat(pStartTime);
+                          setPEndTime(floatToTime(startF + h));
+                        }}
                         className="w-20 text-sm font-semibold text-text-primary bg-surface-subtle border border-border rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-center"
                       />
                       <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Hours Planned</span>
@@ -560,8 +576,15 @@ export default function TaskDetailModal({
                             <input type="date" value={pEnd} onChange={e => setPEnd(e.target.value)} className="bg-transparent border-none p-0 outline-none w-[110px]" />
                           </div>
                           <StitchTimePicker
-                            defaultValue={{ start: pStartTime, end: pEndTime }}
-                            onSelect={(s, e) => { setPStartTime(s); setPEndTime(e); }}
+                            value={{ start: pStartTime, end: pEndTime }}
+                            onSelect={(s, e) => {
+                              setPStartTime(s);
+                              setPEndTime(e);
+                              const startF = timeToFloat(s);
+                              const endF = timeToFloat(e);
+                              const h = Math.round((endF - startF) * 100) / 100;
+                              if (Math.abs(h - editBudgetHours) > 0.01) setEditBudgetHours(h);
+                            }}
                           />
                         </>
                       )}
