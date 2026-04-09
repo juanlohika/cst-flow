@@ -121,12 +121,16 @@ export default function SmartMic({
         if (interimTranscript) {
           const now = Date.now();
           if (interimTranscript !== lastInterimText && now - lastInterimUpdate > 250) {
-             if (onInterimRef.current) onInterimRef.current(interimTranscript);
+             if (onInterimRef.current && typeof document !== "undefined" && document.visibilityState !== "hidden") {
+               onInterimRef.current(interimTranscript);
+             }
              lastInterimText = interimTranscript;
              lastInterimUpdate = now;
           }
         } else if (!interimTranscript && lastInterimText) {
-          if (onInterimRef.current) onInterimRef.current("");
+          if (onInterimRef.current && typeof document !== "undefined" && document.visibilityState !== "hidden") {
+            onInterimRef.current("");
+          }
           lastInterimText = "";
           lastInterimUpdate = Date.now();
         }
