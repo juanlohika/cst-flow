@@ -15,13 +15,15 @@ import {
   Zap,
   ShieldCheck,
   Compass,
-  Calendar as CalendarIcon
+  Calendar as CalendarIcon,
+  Presentation
 } from "lucide-react";
 
 const APPS = [
   { id: "explore", label: "Explore", href: "/", icon: <Compass className="w-3.5 h-3.5" />, color: "text-blue-500" },
   { id: "architect", label: "Architect", href: "/architect", icon: <GitBranch className="w-3.5 h-3.5" />, color: "text-indigo-500" },
   { id: "brd", label: "BRD Maker", href: "/brd", icon: <FileText className="w-3.5 h-3.5" />, color: "text-emerald-500" },
+  { id: "presentations", label: "Slide Builder", href: "/presentations", icon: <Presentation className="w-3.5 h-3.5" />, color: "text-blue-500" },
   { id: "roadmap", label: "Timeline Maker", href: "/timeline", icon: <Clock className="w-3.5 h-3.5" />, color: "text-violet-500" },
   { id: "tasks", label: "Task Control", href: "/tasks", icon: <Zap className="w-3.5 h-3.5" />, color: "text-amber-500" },
   { id: "admin", label: "Admin", href: "/admin", icon: <ShieldCheck className="w-3.5 h-3.5" />, color: "text-slate-500" },

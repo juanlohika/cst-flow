@@ -47,6 +47,9 @@ export const users = sqliteTable("User", {
   inviteToken: text("inviteToken").unique(),
   invitedBy:   text("invitedBy"),
   invitedAt:   text("invitedAt"),
+
+  // Presentation Builder
+  canAccessPresentations: integer("canAccessPresentations", { mode: "boolean" }).default(false).notNull(),
 });
 
 export const accounts = sqliteTable("Account", {
@@ -259,6 +262,7 @@ export const clientProfiles = sqliteTable("ClientProfile", {
   primaryContact:        text("primaryContact"),
   primaryContactEmail:   text("primaryContactEmail"),
   specialConsiderations: text("specialConsiderations"),
+  intelligenceContent:   text("intelligenceContent"), // Markdown intelligence file
   createdAt:             text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:             text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
@@ -414,4 +418,62 @@ export const globalSettings = sqliteTable("GlobalSetting", {
   value:     text("value").notNull(),
   createdAt: text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt: text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// ─── Presentation Builder ────────────────────────────────────────
+
+export const presentationTemplates = sqliteTable("PresentationTemplate", {
+  id:             text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  name:           text("name").notNull(),
+  description:    text("description"),
+  designSkillId:  text("designSkillId"),          // FK to Skill (category: presentation-design)
+  slideDefinitions: text("slideDefinitions").notNull(), // JSON array of slide definitions
+  version:        text("version").default("1.0").notNull(),
+  isActive:       integer("isActive", { mode: "boolean" }).default(true).notNull(),
+  createdBy:      text("createdBy"),
+  createdAt:      text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:      text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+export const presentations = sqliteTable("Presentation", {
+  id:                    text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  clientProfileId:       text("clientProfileId").references(() => clientProfiles.id),
+  templateId:            text("templateId"),       // FK to PresentationTemplate
+  designSkillId:         text("designSkillId"),    // FK to Skill (snapshot at creation)
+  name:                  text("name").notNull(),
+  presentationType:      text("presentationType").default("custom").notNull(),
+  status:                text("status").default("draft").notNull(),
+  intelligenceSnapshot:  text("intelligenceSnapshot"), // JSON snapshot of account intelligence
+  designSnapshot:        text("designSnapshot"),       // JSON snapshot of design skill at creation
+  createdBy:             text("createdBy").notNull(),
+  exportedPdfUrl:        text("exportedPdfUrl"),
+  createdAt:             text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:             text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+export const presentationSlides = sqliteTable("PresentationSlide", {
+  id:               text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  presentationId:   text("presentationId").notNull().references(() => presentations.id, { onDelete: "cascade" }),
+  order:            integer("order").default(0).notNull(),
+  title:            text("title").notNull(),
+  layout:           text("layout").default("content-light").notNull(),
+  backgroundOverride: text("backgroundOverride"),
+  createdAt:        text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:        text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+export const presentationBlocks = sqliteTable("PresentationBlock", {
+  id:                  text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  slideId:             text("slideId").notNull().references(() => presentationSlides.id, { onDelete: "cascade" }),
+  order:               integer("order").default(0).notNull(),
+  blockType:           text("blockType").notNull(),  // text | bullet-list | table | phase-card | image | divider | sparkle-row | next-steps-table
+  intelligenceMapping: text("intelligenceMapping"),  // Which intelligence.md field pre-fills this
+  prompt:              text("prompt"),               // AI prompt
+  content:             text("content"),              // JSON — actual block data
+  isAiGenerated:       integer("isAiGenerated", { mode: "boolean" }).default(false).notNull(),
+  isLocked:            integer("isLocked", { mode: "boolean" }).default(false).notNull(),
+  generationHistory:   text("generationHistory"),    // JSON array, max 3 entries
+  lastGeneratedAt:     text("lastGeneratedAt"),
+  createdAt:           text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:           text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
