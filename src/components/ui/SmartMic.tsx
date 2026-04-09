@@ -95,12 +95,14 @@ export default function SmartMic({
       }
       
       const recognition = new SpeechRecognition();
-      // MEMORY LEAK FIX: We explicitly set continuous = false.
-      // If continuous is true, the `results` array grows infinitely into RAM causing severe browser lag.
-      // By using false, it flushes the array on every natural pause, and we auto-restart in `onend`.
-      recognition.continuous = false;
+      // MEMORY LEAK FIX REVERSION: continuous=false drops audio frames on restart due to hardware delay.
+      // We keep continuous=true to prevent word drops, but we throttle `onInterim` to prevent React from hanging.
+      recognition.continuous = true;
       recognition.interimResults = true;
       
+      let lastInterimUpdate = 0;
+      let lastInterimText = "";
+
       recognition.onresult = (event: any) => {
         let interimTranscript = "";
         for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -114,10 +116,19 @@ export default function SmartMic({
             interimTranscript += applyDictionary(event.results[i][0].transcript);
           }
         }
-        if (interimTranscript && onInterimRef.current) {
-          onInterimRef.current(interimTranscript);
-        } else if (!interimTranscript && onInterimRef.current) {
-          onInterimRef.current("");
+
+        // Throttle UI updates to max 4 times a second (250ms) to prevent massive React UI lockup (the true cause of the lag)
+        if (interimTranscript) {
+          const now = Date.now();
+          if (interimTranscript !== lastInterimText && now - lastInterimUpdate > 250) {
+             if (onInterimRef.current) onInterimRef.current(interimTranscript);
+             lastInterimText = interimTranscript;
+             lastInterimUpdate = now;
+          }
+        } else if (!interimTranscript && lastInterimText) {
+          if (onInterimRef.current) onInterimRef.current("");
+          lastInterimText = "";
+          lastInterimUpdate = Date.now();
         }
       };
 
