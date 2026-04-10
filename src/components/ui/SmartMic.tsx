@@ -105,12 +105,17 @@ export default function SmartMic({
         if (interimTranscript) {
           const now = Date.now();
           if (interimTranscript !== lastInterimText && now - lastInterimUpdate > 200) {
-             if (onInterimRef.current) onInterimRef.current(interimTranscript);
+             // CRITICAL FIX: Skip interim updates if tab is hidden to prevent React queue lockups
+             if (onInterimRef.current && typeof document !== "undefined" && !document.hidden) {
+                 onInterimRef.current(interimTranscript);
+             }
              lastInterimText = interimTranscript;
              lastInterimUpdate = now;
           }
         } else if (!interimTranscript && lastInterimText) {
-          if (onInterimRef.current) onInterimRef.current("");
+          if (onInterimRef.current && typeof document !== "undefined" && !document.hidden) {
+              onInterimRef.current("");
+          }
           lastInterimText = "";
           lastInterimUpdate = Date.now();
         }
@@ -127,7 +132,10 @@ export default function SmartMic({
 
       recognition.onend = () => {
         if (intentToListen.current && recognitionRef.current) {
-          try { recognitionRef.current.start(); } catch (e) {}
+          // Add timeout to prevent synchronous loop freeze when Chrome aborts background tabs
+          setTimeout(() => {
+             try { recognitionRef.current?.start(); } catch (e) {}
+          }, 150);
         } else {
           setIsListening(false);
           onToggle?.(false);
