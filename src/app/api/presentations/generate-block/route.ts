@@ -21,32 +21,28 @@ export async function POST(req: NextRequest) {
     const model = await getGeminiModel();
 
     // Build the system context
-    const systemPrompt = `You are a content generator for Tarkie's Presentation Builder.
+    const systemPrompt = `You are a high-fidelity Design Architect for Tarkie's Presentation Builder.
+Your task is to populate a ${blockType} block using only the data provided.
 
-=== DESIGN RULES ===
+=== DESIGN RULES (STRICKLY MANDATORY) ===
 ${designSkill || "Use professional presentation design standards."}
 
-Output must comply with all design rules above.
-Return ONLY valid JSON matching the block schema below. No markdown, no preamble.
-Highlight key terms per the design rules.
-Max 6 bullets per list. Max 8 rows per table.
-Tone: professional, concise, tech-forward.
-
-=== ACCOUNT INTELLIGENCE ===
-${accountIntelligence || "No account intelligence available. Generate generic professional content."}
+=== ACCOUNT INTELLIGENCE (PRIMARY SOURCE) ===
+${accountIntelligence || "No account intelligence available. STOP. Do not hallucinate. Use generic Tarkie placeholders."}
 
 === BLOCK TYPE: ${blockType} ===
 
-=== OUTPUT SCHEMA ===
+=== OUTPUT FORMAT ===
+- Return ONLY valid JSON matching the schema below.
+- Do NOT add markdown, preamble, or explanations.
+- If Account Intelligence is provided, EXCLUSIVELY use that data to fill the content.
+- For Sparkle rows, keep the labels exactly as defined in the schema.
+
+=== SCHEMA ===
 ${getBlockSchema(blockType)}
 
-=== SLIDE BACKGROUND ===
-${slideBackground || "light"}
-
-=== USER PROMPT ===
-${prompt}
-
-CRITICAL: Return ONLY the JSON object. No explanation, no markdown fences.`;
+=== USER CONTEXT/PROMPT ===
+${prompt}`;
 
     // Process base64 images into Gemini InlineData format
     const promptParts: any[] = [systemPrompt];
@@ -101,7 +97,17 @@ function getBlockSchema(blockType: string): string {
     case "phase-card":
       return `{ "phases": [{ "label": "PHASE 1", "title": "Phase Title", "items": ["item1", "item2"] }] }`;
     case "sparkle-row":
-      return `{ "rows": [{ "letter": "S", "label": "Label", "description": "Description" }, ...] }`;
+      return `{ 
+        "rows": [
+          { "letter": "S", "label": "Single Source of Truth", "description": "Criteria/Observations" },
+          { "letter": "P", "label": "Phased Implementation", "description": "Criteria/Observations" },
+          { "letter": "A", "label": "Auditors and Follow-Through", "description": "Criteria/Observations" },
+          { "letter": "R", "label": "Robust Data Migration", "description": "Criteria/Observations" },
+          { "letter": "K", "label": "KPIs to Track Success", "description": "Criteria/Observations" },
+          { "letter": "L", "label": "Leadership Commitment", "description": "Criteria/Observations" },
+          { "letter": "E", "label": "Easier than Before", "description": "Criteria/Observations" }
+        ] 
+      }`;
     default:
       return `{ "body": "string content" }`;
   }

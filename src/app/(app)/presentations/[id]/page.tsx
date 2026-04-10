@@ -782,7 +782,16 @@ function BlockRenderer({ block, isDark, onClick, isSelected, onSave, isGeneratin
               <div className="w-28 px-2 py-1 font-bold flex items-center" style={{ background: DESIGN.primaryDark, color: DESIGN.white }}>
                 {row.label}
               </div>
-              <div className="flex-1 px-2 py-1" style={{ background: i % 2 === 0 ? DESIGN.white : DESIGN.surfaceBlue, color: DESIGN.black }}>
+              <div 
+                className="flex-1 px-2 py-1 outline-none focus:ring-1 focus:ring-[#2162F9]/20" 
+                style={{ background: i % 2 === 0 ? DESIGN.white : DESIGN.surfaceBlue, color: DESIGN.black }}
+                contentEditable suppressContentEditableWarning
+                onBlur={(e) => {
+                    const newRows = [...(content.rows || [])];
+                    newRows[i] = { ...newRows[i], description: e.currentTarget.textContent || "" };
+                    onSave(JSON.stringify({ ...content, rows: newRows }));
+                }}
+              >
                 {row.description}
               </div>
             </div>

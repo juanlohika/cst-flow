@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Mic, MicOff } from "lucide-react";
+import { Mic, MicOff, Loader2 } from "lucide-react";
 
 interface SmartMicProps {
   onTranscription: (text: string) => void;
@@ -19,16 +19,16 @@ export default function SmartMic({
   onToggle,
 }: SmartMicProps) {
   const [isListening, setIsListening] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const recognitionRef = useRef<any>(null); 
-  const intentToListen = useRef(false);
-  const restartCountRef = useRef(0);
-  const lastRestartRef = useRef(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const lastProcessedIndexRef = useRef(0);
+  const isRecordingRef = useRef(false);
 
   const onTranscriptionRef = useRef(onTranscription);
-  const onInterimRef = useRef(onInterim);
-  const watchdogRef = useRef<any>(null);
   const wakeLockRef = useRef<any>(null);
 
   const applyDictionary = useCallback((text: string) => {
@@ -38,178 +38,102 @@ export default function SmartMic({
   }, []);
 
   useEffect(() => { onTranscriptionRef.current = onTranscription; }, [onTranscription]);
-  useEffect(() => { onInterimRef.current = onInterim; }, [onInterim]);
 
-  const keepAliveAudioRef = useRef<HTMLAudioElement | null>(null);
-  useEffect(() => {
-    if (typeof window === "undefined" || !("mediaSession" in navigator)) return;
-    if (!isListening) {
-      if (keepAliveAudioRef.current) {
-        keepAliveAudioRef.current.pause();
-        navigator.mediaSession.playbackState = "none";
+  const transcribeChunk = async (blob: Blob) => {
+    if (blob.size < 1000) return; // Ignore tiny chunks
+    setIsProcessing(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", blob, "audio.webm");
+
+      const res = await fetch("/api/audio/transcribe", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.text && data.text.trim()) {
+          const corrected = applyDictionary(data.text);
+          onTranscriptionRef.current(corrected);
+        }
       }
-      return;
+    } catch (err) {
+      console.error("Transcription error:", err);
+    } finally {
+      setIsProcessing(false);
     }
-    if (!keepAliveAudioRef.current) {
-      const audio = new Audio();
-      audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA=";
-      audio.loop = true;
-      keepAliveAudioRef.current = audio;
-    }
-    keepAliveAudioRef.current?.play().catch(console.error);
-    return () => { keepAliveAudioRef.current?.pause(); };
-  }, [isListening]);
+  };
 
   const stopCapture = useCallback(() => {
-    intentToListen.current = false;
-    setIsListening(false);
-    setError(null);
-    if (recognitionRef.current) {
-      try { 
-        if (watchdogRef.current) clearTimeout(watchdogRef.current);
-        if (wakeLockRef.current) wakeLockRef.current.release();
-        recognitionRef.current.abort(); 
-      } catch (e) {}
-      recognitionRef.current = null;
+    isRecordingRef.current = false;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
     }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (wakeLockRef.current) {
+      try { wakeLockRef.current.release(); } catch (e) {}
+      wakeLockRef.current = null;
+    }
+    setIsListening(false);
     onToggle?.(false);
   }, [onToggle]);
 
   const startCapture = useCallback(async () => {
     setError(null);
-    intentToListen.current = true;
     try {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (!SpeechRecognition) {
-        throw new Error("Smart Voice typing is not natively supported in this browser. Please use Chrome/Edge.");
-      }
-      
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true; 
-      recognition.interimResults = true;
-      
-      let lastInterimUpdate = 0;
-      let lastInterimText = "";
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
 
-      const resetWatchdog = () => {
-        if (watchdogRef.current) clearTimeout(watchdogRef.current);
-        watchdogRef.current = setTimeout(() => {
-          console.warn("SmartMic: Inactivity watchdog triggered. Waking engine...");
-          if (intentToListen.current && recognitionRef.current === recognition) {
-            try { recognition.stop(); } catch (e) {} 
-          }
-        }, 15000); // 15s inactivity limit
-      };
+      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      mediaRecorderRef.current = recorder;
+      chunksRef.current = [];
+      isRecordingRef.current = true;
 
-      recognition.onresult = (event: any) => {
-        resetWatchdog();
-        let interimTranscript = "";
-        let finalSegment = "";
-        
-        // OPTIMIZATION: Process ONLY the new results since last event
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const result = event.results[i];
-          if (result.isFinal) {
-            finalSegment += result[0].transcript;
-          } else {
-            interimTranscript += result[0].transcript;
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data);
+          // For near-real-time, we can process the latest chunk
+          // However, Whisper works better on slightly larger segments.
+          // We'll send the full set of chunks collected so far and reset if we reached a threshold
+          if (chunksRef.current.length >= 5) { // Roughly every 5 seconds if using 1000ms intervals
+              const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+              transcribeChunk(blob);
+              chunksRef.current = [];
           }
-        }
-
-        if (finalSegment) {
-          const correctedText = applyDictionary(finalSegment);
-          if (correctedText.trim()) {
-            onTranscriptionRef.current(correctedText.trim());
-          }
-        }
-
-        if (interimTranscript) {
-          const now = Date.now();
-          // Heavier debounce (500ms) for high-performance background capture
-          if (interimTranscript !== lastInterimText && now - lastInterimUpdate > 500) {
-             if (onInterimRef.current && typeof document !== "undefined" && !document.hidden) {
-                 onInterimRef.current(interimTranscript);
-             }
-             lastInterimText = interimTranscript;
-             lastInterimUpdate = now;
-          }
-        } else if (!interimTranscript && lastInterimText) {
-          if (onInterimRef.current && typeof document !== "undefined" && !document.hidden) {
-              onInterimRef.current("");
-          }
-          lastInterimText = "";
-          lastInterimUpdate = Date.now();
         }
       };
 
-      recognition.onerror = (event: any) => {
-        console.error("Speech Recognition Error", event.error);
-        if (event.error === 'no-speech' || event.error === 'aborted' || event.error === 'network') {
-          return;
-        }
-        setError(`Mic error: ${event.error}`);
-        stopCapture();
-      };
-
-
-      recognition.onend = () => {
-        if (intentToListen.current && recognitionRef.current === recognition) {
-          // Failure protection: Stop if we crash too often
-          const now = Date.now();
-          if (now - lastRestartRef.current < 500) {
-             restartCountRef.current++;
-          } else {
-             restartCountRef.current = 0;
-          }
-          lastRestartRef.current = now;
-
-          if (restartCountRef.current > 5) {
-             console.error("SmartMic: Too many rapid restarts. Emergency stop to prevent memory leak.");
-             setIsListening(false);
-             onToggle?.(false);
-             return;
-          }
-
-          setTimeout(() => {
-             if (intentToListen.current) {
-                try { recognition.start(); } catch (e) { console.warn("Restart failed:", e); }
-             }
-          }, 200);
-        } else {
-          setIsListening(false);
-          onToggle?.(false);
+      recorder.onstop = () => {
+        if (chunksRef.current.length > 0) {
+          const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+          transcribeChunk(blob);
         }
       };
 
-      recognitionRef.current = recognition;
-      recognition.start();
+      // Start recording with 1-second chunks for dataavailability
+      recorder.start(1000);
       setIsListening(true);
       onToggle?.(true);
 
-      // Request Screen Wake Lock
-      if ('wakeLock' in navigator) {
-        try {
-          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
-        } catch (err) {}
+      // Wake lock
+      if ("wakeLock" in navigator) {
+        try { wakeLockRef.current = await (navigator as any).wakeLock.request("screen"); } catch (e) {}
       }
-
     } catch (e: any) {
-      console.error("Start capture error:", e);
-      setError(e.message || "Could not start recording.");
-      intentToListen.current = false;
+      console.error("Mic start error:", e);
+      setError("Mic access denied or not found.");
     }
-  }, [onToggle, stopCapture, applyDictionary]);
+  }, [onToggle, applyDictionary]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      intentToListen.current = false;
-      if (recognitionRef.current) {
-        try { recognitionRef.current.abort(); } catch (e) {}
-        recognitionRef.current = null;
-      }
+      if (isRecordingRef.current) stopCapture();
     };
-  }, []);
+  }, [stopCapture]);
 
   return (
     <div className="flex items-center gap-1.5 relative z-50">
@@ -223,7 +147,11 @@ export default function SmartMic({
             : "bg-white text-slate-400 hover:bg-slate-50 border-slate-200"
         } disabled:opacity-50`}
       >
-        {isListening ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+        {isListening ? (
+          isProcessing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MicOff className="h-3.5 w-3.5" />
+        ) : (
+          <Mic className="h-3.5 w-3.5" />
+        )}
       </button>
 
       {isListening && (
@@ -231,7 +159,7 @@ export default function SmartMic({
           <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-red-50 border border-red-100 shadow-sm">
              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
              <span className="text-[10px] text-red-600 font-bold uppercase tracking-wider">
-               Listening
+               {isProcessing ? "Processing..." : "Listening..."}
              </span>
           </div>
         </div>

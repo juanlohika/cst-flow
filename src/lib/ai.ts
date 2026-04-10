@@ -68,14 +68,17 @@ export async function getStoredApiKey(): Promise<string> {
   return ""; // ollama needs no key
 }
 
-// ─── Unified AI model ─────────────────────────────────────────────────────────
+export interface AIModel {
+  generateContent: (input: any) => Promise<{ response: { text: () => string } }>;
+  transcribeAudio?: (audioBuffer: Buffer, mimeType: string) => Promise<string>;
+}
 
 /**
  * Returns the primary configured model adapter.
  * All adapters expose: await model.generateContent(promptOrObject)
  *                       → { response: { text() } }
  */
-export async function getGeminiModel(apiKeyOverride?: string) {
+export async function getGeminiModel(apiKeyOverride?: string): Promise<AIModel> {
   // If a key override is provided (from x-gemini-key header)
   if (apiKeyOverride && apiKeyOverride.length > 10) {
     if (apiKeyOverride.startsWith("gsk_")) return buildGroqAdapter(apiKeyOverride);
@@ -239,6 +242,15 @@ function buildGroqAdapter(apiKey: string) {
       const content = completion.choices[0]?.message?.content ?? "";
       return { response: { text: () => content } };
     },
+    transcribeAudio: async (audioBuffer: Buffer, mimeType: string) => {
+      // Create a temporary file because Groq SDK requires a File object or similar
+      // We can use a FormBody approach if needed
+      const transcript = await groq.audio.transcriptions.create({
+        file: await Groq.toFile(audioBuffer, `audio.${mimeType.split("/")[1] || "wav"}`, { type: mimeType }),
+        model: "whisper-large-v3",
+      });
+      return transcript.text;
+    }
   };
 }
 
@@ -248,7 +260,25 @@ function buildGeminiAdapter(apiKey: string) {
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
   console.log("[AI] Provider: Gemini  Model: gemini-2.0-flash");
-  return model;
+  
+  return {
+    generateContent: async (input: any) => {
+      return model.generateContent(input);
+    },
+    transcribeAudio: async (audioBuffer: Buffer, mimeType: string) => {
+      // Gemini can transcribe audio by sending it as inlineData
+      const result = await model.generateContent([
+        {
+          inlineData: {
+            mimeType,
+            data: audioBuffer.toString("base64")
+          }
+        },
+        "Transcribe this audio. Return ONLY the transcription, no other text."
+      ]);
+      return result.response.text();
+    }
+  };
 }
 
 // ─── Claude adapter ───────────────────────────────────────────────────────────

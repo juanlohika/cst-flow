@@ -60,6 +60,14 @@ export async function POST(req: NextRequest) {
         slideDefinitions = JSON.parse(tmpl.slideDefinitions);
         designSkillId = tmpl.designSkillId;
         presentationType = "kickoff"; // Default for the kick-off template
+
+        if (designSkillId) {
+            const { skills: skillsTable } = await import("@/db/schema");
+            const skillRows = await db.select().from(skillsTable).where(eq(skillsTable.id, designSkillId)).limit(1);
+            if (skillRows.length > 0) {
+                designSnapshot = skillRows[0].content;
+            }
+        }
       }
     }
 
