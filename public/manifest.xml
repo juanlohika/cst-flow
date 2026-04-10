@@ -1,9 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- 
-  Tarkie PowerPoint Add-in Manifest
-  ID: b29a1d33-7e4f-4d33-a2b1-5d9c7f6e3a02
-  Version: 1.2.0.0
--->
 <OfficeApp 
     xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" 
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
@@ -11,26 +6,32 @@
     xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides" 
     xsi:type="TaskPaneApp">
 
-  <Id>d2c3e1b4-4f2a-4a8e-a2b1-5d9c7f6e3a03</Id>
-  <Version>1.2.0.0</Version>
+  <!-- SCHEMA VERSION 1.1 -->
+  <Id>b29a1d33-7e4f-4d33-a2b1-5d9c7f6e3a04</Id>
+  <Version>1.3.0.0</Version>
   <ProviderName>Tarkie</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Tarkie Generator" />
-  <Description DefaultValue="AI Presentation Builder with Account Intelligence" />
+  <DisplayName DefaultValue="Tarkie AI" />
+  <Description DefaultValue="AI-powered presentation assistant for Tarkie intelligence." />
   
-  <IconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/favicon.ico" />
-  <HighResolutionIconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/favicon.ico" />
+  <!-- MANDATORY ORDER: PNG Icons must follow Description -->
+  <IconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-64.png" />
   
   <SupportUrl DefaultValue="https://www.tarkie.com" />
+  
   <AppDomains>
     <AppDomain>https://cst-flow--cst-flowdesk.asia-east1.hosted.app</AppDomain>
   </AppDomains>
+  
   <Hosts>
     <Host Name="Presentation" />
   </Hosts>
+  
   <DefaultSettings>
     <SourceLocation DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/addin" />
   </DefaultSettings>
+  
   <Permissions>ReadWriteDocument</Permissions>
 
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
@@ -38,11 +39,13 @@
       <Host xsi:type="Presentation">
         <DesktopFormFactor>
           <GetStarted>
-            <Title DefaultValue="Tarkie AI" />
-            <Description DefaultValue="The AI-powered presentation builder is ready." />
+            <Title DefaultValue="Tarkie AI Ready" />
+            <Description DefaultValue="Open the taskpane to start generating slides." />
             <LearnMoreUrl DefaultValue="https://www.tarkie.com" />
           </GetStarted>
+          
           <FunctionFile resid="Commands.Url" />
+          
           <ExtensionPoint xsi:type="PrimaryCommandSurface">
             <OfficeTab id="TabHome">
               <Group id="Tarkie.Group">
@@ -71,9 +74,9 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/favicon.ico" />
-        <bt:Image id="Icon.32" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/favicon.ico" />
-        <bt:Image id="Icon.80" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/favicon.ico" />
+        <bt:Image id="Icon.16" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png" />
+        <bt:Image id="Icon.32" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png" />
+        <bt:Image id="Icon.80" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-80.png" />
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Commands.Url" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/addin/commands.html" />
@@ -81,7 +84,7 @@
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="Tarkie.GroupLabel" DefaultValue="Tarkie" />
-        <bt:String id="Tarkie.ButtonLabel" DefaultValue="Generator" />
+        <bt:String id="Tarkie.ButtonLabel" DefaultValue="Tarkie Generator" />
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="Tarkie.ButtonTip" DefaultValue="Open the AI Presentation Builder" />
@@ -89,3 +92,4 @@
     </Resources>
   </VersionOverrides>
 </OfficeApp>
+
