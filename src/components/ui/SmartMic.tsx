@@ -29,6 +29,7 @@ export default function SmartMic({
   const isRecordingRef = useRef(false);
 
   const onTranscriptionRef = useRef(onTranscription);
+  useEffect(() => { onTranscriptionRef.current = onTranscription; }, [onTranscription]);
   const wakeLockRef = useRef<any>(null);
 
   const applyDictionary = useCallback((text: string) => {
@@ -37,31 +38,44 @@ export default function SmartMic({
       .replace(/\b(filled up|fill up|field up|build up)\b/gi, "Field App");
   }, []);
 
-  useEffect(() => { onTranscriptionRef.current = onTranscription; }, [onTranscription]);
+  const transcriptionQueue = useRef<Blob[]>([]);
+  const isProcessingRef = useRef(false);
 
-  const transcribeChunk = async (blob: Blob) => {
-    if (blob.size < 1000) return; // Ignore tiny chunks
+  const processQueue = async () => {
+    if (isProcessingRef.current || transcriptionQueue.current.length === 0) return;
+    
+    isProcessingRef.current = true;
     setIsProcessing(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", blob, "audio.webm");
+    
+    const blob = transcriptionQueue.current.shift();
+    if (blob) {
+      try {
+        const formData = new FormData();
+        formData.append("file", blob, "audio.webm");
 
-      const res = await fetch("/api/audio/transcribe", {
-        method: "POST",
-        body: formData,
-      });
+        const res = await fetch("/api/audio/transcribe", {
+          method: "POST",
+          body: formData,
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.text && data.text.trim()) {
-          const corrected = applyDictionary(data.text);
-          onTranscriptionRef.current(corrected);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.text && data.text.trim()) {
+            const corrected = applyDictionary(data.text);
+            onTranscriptionRef.current(corrected);
+          }
         }
+      } catch (err) {
+        console.error("Transcription error:", err);
       }
-    } catch (err) {
-      console.error("Transcription error:", err);
-    } finally {
-      setIsProcessing(false);
+    }
+    
+    isProcessingRef.current = false;
+    setIsProcessing(false);
+    
+    // Process next in queue if any
+    if (transcriptionQueue.current.length > 0) {
+      setTimeout(processQueue, 100);
     }
   };
 
@@ -80,6 +94,7 @@ export default function SmartMic({
     }
     setIsListening(false);
     onToggle?.(false);
+    transcriptionQueue.current = []; // Clear queue on stop
   }, [onToggle]);
 
   const startCapture = useCallback(async () => {
@@ -91,18 +106,19 @@ export default function SmartMic({
       const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
+      transcriptionQueue.current = [];
       isRecordingRef.current = true;
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
           chunksRef.current.push(e.data);
-          // For near-real-time, we can process the latest chunk
-          // However, Whisper works better on slightly larger segments.
-          // We'll send the full set of chunks collected so far and reset if we reached a threshold
-          if (chunksRef.current.length >= 5) { // Roughly every 5 seconds if using 1000ms intervals
+          
+          // Every 5 seconds (5 * 1000ms), push to queue
+          if (chunksRef.current.length >= 5) { 
               const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-              transcribeChunk(blob);
+              transcriptionQueue.current.push(blob);
               chunksRef.current = [];
+              processQueue();
           }
         }
       };
@@ -110,7 +126,8 @@ export default function SmartMic({
       recorder.onstop = () => {
         if (chunksRef.current.length > 0) {
           const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-          transcribeChunk(blob);
+          transcriptionQueue.current.push(blob);
+          processQueue();
         }
       };
 

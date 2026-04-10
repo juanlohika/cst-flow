@@ -50,7 +50,7 @@ const KICKOFF_TEMPLATE_SLIDES = JSON.stringify([
     { blockType: "bullet-list", defaultContent: JSON.stringify({ items: ["Project Team Introduction", "Pain Points Discussion", "SPARKLE Framework Overview", "Current Process Review", "Recommended Process Flow", "Implementation Phases", "Prerequisites & Timeline", "Next Steps"] }) }
   ]},
   { order: 3, title: "Client Project Team", layout: "content-light", blocks: [
-    { blockType: "table", intelligenceMapping: "contacts", defaultContent: JSON.stringify({ columns: ["ROLE", "NAME", "CONTACT DETAILS"], rows: [] }), defaultPrompt: "Generate the client project team table from intelligence contacts" }
+    { blockType: "client-team", intelligenceMapping: "client_stakeholders", defaultContent: JSON.stringify({ members: [] }), defaultPrompt: "Extract and list the client project team members (names and roles) from the account intelligence" }
   ]},
   { order: 4, title: "Tarkie Project Team", layout: "content-light", blocks: [
     { blockType: "table", defaultContent: JSON.stringify({ columns: ["ROLE", "NAME", "CONTACT DETAILS"], rows: [["Project Manager", "", ""], ["Implementation Lead", "", ""], ["Support Engineer", "", ""]] }) }
@@ -67,12 +67,12 @@ const KICKOFF_TEMPLATE_SLIDES = JSON.stringify([
   { order: 8, title: "SPARKLE Framework", layout: "content-dark", blocks: [
     { blockType: "sparkle-row", defaultContent: JSON.stringify({ rows: [
       { letter: "S", label: "Single Source of Truth", description: "One platform for all field operations data" },
-      { letter: "P", label: "Proof of Delivery", description: "GPS-tagged photo evidence for every task" },
-      { letter: "A", label: "Attendance & Time", description: "Biometric + GPS verification for field workforce" },
-      { letter: "R", label: "Real-time Visibility", description: "Live dashboard tracking of all field activities" },
-      { letter: "K", label: "Key Performance Indicators", description: "Automated KPI tracking and reporting" },
-      { letter: "L", label: "Location Intelligence", description: "Route optimization and geofencing" },
-      { letter: "E", label: "Expense Management", description: "Digital expense claims with receipt capture" }
+      { letter: "P", label: "Phased Implementation", description: "Rollout in manageable stages for smooth adoption" },
+      { letter: "A", label: "Auditors and Follow-Through", description: "Establish roles for verification and process adherence" },
+      { letter: "R", label: "Robust Data Migration", description: "Clean and migrate legacy data with high integrity" },
+      { letter: "K", label: "KPIs to Track Success", description: "Define clear, measurable metrics to show ROI" },
+      { letter: "L", label: "Leadership Commitment", description: "Drive project success through management involvement" },
+      { letter: "E", label: "Easier than Before", description: "Deliver a solution that outperforms manual processes" }
     ]})}
   ]},
   { order: 9, title: "Current Process — Section Divider", layout: "full-bleed-dark", blocks: [
