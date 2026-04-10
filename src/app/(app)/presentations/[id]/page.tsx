@@ -51,6 +51,8 @@ function BuilderContent() {
   const [isPresenting, setIsPresenting] = useState(false);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(0.75);
+  const [isAutoGenerating, setIsAutoGenerating] = useState(false);
+  const [autoBuildProgress, setAutoBuildProgress] = useState({ current: 0, total: 0 });
 
   useBreadcrumbs([
     { label: "Presentations", href: "/presentations" },
@@ -88,7 +90,7 @@ function BuilderContent() {
         body: JSON.stringify({ blockId, content: typeof content === "string" ? content : JSON.stringify(content) }),
       });
       // Update local state
-      setSlides(prev => prev.map(s => ({
+      setSlides((prev: any[]) => prev.map(s => ({
         ...s,
         blocks: s.blocks?.map((b: any) =>
           b.id === blockId ? { ...b, content: typeof content === "string" ? content : JSON.stringify(content) } : b
@@ -132,23 +134,88 @@ function BuilderContent() {
         }
         await saveBlockContent(block.id, finalContent);
       }
+    } catch (err) {
+      console.error("Generate failed:", err);
     } finally {
       setGenerating(null);
     }
   }, [presId, presentation, slides, currentSlideIdx, saveBlockContent]);
 
+  // ── Auto-Build Deck — Sequential generation loop ──────────────────
+  const autoBuildPresentation = async () => {
+    if (isAutoGenerating) return;
+    
+    // Find all blocks that need generation (have prompt or mapping but no valid content)
+    const blocksToGenerate: any[] = [];
+    slides.forEach(s => {
+      s.blocks?.forEach((b: any) => {
+        // We generate if it has a prompt or mapping
+        if (b.prompt || b.intelligenceMapping) {
+          blocksToGenerate.push({ ...b, slideLayout: s.layout });
+        }
+      });
+    });
+
+    if (blocksToGenerate.length === 0) return;
+
+    setIsAutoGenerating(true);
+    setAutoBuildProgress({ current: 0, total: blocksToGenerate.length });
+
+    for (let i = 0; i < blocksToGenerate.length; i++) {
+        const block = blocksToGenerate[i];
+        setAutoBuildProgress({ current: i + 1, total: blocksToGenerate.length });
+        
+        try {
+            const res = await fetch("/api/presentations/generate-block", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    blockType: block.blockType,
+                    prompt: block.prompt || `Generate content based on intelligence for ${block.blockType}`,
+                    accountIntelligence: presentation?.intelligenceSnapshot || "",
+                    designSkill: presentation?.designSnapshot || "",
+                    slideBackground: block.slideLayout?.includes("dark") ? "dark" : "light",
+                }),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                await saveBlockContent(block.id, data.content);
+            }
+        } catch (err) {
+            console.error(`Auto-build failed for block ${block.id}:`, err);
+        }
+        // Small delay between calls to let UI breathe
+        await new Promise(r => setTimeout(r, 200));
+    }
+
+    setIsAutoGenerating(false);
+  };
+
   // ── Slide Management ──────────────────────────────────────────
   const addNewSlide = async () => {
     setSaving(true);
     const newSlideId = `slide_${Date.now().toString(36)}_${Math.random().toString(36).substring(2,6)}`;
+    const newBlockId = `block_${Date.now().toString(36)}_${Math.random().toString(36).substring(2,6)}`;
+    
     const newSlide = {
       id: newSlideId,
       presentationId: presId,
       order: slides.length,
       title: "New Slide",
       layout: "content-light",
-      blocks: [],
+      blocks: [
+        {
+          id: newBlockId,
+          slideId: newSlideId,
+          order: 0,
+          blockType: "text",
+          prompt: "Write a professional overview for this slide.",
+          content: JSON.stringify({ heading: "New Slide Title", body: "Add your content here or use AI to generate it." }),
+          isAiGenerated: false
+        }
+      ],
     };
+
     try {
       await fetch(`/api/presentations/${presId}/slides`, {
         method: "POST",
@@ -274,6 +341,30 @@ function BuilderContent() {
             </div>
           ))}
         </div>
+        <div className="p-3 border-t border-slate-100 bg-white">
+          <button 
+            onClick={autoBuildPresentation} 
+            disabled={isAutoGenerating || !presentation?.intelligenceSnapshot} 
+            className={`w-full flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+              isAutoGenerating 
+                ? "bg-slate-100 text-slate-400 cursor-not-allowed" 
+                : "bg-gradient-to-r from-[#2162F9] to-[#43EB7C] text-white shadow-lg shadow-blue-500/20 hover:scale-105 active:scale-95"
+            }`}
+          >
+            {isAutoGenerating ? (
+               <>
+                 <Loader2 size={12} className="animate-spin" />
+                 {autoBuildProgress.current}/{autoBuildProgress.total}...
+               </>
+            ) : (
+               <>
+                 <Sparkles size={12} />
+                 Auto-Build Deck
+               </>
+            )}
+          </button>
+        </div>
+
         <div className="p-3 border-t flex items-center justify-between gap-2 bg-slate-50">
           <button onClick={addNewSlide} disabled={saving} className="flex items-center justify-center gap-1.5 flex-1 py-1.5 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 transition-colors">
             <Plus size={12} /> Add
@@ -886,7 +977,7 @@ function BlockConfigPanel({ block, onGenerate, generating, onSave, onUpdatePromp
         const file = items[i].getAsFile();
         if (file) {
           const url = URL.createObjectURL(file);
-          setAttachedImages(prev => [...prev, { url, file }]);
+          setAttachedImages((prev: any[]) => [...prev, { url, file }]);
         }
       }
     }
@@ -897,7 +988,7 @@ function BlockConfigPanel({ block, onGenerate, generating, onSave, onUpdatePromp
       const newImages = Array.from(e.target.files).map(file => ({
         url: URL.createObjectURL(file), file
       }));
-      setAttachedImages(prev => [...prev, ...newImages]);
+      setAttachedImages((prev: any[]) => [...prev, ...newImages]);
     }
   };
 
