@@ -2,7 +2,7 @@
 <!-- 
   Tarkie PowerPoint Add-in Manifest
   ID: b29a1d33-7e4f-4d33-a2b1-5d9c7f6e3a02
-  Version: 1.1.0.0
+  Version: 1.2.0.0
 -->
 <OfficeApp 
     xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" 
@@ -11,12 +11,16 @@
     xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides" 
     xsi:type="TaskPaneApp">
 
-  <Id>6f2a3d44-2451-4e8a-b2b1-7f9c8e7d2a01</Id>
-  <Version>1.1.0.0</Version>
+  <Id>d2c3e1b4-4f2a-4a8e-a2b1-5d9c7f6e3a03</Id>
+  <Version>1.2.0.0</Version>
   <ProviderName>Tarkie</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Tarkie Generator" />
   <Description DefaultValue="AI Presentation Builder with Account Intelligence" />
+  
+  <IconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/favicon.ico" />
+  <HighResolutionIconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/favicon.ico" />
+  
   <SupportUrl DefaultValue="https://www.tarkie.com" />
   <AppDomains>
     <AppDomain>https://cst-flow--cst-flowdesk.asia-east1.hosted.app</AppDomain>
