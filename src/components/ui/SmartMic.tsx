@@ -28,6 +28,8 @@ export default function SmartMic({
 
   const onTranscriptionRef = useRef(onTranscription);
   const onInterimRef = useRef(onInterim);
+  const watchdogRef = useRef<any>(null);
+  const wakeLockRef = useRef<any>(null);
 
   const applyDictionary = useCallback((text: string) => {
     return text
@@ -63,7 +65,11 @@ export default function SmartMic({
     setIsListening(false);
     setError(null);
     if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) {}
+      try { 
+        if (watchdogRef.current) clearTimeout(watchdogRef.current);
+        if (wakeLockRef.current) wakeLockRef.current.release();
+        recognitionRef.current.abort(); 
+      } catch (e) {}
       recognitionRef.current = null;
     }
     onToggle?.(false);
@@ -79,26 +85,39 @@ export default function SmartMic({
       }
       
       const recognition = new SpeechRecognition();
-      recognition.continuous = false; // Fast restarts prevent memory crashes in Chrome.
+      recognition.continuous = true; 
       recognition.interimResults = true;
       
       let lastInterimUpdate = 0;
       let lastInterimText = "";
 
+      const resetWatchdog = () => {
+        if (watchdogRef.current) clearTimeout(watchdogRef.current);
+        watchdogRef.current = setTimeout(() => {
+          console.warn("SmartMic: Inactivity watchdog triggered. Waking engine...");
+          if (intentToListen.current && recognitionRef.current === recognition) {
+            try { recognition.stop(); } catch (e) {} 
+          }
+        }, 15000); // 15s inactivity limit
+      };
+
       recognition.onresult = (event: any) => {
+        resetWatchdog();
         let interimTranscript = "";
-        let finalTranscript = "";
+        let finalSegment = "";
         
+        // OPTIMIZATION: Process ONLY the new results since last event
         for (let i = event.resultIndex; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
+          const result = event.results[i];
+          if (result.isFinal) {
+            finalSegment += result[0].transcript;
           } else {
-            interimTranscript += event.results[i][0].transcript;
+            interimTranscript += result[0].transcript;
           }
         }
 
-        if (finalTranscript) {
-          const correctedText = applyDictionary(finalTranscript);
+        if (finalSegment) {
+          const correctedText = applyDictionary(finalSegment);
           if (correctedText.trim()) {
             onTranscriptionRef.current(correctedText.trim());
           }
@@ -106,8 +125,8 @@ export default function SmartMic({
 
         if (interimTranscript) {
           const now = Date.now();
-          if (interimTranscript !== lastInterimText && now - lastInterimUpdate > 200) {
-             // CRITICAL FIX: Skip interim updates if tab is hidden to prevent React queue lockups
+          // Heavier debounce (500ms) for high-performance background capture
+          if (interimTranscript !== lastInterimText && now - lastInterimUpdate > 500) {
              if (onInterimRef.current && typeof document !== "undefined" && !document.hidden) {
                  onInterimRef.current(interimTranscript);
              }
@@ -124,13 +143,14 @@ export default function SmartMic({
       };
 
       recognition.onerror = (event: any) => {
+        console.error("Speech Recognition Error", event.error);
         if (event.error === 'no-speech' || event.error === 'aborted' || event.error === 'network') {
           return;
         }
-        console.error("Speech Recognition Error", event.error);
         setError(`Mic error: ${event.error}`);
         stopCapture();
       };
+
 
       recognition.onend = () => {
         if (intentToListen.current && recognitionRef.current === recognition) {
@@ -165,6 +185,13 @@ export default function SmartMic({
       recognition.start();
       setIsListening(true);
       onToggle?.(true);
+
+      // Request Screen Wake Lock
+      if ('wakeLock' in navigator) {
+        try {
+          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        } catch (err) {}
+      }
 
     } catch (e: any) {
       console.error("Start capture error:", e);
