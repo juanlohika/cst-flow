@@ -141,6 +141,29 @@ function BuilderContent() {
     }
   }, [presId, presentation, slides, currentSlideIdx, saveBlockContent]);
 
+  const syncIntelligence = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/presentations/${presId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ syncIntelligence: true }),
+      });
+      if (res.ok) {
+        // Reload presentation state to get the new snapshot
+        const presRes = await fetch(`/api/presentations/${presId}`);
+        if (presRes.ok) {
+           const newData = await presRes.json();
+           setPresentation(newData);
+        }
+      }
+    } catch (err) {
+      console.error("Sync intelligence failed:", err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // ── Auto-Build Deck — Sequential generation loop ──────────────────
   const autoBuildPresentation = async () => {
     if (isAutoGenerating) return;
@@ -344,7 +367,7 @@ function BuilderContent() {
         <div className="p-3 border-t border-slate-100 bg-white">
           <button 
             onClick={autoBuildPresentation} 
-            disabled={isAutoGenerating || !presentation?.intelligenceSnapshot} 
+            disabled={isAutoGenerating} 
             className={`w-full flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
               isAutoGenerating 
                 ? "bg-slate-100 text-slate-400 cursor-not-allowed" 
@@ -362,6 +385,15 @@ function BuilderContent() {
                  Auto-Build Deck
                </>
             )}
+          </button>
+
+          <button
+            onClick={syncIntelligence}
+            disabled={saving || !presentation?.clientProfileId}
+            className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[10px] font-bold transition-all bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 mt-2 hover:border-[#2162F9]/30"
+          >
+            <RotateCcw size={11} className={saving ? "animate-spin" : ""} />
+            Sync From Intel
           </button>
         </div>
 
@@ -775,15 +807,18 @@ function BlockRenderer({ block, isDark, onClick, isSelected, onSave, isGeneratin
       return (
         <div onClick={onClick} className={`${wrapperClass} space-y-0.5`}>
           {(content.rows || []).map((row: any, i: number) => (
-            <div key={i} className="flex text-[9px]">
-              <div className="w-8 flex items-center justify-center font-bold text-sm" style={{ background: DESIGN.primary, color: DESIGN.accentGreen }}>
+            <div key={i} className="flex text-[9px] relative ring-1 ring-white/5">
+              {/* Vertical Green Line Separator */}
+              <div className="absolute left-8 top-0 bottom-0 w-[1px] z-10" style={{ background: DESIGN.accentGreen }} />
+              
+              <div className="w-8 flex items-center justify-center font-black text-sm" style={{ background: DESIGN.primaryDark, color: '#FFD700' }}>
                 {row.letter}
               </div>
-              <div className="w-28 px-2 py-1 font-bold flex items-center" style={{ background: DESIGN.primaryDark, color: DESIGN.white }}>
+              <div className="w-28 px-3 py-1.5 font-bold flex items-center leading-tight tracking-wide" style={{ background: DESIGN.primaryDark, color: DESIGN.white, borderRight: '1px solid rgba(255,255,255,0.05)' }}>
                 {row.label}
               </div>
               <div 
-                className="flex-1 px-2 py-1 outline-none focus:ring-1 focus:ring-[#2162F9]/20" 
+                className="flex-1 px-3 py-1.5 outline-none focus:ring-1 focus:ring-[#2162F9]/20 font-medium italic" 
                 style={{ background: i % 2 === 0 ? DESIGN.white : DESIGN.surfaceBlue, color: DESIGN.black }}
                 contentEditable suppressContentEditableWarning
                 onBlur={(e) => {
@@ -796,6 +831,31 @@ function BlockRenderer({ block, isDark, onClick, isSelected, onSave, isGeneratin
               </div>
             </div>
           ))}
+        </div>
+      );
+
+    case "client-team":
+      return (
+        <div onClick={onClick} className={`${wrapperClass} grid grid-cols-2 gap-3`}>
+          {(content.members || []).map((member: any, i: number) => (
+            <div key={i} className="bg-white/50 backdrop-blur-sm rounded-lg p-3 border border-white/20 shadow-sm flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-5 rounded-full bg-[#2162F9]/10 flex items-center justify-center text-[#2162F9]">
+                  <Settings size={10} />
+                </div>
+                <span className="font-bold text-[10px] text-slate-800">{member.name}</span>
+              </div>
+              <div className="text-[9px] font-bold text-[#2162F9] opacity-80 uppercase tracking-tight">{member.role}</div>
+              {member.bio && (
+                  <p className="text-[8px] text-slate-500 leading-tight line-clamp-2 italic">{member.bio}</p>
+              )}
+            </div>
+          ))}
+          {(!content.members || content.members.length === 0) && (
+            <div className="col-span-2 py-4 text-center text-xs opacity-40 italic">
+              No team members found in Intelligence — try adding to Intel and Syncing.
+            </div>
+          )}
         </div>
       );
 

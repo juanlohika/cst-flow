@@ -24,6 +24,13 @@ export async function POST(req: NextRequest) {
     const systemPrompt = `You are a high-fidelity Design Architect for Tarkie's Presentation Builder.
 Your task is to populate a ${blockType} block using only the data provided.
 
+=== CRITICAL INSTRUCTION: DATA SOURCE ===
+1. You MUST extract all possible data from the "ACCOUNT INTELLIGENCE" section below.
+2. If ACCOUNT INTELLIGENCE contains details (like Client Team, Industry, pain points), you MUST use them.
+3. DO NOT hallucinate names, roles, or facts if they are NOT in the intelligence.
+4. If a field is missing in intelligence, use a professional TARKIE-branded placeholder, but prioritize the provided data.
+5. For the 'client-team' block, look specifically for names and roles of the client's stakeholders.
+
 === DESIGN RULES (STRICKLY MANDATORY) ===
 ${designSkill || "Use professional presentation design standards."}
 
@@ -35,7 +42,6 @@ ${accountIntelligence || "No account intelligence available. STOP. Do not halluc
 === OUTPUT FORMAT ===
 - Return ONLY valid JSON matching the schema below.
 - Do NOT add markdown, preamble, or explanations.
-- If Account Intelligence is provided, EXCLUSIVELY use that data to fill the content.
 - For Sparkle rows, keep the labels exactly as defined in the schema.
 
 === SCHEMA ===
@@ -108,6 +114,8 @@ function getBlockSchema(blockType: string): string {
           { "letter": "E", "label": "Easier than Before", "description": "Criteria/Observations" }
         ] 
       }`;
+    case "client-team":
+      return `{ "members": [{ "name": "string", "role": "string", "bio": "string (optional)" }] }`;
     default:
       return `{ "body": "string content" }`;
   }

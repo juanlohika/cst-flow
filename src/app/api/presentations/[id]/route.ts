@@ -80,6 +80,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       }
     }
 
+    // Sync Intelligence Snapshot
+    if (body.syncIntelligence) {
+      const pres = await db.select().from(presentations).where(eq(presentations.id, params.id)).limit(1);
+      if (pres.length > 0 && pres[0].clientProfileId) {
+        const { clientProfiles } = await import("@/db/schema");
+        const profiles = await db.select().from(clientProfiles).where(eq(clientProfiles.id, pres[0].clientProfileId)).limit(1);
+        if (profiles.length > 0) {
+          await db.update(presentations).set({
+            intelligenceSnapshot: profiles[0].intelligenceContent,
+            updatedAt: now,
+          }).where(eq(presentations.id, params.id));
+        }
+      }
+    }
+
     return NextResponse.json({ success: true });
   } catch (err: any) {
     console.error("PATCH /api/presentations/[id] error:", err);
