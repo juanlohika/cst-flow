@@ -966,8 +966,22 @@ function BlockConfigPanel({ block, onGenerate, generating, onSave, onUpdatePromp
   const [editPrompt, setEditPrompt] = useState(block.prompt || "");
   const [attachedImages, setAttachedImages] = useState<{url: string, file: File}[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const objectUrlsRef = useRef<string[]>([]);
 
-  useEffect(() => { setEditPrompt(block.prompt || ""); setAttachedImages([]); }, [block.id]);
+  useEffect(() => { 
+    setEditPrompt(block.prompt || ""); 
+    // Cleanup old URLs before clearing
+    objectUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+    objectUrlsRef.current = [];
+    setAttachedImages([]); 
+  }, [block.id]);
+
+  // Global cleanup on unmount
+  useEffect(() => {
+    return () => {
+        objectUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+    };
+  }, []);
 
   const handlePaste = (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
@@ -977,6 +991,9 @@ function BlockConfigPanel({ block, onGenerate, generating, onSave, onUpdatePromp
         const file = items[i].getAsFile();
         if (file) {
           const url = URL.createObjectURL(file);
+          // Track for cleanup
+          if (!objectUrlsRef.current) objectUrlsRef.current = [];
+          objectUrlsRef.current.push(url);
           setAttachedImages((prev: any[]) => [...prev, { url, file }]);
         }
       }
@@ -985,9 +1002,12 @@ function BlockConfigPanel({ block, onGenerate, generating, onSave, onUpdatePromp
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      const newImages = Array.from(e.target.files).map(file => ({
-        url: URL.createObjectURL(file), file
-      }));
+      const newImages = Array.from(e.target.files).map(file => {
+        const url = URL.createObjectURL(file);
+        if (!objectUrlsRef.current) objectUrlsRef.current = [];
+        objectUrlsRef.current.push(url);
+        return { url, file };
+      });
       setAttachedImages((prev: any[]) => [...prev, ...newImages]);
     }
   };
@@ -1031,7 +1051,7 @@ function BlockConfigPanel({ block, onGenerate, generating, onSave, onUpdatePromp
             AI Prompt
           </label>
           <SmartMic
-            onTranscription={(text) => setEditPrompt(prev => prev ? prev + " " + text : text)}
+            onTranscription={(text) => setEditPrompt((prev: string) => prev ? prev + " " + text : text)}
           />
         </div>
         <textarea
@@ -1050,7 +1070,11 @@ function BlockConfigPanel({ block, onGenerate, generating, onSave, onUpdatePromp
                 <div key={idx} className="relative w-12 h-12 rounded border bg-slate-50 flex items-center justify-center overflow-hidden group">
                   <img src={img.url} className="object-cover w-full h-full" alt="attachment" />
                   <button
-                    onClick={() => setAttachedImages(prev => prev.filter((_, i) => i !== idx))}
+                    onClick={() => {
+                        URL.revokeObjectURL(img.url);
+                        objectUrlsRef.current = objectUrlsRef.current.filter(u => u !== img.url);
+                        setAttachedImages((prev: any[]) => prev.filter((_, i) => i !== idx));
+                    }}
                     className="absolute top-0.5 right-0.5 bg-black/50 text-white rounded-sm p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                   >
                     <X size={10} />

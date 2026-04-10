@@ -23,6 +23,8 @@ export default function SmartMic({
 
   const recognitionRef = useRef<any>(null); 
   const intentToListen = useRef(false);
+  const restartCountRef = useRef(0);
+  const lastRestartRef = useRef(0);
 
   const onTranscriptionRef = useRef(onTranscription);
   const onInterimRef = useRef(onInterim);
@@ -131,11 +133,28 @@ export default function SmartMic({
       };
 
       recognition.onend = () => {
-        if (intentToListen.current && recognitionRef.current) {
-          // Add timeout to prevent synchronous loop freeze when Chrome aborts background tabs
+        if (intentToListen.current && recognitionRef.current === recognition) {
+          // Failure protection: Stop if we crash too often
+          const now = Date.now();
+          if (now - lastRestartRef.current < 500) {
+             restartCountRef.current++;
+          } else {
+             restartCountRef.current = 0;
+          }
+          lastRestartRef.current = now;
+
+          if (restartCountRef.current > 5) {
+             console.error("SmartMic: Too many rapid restarts. Emergency stop to prevent memory leak.");
+             setIsListening(false);
+             onToggle?.(false);
+             return;
+          }
+
           setTimeout(() => {
-             try { recognitionRef.current?.start(); } catch (e) {}
-          }, 150);
+             if (intentToListen.current) {
+                try { recognition.start(); } catch (e) { console.warn("Restart failed:", e); }
+             }
+          }, 200);
         } else {
           setIsListening(false);
           onToggle?.(false);
@@ -153,6 +172,17 @@ export default function SmartMic({
       intentToListen.current = false;
     }
   }, [onToggle, stopCapture, applyDictionary]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      intentToListen.current = false;
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch (e) {}
+        recognitionRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <div className="flex items-center gap-1.5 relative z-50">
