@@ -6,18 +6,16 @@
     xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides" 
     xsi:type="TaskPaneApp">
 
-  <!-- SCHEMA 1.1 - 2026 SCIENTIFIC FIX -->
-  <Id>a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6</Id>
-  <Version>1.7.0.0</Version>
+  <!-- SCHEMA 1.1 - TARGET: POWERPOINT WEB/DESKTOP -->
+  <Id>e6a83a86-5ff2-4086-b172-95167456aa8c</Id>
+  <Version>1.8.0.0</Version>
   <ProviderName>Tarkie</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Tarkie AI Generator" />
-  <Description DefaultValue="AI-powered presentation builder for Tarkie intelligence." />
+  <Description DefaultValue="AI-powered presentation assistant for Tarkie intelligence." />
   
-  <!-- ROOT ICONS: MANDATORY 32/80 -->
   <IconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png" />
   <HighResolutionIconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-80.png" />
-  
   <SupportUrl DefaultValue="https://www.tarkie.com" />
   
   <AppDomains>
@@ -46,7 +44,7 @@
         <DesktopFormFactor>
           <GetStarted>
             <Title DefaultValue="Tarkie AI Ready" />
-            <Description DefaultValue="Open the taskpane to start generating slides." />
+            <Description DefaultValue="Open the Home ribbon to find the Tarkie AI Generator." />
             <LearnMoreUrl DefaultValue="https://www.tarkie.com" />
           </GetStarted>
           
@@ -107,6 +105,7 @@
     </Resources>
   </VersionOverrides>
 </OfficeApp>
+
 
 
 
