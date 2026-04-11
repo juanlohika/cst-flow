@@ -216,10 +216,10 @@ export default function AddinPage() {
     return deckData;
   };
 
-  /** Applies text replacements to table cells on a slide (0-based slideIdx) */
+  /** Applies text replacements to table cells on a slide (0-based slideIdx).
+   *  Uses the same load path as getSlideText which successfully reads table cells. */
   const applyTableReplacements = async (slideIdx: number, original: string, replacement: string): Promise<number> => {
     return await window.PowerPoint.run(async (context: any) => {
-      // Step 1: load shapes
       const slide = context.presentation.slides.getItemAt(slideIdx);
       slide.shapes.load("items");
       await context.sync();
@@ -227,29 +227,24 @@ export default function AddinPage() {
       let count = 0;
 
       for (const shape of slide.shapes.items) {
-        // Step 2: load type for this shape
-        shape.load("type");
-        await context.sync();
-
-        const isTable = String(shape.type).toLowerCase().includes("table") || shape.type === 4;
-        console.log(`[Tarkie] shape type: ${shape.type}, isTable: ${isTable}`);
-        if (!isTable) continue;
-
-        // Step 3: load the table's rows collection
-        const table = shape.table;
-        table.rows.load("items");
-        await context.sync();
-        console.log(`[Tarkie] table rows loaded: ${table.rows.items.length}`);
-
-        // Step 4: for each row, load its cells
-        for (const row of table.rows.items) {
-          row.cells.load("items");
+        // Use same nested load path as getSlideText reading — this is confirmed working
+        let isTable = false;
+        try {
+          // Load rows with nested cells in one shot (same as read path)
+          shape.load("type");
+          shape.table.rows.load("items/cells/items");
+          await context.sync();
+          isTable = String(shape.type).toLowerCase().includes("table") || shape.type === 4;
+        } catch {
+          continue; // not a table shape — skip
         }
-        await context.sync();
 
-        // Step 5: for each cell, load textFrame text
+        if (!isTable) continue;
+        console.log(`[Tarkie] found table shape, iterating cells`);
+
+        // Now read text from each cell using the same path as getTableCellText
         const allCells: any[] = [];
-        for (const row of table.rows.items) {
+        for (const row of shape.table.rows.items) {
           for (const cell of row.cells.items) {
             cell.textFrame.textRange.load("text");
             allCells.push(cell);
@@ -257,17 +252,19 @@ export default function AddinPage() {
         }
         await context.sync();
 
-        // Step 6: read and write
+        // Write replacements
+        let batchDirty = false;
         for (const cell of allCells) {
           const raw: string = cell.textFrame.textRange.text || "";
           console.log(`[Tarkie] cell: "${raw.substring(0, 50)}"`);
           if (raw.includes(original)) {
             cell.textFrame.textRange.text = raw.split(original).join(replacement);
             count++;
-            console.log(`[Tarkie] ✓ replaced "${original}" → "${replacement}"`);
+            batchDirty = true;
+            console.log(`[Tarkie] ✓ table cell replaced "${original}" → "${replacement}"`);
           }
         }
-        if (count > 0) await context.sync();
+        if (batchDirty) await context.sync();
       }
 
       return count;
