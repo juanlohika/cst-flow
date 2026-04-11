@@ -106,36 +106,49 @@ export default function AddinPage() {
   /** Scrapes all text from the current active slide */
   const getActiveSlideContent = async (): Promise<string[]> => {
     return await window.PowerPoint.run(async (context: any) => {
+      console.log("[Tarkie] getActiveSlideContent: start");
       const selectedSlides = context.presentation.getSelectedSlides();
       selectedSlides.load("items");
       await context.sync();
+      console.log("[Tarkie] slides loaded, count:", selectedSlides.items.length);
 
       if (selectedSlides.items.length === 0) return [];
 
       const shapes = selectedSlides.items[0].shapes;
       shapes.load("items");
       await context.sync();
+      console.log("[Tarkie] shapes loaded, count:", shapes.items.length);
 
-      for (const shape of shapes.items) {
-        shape.load("textFrame");
-      }
-      await context.sync();
-
-      for (const shape of shapes.items) {
+      for (let si = 0; si < shapes.items.length; si++) {
         try {
-          shape.textFrame.load("textRange");
-        } catch { /* no textFrame */ }
+          shapes.items[si].load("textFrame");
+        } catch (e) { console.log("[Tarkie] shape.load textFrame error at", si, e); }
       }
       await context.sync();
+      console.log("[Tarkie] textFrames loaded");
 
-      for (const shape of shapes.items) {
+      for (let si = 0; si < shapes.items.length; si++) {
         try {
-          shape.textFrame.textRange.load("text");
-        } catch { /* no textRange */ }
+          shapes.items[si].textFrame.load("textRange");
+        } catch (e) { console.log("[Tarkie] textFrame.load textRange error at", si, e); }
       }
       await context.sync();
+      console.log("[Tarkie] textRanges loaded");
 
-      return collectTextFromShapes(shapes.items);
+      for (let si = 0; si < shapes.items.length; si++) {
+        try {
+          shapes.items[si].textFrame.textRange.load("text");
+        } catch (e) { console.log("[Tarkie] textRange.load text error at", si, e); }
+      }
+      await context.sync();
+      console.log("[Tarkie] text loaded");
+
+      const result = collectTextFromShapes(shapes.items);
+      console.log("[Tarkie] extracted text blocks:", result);
+      return result;
+    }).catch((err: any) => {
+      console.error("[Tarkie] getActiveSlideContent FAILED:", err?.code, err?.message, err);
+      throw err;
     });
   };
 
