@@ -91,90 +91,54 @@ export default function AddinPage() {
     setTimeout(() => clearInterval(interval), 120000);
   };
 
-  /**
-   * Extracts all text from a slide's shapes collection using Office JS.
-   *
-   * Office JS requires property paths to be declared in load() before access.
-   * We use the deep load path that covers top-level shapes AND shapes nested
-   * one level inside group shapes.
-   *
-   * Load path breakdown:
-   *   items/textFrame/textRange/text        — direct text shapes
-   *   items/group/shapes/items/textFrame/textRange/text — text inside groups
-   */
-  const extractTextFromShapes = async (context: any, shapes: any): Promise<string[]> => {
-    try {
-      // Deep load in one shot — covers flat shapes and first-level group children
-      shapes.load([
-        "items/hasTextFrame",
-        "items/textFrame/hasText",
-        "items/textFrame/textRange/text",
-        "items/shapeType",
-        "items/group/shapes/items/hasTextFrame",
-        "items/group/shapes/items/textFrame/hasText",
-        "items/group/shapes/items/textFrame/textRange/text",
-      ]);
-      await context.sync();
-    } catch {
-      // Fallback: some older Office versions don't support deep group load paths
-      // Just load flat shapes
-      try {
-        shapes.load("items/hasTextFrame,items/textFrame/hasText,items/textFrame/textRange/text,items/shapeType");
-        await context.sync();
-      } catch {
-        return [];
-      }
-    }
-
-    const textBlocks: string[] = [];
-
-    for (const shape of shapes.items) {
-      // Top-level text
-      try {
-        if (shape.hasTextFrame && shape.textFrame?.hasText) {
-          const t = shape.textFrame.textRange.text?.trim();
-          if (t) textBlocks.push(t);
-        }
-      } catch { /* shape may not have textFrame */ }
-
-      // Group children (shapeType 6 = MsoShapeType.msoCombinedShape / group)
-      try {
-        if (shape.shapeType === 6) {
-          for (const child of shape.group.shapes.items) {
-            if (child.hasTextFrame && child.textFrame?.hasText) {
-              const t = child.textFrame.textRange.text?.trim();
-              if (t) textBlocks.push(t);
-            }
-          }
-        }
-      } catch { /* group may not be loaded or shape is not a group */ }
-    }
-
-    return textBlocks;
-  };
-
   /** Scrapes all text from the current active slide */
   const getActiveSlideContent = async (): Promise<string[]> => {
     return await window.PowerPoint.run(async (context: any) => {
       const selectedSlides = context.presentation.getSelectedSlides();
-      selectedSlides.load("items");
+      selectedSlides.load("items/shapes/items/hasTextFrame,items/shapes/items/textFrame/hasText,items/shapes/items/textFrame/textRange/text");
       await context.sync();
+
       if (selectedSlides.items.length === 0) return [];
-      return extractTextFromShapes(context, selectedSlides.items[0].shapes);
+      const textBlocks: string[] = [];
+      for (const shape of selectedSlides.items[0].shapes.items) {
+        try {
+          if (shape.hasTextFrame && shape.textFrame.hasText) {
+            const t = shape.textFrame.textRange.text?.trim();
+            if (t) textBlocks.push(t);
+          }
+        } catch { /* skip unreadable shape */ }
+      }
+      return textBlocks;
     });
   };
 
-  /** Scrapes text from ALL slides */
+  /** Scrapes text from ALL slides — loads everything in one batch per slide */
   const getFullDeckContent = async (): Promise<{ slideIndex: number; content: string[] }[]> => {
     return await window.PowerPoint.run(async (context: any) => {
+      // Step 1: load slides list
       const slides = context.presentation.slides;
       slides.load("items");
       await context.sync();
 
+      // Step 2: load all shapes for all slides in one batch
+      for (const slide of slides.items) {
+        slide.shapes.load("items/hasTextFrame,items/textFrame/hasText,items/textFrame/textRange/text");
+      }
+      await context.sync();
+
+      // Step 3: collect text
       const deckData: { slideIndex: number; content: string[] }[] = [];
       for (let i = 0; i < slides.items.length; i++) {
-        const content = await extractTextFromShapes(context, slides.items[i].shapes);
-        deckData.push({ slideIndex: i + 1, content });
+        const textBlocks: string[] = [];
+        for (const shape of slides.items[i].shapes.items) {
+          try {
+            if (shape.hasTextFrame && shape.textFrame.hasText) {
+              const t = shape.textFrame.textRange.text?.trim();
+              if (t) textBlocks.push(t);
+            }
+          } catch { /* skip */ }
+        }
+        deckData.push({ slideIndex: i + 1, content: textBlocks });
       }
       return deckData;
     });
