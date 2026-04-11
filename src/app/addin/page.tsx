@@ -267,42 +267,25 @@ export default function AddinPage() {
 
           for (const row of table.rows.items) {
             for (const cell of row.cells.items) {
-              // Try body.text (read + write)
-              let cellText = "";
-              let useBodyText = false;
+              // Use textFrame — same path that successfully reads cells
               try {
-                cell.body.load("text");
+                cell.textFrame.textRange.load("text");
                 await context.sync();
-                cellText = cell.body.text?.trim() ?? "";
-                useBodyText = true;
-              } catch {
-                try {
-                  cell.body.paragraphs.load("items/text");
+                let cellText: string = cell.textFrame.textRange.text?.trim() ?? "";
+                let newText = cellText;
+                let changed = false;
+                for (const s of suggestions) {
+                  if (s.original && newText.includes(s.original)) {
+                    newText = newText.split(s.original).join(s.replacement);
+                    changed = true;
+                    matchCount++;
+                  }
+                }
+                if (changed) {
+                  cell.textFrame.textRange.text = newText;
                   await context.sync();
-                  cellText = cell.body.paragraphs.items.map((p: any) => p.text?.trim()).filter(Boolean).join(" ");
-                } catch { continue; }
-              }
-
-              let changed = false;
-              let newText = cellText;
-              for (const s of suggestions) {
-                if (s.original && newText.includes(s.original)) {
-                  newText = newText.split(s.original).join(s.replacement);
-                  changed = true;
-                  matchCount++;
                 }
-              }
-              if (changed) {
-                if (useBodyText) {
-                  cell.body.text = newText;
-                } else {
-                  // Fall back: set text on first paragraph
-                  try {
-                    cell.body.paragraphs.items[0].text = newText;
-                  } catch { /* can't write */ }
-                }
-                await context.sync();
-              }
+              } catch { /* cell not readable via textFrame */ }
             }
           }
         } catch { /* not a table */ }
