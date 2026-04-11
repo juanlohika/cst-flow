@@ -93,9 +93,8 @@ export default function AddinPage() {
 
       if (selectedSlides.items.length === 0) return [];
 
-      const activeSlide = selectedSlides.items[0];
       const shapes = activeSlide.shapes;
-      shapes.load("items/textFrame/textRange/text");
+      shapes.load("items/textFrame/hasText, items/textFrame/textRange/text");
       await context.sync();
 
       const textBlocks: string[] = [];
@@ -119,7 +118,7 @@ export default function AddinPage() {
 
       const activeSlide = selectedSlides.items[0];
       const shapes = activeSlide.shapes;
-      shapes.load("items/textFrame/textRange");
+      shapes.load("items/textFrame/hasText, items/textFrame/textRange");
       await context.sync();
 
       for (const shape of shapes.items) {
@@ -175,8 +174,9 @@ export default function AddinPage() {
           if (applyToAll) {
             const slide = slides.items[i];
             const shapes = slide.shapes;
-            shapes.load("items/textFrame/textRange/text");
+            shapes.load("items/textFrame/hasText, items/textFrame/textRange/text");
             await context.sync();
+
             slideContent = shapes.items
               .filter((s: any) => s.textFrame && s.textFrame.hasText)
               .map((s: any) => s.textFrame.textRange.text);
@@ -206,7 +206,7 @@ export default function AddinPage() {
             if (applyToAll) {
               const slide = slides.items[i];
               const shapes = slide.shapes;
-              shapes.load("items/textFrame/textRange");
+              shapes.load("items/textFrame/hasText, items/textFrame/textRange");
               await context.sync();
 
               for (const shape of shapes.items) {
