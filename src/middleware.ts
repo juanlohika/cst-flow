@@ -36,5 +36,5 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|debug.txt|tarkie-logo.svg).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|manifest\\.xml|icon-.*\\.png|debug.txt|tarkie-logo.svg).*)"],
 };
