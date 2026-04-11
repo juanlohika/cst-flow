@@ -64,6 +64,7 @@ export default function AddinPage() {
   const [officeInitialized, setOfficeInitialized] = useState(false);
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState("");
+  const [msalConnected, setMsalConnected] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [messages, setMessages] = useState<{ role: "user" | "ai"; text: string }[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -76,6 +77,26 @@ export default function AddinPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isProcessing]);
+
+  // Check if already connected to Microsoft on mount
+  useEffect(() => {
+    getMsalInstance().then(msal => {
+      const accounts = msal.getAllAccounts();
+      if (accounts.length > 0) setMsalConnected(true);
+    }).catch(() => {});
+  }, []);
+
+  // Connect Microsoft account — must be called directly from a button click
+  const handleConnectMicrosoft = async () => {
+    try {
+      const msal = await getMsalInstance();
+      await msal.acquireTokenPopup({ scopes: GRAPH_SCOPES });
+      setMsalConnected(true);
+      setError(null);
+    } catch (e: any) {
+      setError("Microsoft sign-in failed: " + e.message);
+    }
+  };
 
   // 1. Initialize Office JS
   useEffect(() => {
@@ -563,9 +584,9 @@ export default function AddinPage() {
 
           <div className="flex items-center justify-between px-1">
              <div className="flex items-center gap-2">
-                <input 
-                  type="checkbox" 
-                  id="applyAll" 
+                <input
+                  type="checkbox"
+                  id="applyAll"
                   checked={applyToAll}
                   onChange={(e) => setApplyToAll(e.target.checked)}
                   className="w-3.5 h-3.5 rounded-md accent-[#2162F9] cursor-pointer"
@@ -574,8 +595,8 @@ export default function AddinPage() {
                   Apply to all slides
                 </label>
              </div>
-             
-             <button 
+
+             <button
               onClick={handleScanDeck}
               disabled={isProcessing}
               className="text-[9px] font-black text-[#2162F9] uppercase tracking-widest flex items-center gap-1 hover:underline disabled:opacity-30 disabled:no-underline"
@@ -584,6 +605,28 @@ export default function AddinPage() {
                Scan Presentation
              </button>
           </div>
+
+          {/* Microsoft Connect Button — required for table editing */}
+          {!msalConnected && (
+            <button
+              onClick={handleConnectMicrosoft}
+              className="w-full flex items-center justify-center gap-2 bg-[#f3f6fc] border border-[#2162F9]/20 rounded-xl px-3 py-2 text-[9px] font-black text-[#2162F9] uppercase tracking-widest hover:bg-[#2162F9]/10 transition-all"
+            >
+              <svg width="12" height="12" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="0" y="0" width="10" height="10" fill="#f25022"/>
+                <rect x="11" y="0" width="10" height="10" fill="#7fba00"/>
+                <rect x="0" y="11" width="10" height="10" fill="#00a4ef"/>
+                <rect x="11" y="11" width="10" height="10" fill="#ffb900"/>
+              </svg>
+              Connect Microsoft to enable table editing
+            </button>
+          )}
+          {msalConnected && (
+            <div className="flex items-center gap-1.5 px-1">
+              <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
+              <p className="text-[9px] font-black text-green-600 uppercase tracking-widest">Microsoft connected — table editing enabled</p>
+            </div>
+          )}
         </div>
       </div>
 
