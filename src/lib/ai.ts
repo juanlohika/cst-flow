@@ -285,7 +285,7 @@ function buildGeminiAdapter(apiKey: string) {
 
 function buildClaudeAdapter(apiKey: string) {
   const client = new Anthropic({ apiKey });
-  const MODEL = "claude-sonnet-4-6";
+  const MODEL = "claude-3-5-sonnet-20241022";
   console.log(`[AI] Provider: Claude  Model: ${MODEL}`);
 
   return {

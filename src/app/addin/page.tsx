@@ -1,16 +1,13 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { useSession, signIn } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import { 
   Sparkles, 
-  Users, 
-  FileText, 
   Send, 
   Loader2, 
   AlertCircle,
-  CheckCircle2,
-  RefreshCcw
+  FileText
 } from "lucide-react";
 
 /**
@@ -22,10 +19,12 @@ export default function AddinPage() {
   const [officeInitialized, setOfficeInitialized] = useState(false);
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState("");
-  const [deckType, setDeckType] = useState("kickoff");
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [messages, setMessages] = useState<{ role: "user" | "ai"; text: string }[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [applyToAll, setApplyToAll] = useState(false);
 
   // 1. Initialize Office JS
   useEffect(() => {
@@ -42,7 +41,7 @@ export default function AddinPage() {
     document.head.appendChild(script);
     
     return () => {
-      document.head.removeChild(script);
+      if (document.head.contains(script)) document.head.removeChild(script);
     };
   }, []);
 
@@ -51,14 +50,14 @@ export default function AddinPage() {
     if (status === "authenticated") {
       fetch("/api/addin/client-data")
         .then(res => res.json())
-        .then(data => setClients(data))
+        .then(data => {
+          if (Array.isArray(data)) setClients(data);
+        })
         .catch(err => console.error("Failed to load clients", err));
     }
   }, [status]);
 
   const handleLogin = () => {
-    // Office Task Panes run inside iframes — Google OAuth blocks redirects in iframes.
-    // We must open a popup window for auth, then detect when the user is logged in.
     const width = 500;
     const height = 600;
     const left = window.screenX + (window.outerWidth - width) / 2;
@@ -70,50 +69,179 @@ export default function AddinPage() {
       `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no`
     );
 
-    // Poll for session changes after popup opens
     const interval = setInterval(async () => {
       try {
         const res = await fetch("/api/auth/session");
-        const session = await res.json();
-        if (session?.user) {
+        const sessionRes = await res.json();
+        if (sessionRes?.user) {
           clearInterval(interval);
           if (popup && !popup.closed) popup.close();
           window.location.reload();
         }
-      } catch (e) {
-        // ignore fetch errors
-      }
+      } catch (e) {}
     }, 1500);
 
-    // Stop polling after 2 minutes
     setTimeout(() => clearInterval(interval), 120000);
   };
 
-  const generateFullDeck = async () => {
-    if (!selectedClient) return;
-    setIsGenerating(true);
-    setStatusMsg("Building prompt strategy...");
+  /** Scrapes all text from the current active slide */
+  const getActiveSlideContent = async () => {
+    return await window.PowerPoint.run(async (context: any) => {
+      const selectedSlides = context.presentation.getSelectedSlides();
+      selectedSlides.load("items");
+      await context.sync();
+
+      if (selectedSlides.items.length === 0) return [];
+
+      const activeSlide = selectedSlides.items[0];
+      const shapes = activeSlide.shapes;
+      shapes.load("items/textFrame/textRange/text");
+      await context.sync();
+
+      const textBlocks: string[] = [];
+      for (const shape of shapes.items) {
+        if (shape.textFrame && shape.textFrame.hasText) {
+          textBlocks.push(shape.textFrame.textRange.text);
+        }
+      }
+      return textBlocks;
+    });
+  };
+
+  /** Applies string-level replacements suggested by the AI */
+  const applySlideUpdates = async (suggestions: { original: string; replacement: string }[]) => {
+    if (!suggestions || suggestions.length === 0) return;
+
+    await window.PowerPoint.run(async (context: any) => {
+      const selectedSlides = context.presentation.getSelectedSlides();
+      selectedSlides.load("items");
+      await context.sync();
+
+      const activeSlide = selectedSlides.items[0];
+      const shapes = activeSlide.shapes;
+      shapes.load("items/textFrame/textRange");
+      await context.sync();
+
+      for (const shape of shapes.items) {
+        if (shape.textFrame && shape.textFrame.hasText) {
+          let currentText = shape.textFrame.textRange.text;
+          let updated = false;
+
+          for (const s of suggestions) {
+            if (currentText.includes(s.original)) {
+              currentText = currentText.replace(s.original, s.replacement);
+              updated = true;
+            }
+          }
+
+          if (updated) {
+            shape.textFrame.textRange.text = currentText;
+          }
+        }
+      }
+      await context.sync();
+    });
+  };
+
+  const processChat = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!chatInput.trim() || isProcessing) return;
+
+    const userMsg = chatInput;
+    setMessages(prev => [...prev, { role: "user", text: userMsg }]);
+    setChatInput("");
+    setIsProcessing(true);
+    setStatusMsg("Analyzing slide context...");
     setError(null);
 
     try {
-      // Logic for generating full deck will go here
-      // For now, testing the Office JS bridge
+      // 1. Get Slides count or current slide
       await window.PowerPoint.run(async (context: any) => {
-        const slide = context.presentation.slides.getItemAt(0);
-        slide.load("shapes");
+        const presentation = context.presentation;
+        const slides = presentation.slides;
+        slides.load("items");
         await context.sync();
-        
-        setStatusMsg("Writing content to PowerPoint...");
-        // Placeholder for real extraction & write
-        setTimeout(() => {
-          setIsGenerating(false);
-          setStatusMsg("Success! Deck populated.");
-        }, 2000);
+
+        const slideIndices = applyToAll 
+          ? Array.from({ length: slides.items.length }, (_, i) => i) 
+          : [0]; // 0 here is a placeholder for "current", but we use selectedSlides below
+
+        for (let i = 0; i < slideIndices.length; i++) {
+          if (applyToAll) setStatusMsg(`Processing slide ${i + 1} of ${slides.items.length}...`);
+          else setStatusMsg("Analyzing current slide...");
+
+          // Get content for specific slide index if looping, else current
+          let slideContent: string[] = [];
+          if (applyToAll) {
+            const slide = slides.items[i];
+            const shapes = slide.shapes;
+            shapes.load("items/textFrame/textRange/text");
+            await context.sync();
+            slideContent = shapes.items
+              .filter((s: any) => s.textFrame && s.textFrame.hasText)
+              .map((s: any) => s.textFrame.textRange.text);
+          } else {
+            slideContent = await getActiveSlideContent();
+          }
+
+          if (slideContent.length === 0) continue;
+
+          // Call AI
+          const res = await fetch("/api/addin/update", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt: userMsg,
+              clientId: selectedClient,
+              slideContent,
+              applyToAll
+            })
+          });
+
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Generation error");
+
+          // Apply Updates to this slide
+          if (data.suggestions && data.suggestions.length > 0) {
+            if (applyToAll) {
+              const slide = slides.items[i];
+              const shapes = slide.shapes;
+              shapes.load("items/textFrame/textRange");
+              await context.sync();
+
+              for (const shape of shapes.items) {
+                if (shape.textFrame && shape.textFrame.hasText) {
+                  let currentText = shape.textFrame.textRange.text;
+                  let updated = false;
+                  for (const s of data.suggestions) {
+                    if (currentText.includes(s.original)) {
+                      currentText = currentText.replace(s.original, s.replacement);
+                      updated = true;
+                    }
+                  }
+                  if (updated) shape.textFrame.textRange.text = currentText;
+                }
+              }
+              await context.sync();
+            } else {
+              await applySlideUpdates(data.suggestions);
+            }
+          }
+        }
+
+        setMessages(prev => [...prev, { 
+          role: "ai", 
+          text: applyToAll 
+            ? `I've processed all slides and applied intelligence where applicable.`
+            : `I've updated the current slide based on your instructions and client intelligence.` 
+        }]);
       });
+
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || "Failed to generate deck.");
-      setIsGenerating(false);
+      setError(err.message || "Failed to process request.");
+    } finally {
+      setIsProcessing(false);
+      setStatusMsg("");
     }
   };
 
@@ -121,7 +249,7 @@ export default function AddinPage() {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-slate-50 p-6 text-center">
         <Loader2 className="w-8 h-8 text-[#2162F9] animate-spin mb-4" />
-        <p className="text-sm font-bold text-slate-600">Initializing Tarkie Bridge...</p>
+        <p className="text-sm font-bold text-slate-600">Initializing Intelligence Bridge...</p>
       </div>
     );
   }
@@ -130,9 +258,9 @@ export default function AddinPage() {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-white p-6 text-center">
         <div className="w-16 h-16 bg-[#2162F9]/10 rounded-full flex items-center justify-center mb-6">
-          <Users className="w-8 h-8 text-[#2162F9]" />
+          <Sparkles className="w-8 h-8 text-[#2162F9]" />
         </div>
-        <h1 className="text-xl font-black text-slate-800 mb-2 uppercase tracking-tight">CST FlowDesk</h1>
+        <h1 className="text-xl font-black text-slate-800 mb-2 uppercase tracking-tight">Tarkie AI</h1>
         <p className="text-xs text-slate-500 mb-8 font-medium">Please sign in to access client intelligence and generation tools.</p>
         <button 
           onClick={handleLogin}
@@ -146,121 +274,119 @@ export default function AddinPage() {
 
   return (
     <div className="flex flex-col h-screen bg-white">
-      {/* Header */}
-      <div className="p-4 border-b border-slate-100 bg-slate-50/50">
-        <div className="flex items-center gap-2 mb-1">
-          <div className="w-6 h-6 bg-gradient-to-br from-[#2162F9] to-[#43EB7C] rounded-lg flex items-center justify-center">
-            <Sparkles size={12} className="text-white" />
+      {/* ── Header ────────────────────────────────────────────────── */}
+      <div className="px-4 py-3 border-b border-slate-100 bg-white sticky top-0 z-10">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 bg-gradient-to-br from-[#2162F9] to-[#43EB7C] rounded-lg flex items-center justify-center">
+              <Sparkles size={12} className="text-white" />
+            </div>
+            <span className="text-xs font-black uppercase tracking-widest text-slate-800">Tarkie AI</span>
           </div>
-          <span className="text-xs font-black uppercase tracking-widest text-slate-800">Tarkie Generator</span>
+          <div className="px-2 py-1 bg-blue-50 rounded-full">
+             <p className="text-[9px] text-[#2162F9] font-black uppercase tracking-tighter">
+              Claude 3.5 Sonnet
+            </p>
+          </div>
         </div>
-        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter opacity-70">
-          Connected to: {session?.user?.email}
-        </p>
-      </div>
 
-      <div className="flex-1 overflow-auto p-4 space-y-6 styled-scroll">
-        {/* Step 1: Client Selection */}
-        <section className="space-y-3">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">1. Select Client</label>
+        <div className="space-y-3">
           <select 
             value={selectedClient}
             onChange={(e) => setSelectedClient(e.target.value)}
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-[#2162F9] transition-colors appearance-none"
+            className="w-full bg-slate-100 border-none rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#2162F9]/20 transition-all cursor-pointer"
           >
-            <option value="">-- Choose Account --</option>
+            <option value="">General Intelligence (Independent)</option>
             {clients.map(c => (
               <option key={c.id} value={c.id}>{c.companyName}</option>
             ))}
           </select>
-        </section>
 
-        {/* Step 2: Deck Type */}
-        <section className="space-y-3">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">2. Deck Strategy</label>
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              { id: "kickoff", name: "Kickoff", icon: FileText },
-              { id: "training", name: "Training", icon: Users },
-              { id: "review", name: "QBR", icon: RefreshCcw },
-              { id: "custom", name: "Custom", icon: Sparkles },
-            ].map(type => (
-              <button
-                key={type.id}
-                onClick={() => setDeckType(type.id)}
-                className={`flex flex-col items-center gap-2 p-3 rounded-xl border transition-all ${
-                  deckType === type.id 
-                    ? "bg-[#2162F9]/5 border-[#2162F9] text-[#2162F9]" 
-                    : "bg-white border-slate-100 text-slate-400 hover:bg-slate-50"
-                }`}
-              >
-                <type.icon size={16} />
-                <span className="text-[10px] font-black uppercase tracking-tight">{type.name}</span>
-              </button>
-            ))}
+          <div className="flex items-center gap-2 px-1">
+            <input 
+              type="checkbox" 
+              id="applyAll" 
+              checked={applyToAll}
+              onChange={(e) => setApplyToAll(e.target.checked)}
+              className="w-3 h-3 rounded accent-[#2162F9]"
+            />
+            <label htmlFor="applyAll" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest cursor-pointer">
+              Apply to all slides
+            </label>
           </div>
-        </section>
-
-        {/* Generate Button */}
-        <div className="pt-4">
-          <button 
-            onClick={generateFullDeck}
-            disabled={isGenerating || !selectedClient}
-            className={`w-full py-4 rounded-2xl flex items-center justify-center gap-2 text-white font-black text-xs uppercase tracking-widest transition-all ${
-              isGenerating || !selectedClient
-                ? "bg-slate-100 text-slate-300 cursor-not-allowed"
-                : "bg-gradient-to-r from-[#2162F9] to-[#43EB7C] shadow-lg shadow-blue-500/20 active:scale-95"
-            }`}
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                {statusMsg || "Generating..."}
-              </>
-            ) : (
-              <>
-                <Sparkles size={16} />
-                Generate Full Deck
-              </>
-            )}
-          </button>
-          
-          {error && (
-            <div className="mt-4 p-3 bg-red-50 border border-red-100 rounded-xl flex items-start gap-2">
-              <AlertCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
-              <p className="text-[10px] font-bold text-red-600 leading-normal">{error}</p>
-            </div>
-          )}
-          
-          {statusMsg && !isGenerating && !error && (
-            <div className="mt-4 p-3 bg-green-50 border border-green-100 rounded-xl flex items-start gap-2">
-              <CheckCircle2 size={14} className="text-green-500 flex-shrink-0 mt-0.5" />
-              <p className="text-[10px] font-bold text-green-600 leading-normal">{statusMsg}</p>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Slide Chat Footer */}
-      <div className="p-4 border-t border-slate-100 bg-white shadow-[0_-4px_10px_rgba(0,0,0,0.02)]">
-        <label className="text-[9px] font-black text-slate-300 uppercase tracking-widest block mb-2">Refine with AI</label>
-        <div className="relative">
+      {/* ── Chat Messages ────────────────────────────────────────── */}
+      <div className="flex-1 overflow-auto p-4 space-y-4 styled-scroll">
+        {messages.length === 0 && (
+          <div className="text-center py-12 px-6">
+            <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
+              <FileText className="text-slate-300" size={20} />
+            </div>
+            <p className="text-xs font-bold text-slate-400 leading-relaxed italic">
+              "Update this slide with the client's account management team from intelligence."
+            </p>
+          </div>
+        )}
+
+        {messages.map((m, i) => (
+          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div className={`max-w-[90%] p-3 rounded-2xl text-[11px] font-medium leading-relaxed ${
+              m.role === "user" 
+                ? "bg-[#2162F9] text-white rounded-tr-sm" 
+                : "bg-slate-100 text-slate-700 rounded-tl-sm"
+            }`}>
+              {m.text}
+            </div>
+          </div>
+        ))}
+
+        {isProcessing && (
+          <div className="flex justify-start">
+            <div className="bg-slate-50 p-3 rounded-2xl rounded-tl-sm flex items-center gap-2 text-[10px] font-bold text-slate-400">
+              <Loader2 size={12} className="animate-spin text-[#2162F9]" />
+              {statusMsg}
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="p-3 bg-red-50 border border-red-100 rounded-xl flex items-start gap-2">
+            <AlertCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
+            <p className="text-[10px] font-bold text-red-600 leading-normal">{error}</p>
+          </div>
+        )}
+      </div>
+
+      {/* ── Chat Input ───────────────────────────────────────────── */}
+      <div className="p-4 bg-white border-t border-slate-100 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
+        <form onSubmit={processChat} className="relative">
           <input 
             type="text"
-            placeholder="e.g. Update team from Intel..."
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-3 pr-10 py-3 text-xs font-bold text-slate-700 outline-none focus:border-[#2162F9] transition-colors"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            placeholder="Type instructions..."
+            className="w-full bg-slate-100 border-none rounded-2xl pl-4 pr-12 py-4 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#2162F9]/20 transition-all placeholder:text-slate-400"
           />
-          <button className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-[#2162F9] text-white rounded-lg flex items-center justify-center hover:bg-blue-600 transition-colors">
-            <Send size={14} />
+          <button 
+            type="submit"
+            disabled={isProcessing || !chatInput.trim()}
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 bg-[#2162F9] text-white rounded-xl flex items-center justify-center hover:bg-blue-600 disabled:bg-slate-200 disabled:text-slate-400 transition-all"
+          >
+            <Send size={16} />
           </button>
-        </div>
+        </form>
+        <p className="text-[9px] text-center text-slate-300 mt-3 font-medium uppercase tracking-widest">
+          Powered by Tarkie intelligence
+        </p>
       </div>
       
       <style jsx global>{`
         .styled-scroll::-webkit-scrollbar { width: 4px; }
         .styled-scroll::-webkit-scrollbar-track { background: transparent; }
-        .styled-scroll::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }
-        .styled-scroll::-webkit-scrollbar-thumb:hover { background: #CBD5E1; }
+        .styled-scroll::-webkit-scrollbar-thumb { background: #F1F5F9; border-radius: 10px; }
+        .styled-scroll::-webkit-scrollbar-thumb:hover { background: #E2E8F0; }
       `}</style>
     </div>
   );
