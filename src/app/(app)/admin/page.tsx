@@ -55,7 +55,7 @@ export default function AdminSettings() {
   const [editingApp, setEditingApp] = useState<any | null>(null);
   const [appSaving, setAppSaving] = useState(false);
   const [showNewAppForm, setShowNewAppForm] = useState(false);
-  const [newApp, setNewApp] = useState({ name: "", slug: "", description: "", icon: "", href: "" });
+  const [newApp, setNewApp] = useState({ name: "", slug: "", description: "", icon: "", href: "", provider: null as string | null });
 
   // Derived from appList — used by Skills category dropdowns
   const categoryLabels: Record<string, string> = {
@@ -278,7 +278,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
         body: JSON.stringify(newApp),
       });
       setShowNewAppForm(false);
-      setNewApp({ name: "", slug: "", description: "", icon: "", href: "" });
+      setNewApp({ name: "", slug: "", description: "", icon: "", href: "", provider: null });
       await loadApps();
     } catch {}
   };
@@ -1152,10 +1152,23 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                           placeholder="e.g. FileText" className="w-full px-3 py-2 border border-input rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                       </div>
                     </div>
-                    <div>
-                      <label className="text-xs font-medium text-slate-600 mb-1 block">Description</label>
-                      <input value={newApp.description} onChange={e => setNewApp({ ...newApp, description: e.target.value })}
-                        placeholder="What this app does…" className="w-full px-3 py-2 border border-input rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs font-medium text-slate-600 mb-1 block">Description</label>
+                        <input value={newApp.description} onChange={e => setNewApp({ ...newApp, description: e.target.value })}
+                          placeholder="What this app does…" className="w-full px-3 py-2 border border-input rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-slate-600 mb-1 block">AI Provider</label>
+                        <select value={newApp.provider ?? ""} onChange={e => setNewApp({ ...newApp, provider: e.target.value || null })}
+                          className="w-full px-3 py-2 border border-input rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white">
+                          <option value="">Global default</option>
+                          <option value="claude">🟠 Claude (Anthropic)</option>
+                          <option value="gemini">✨ Gemini</option>
+                          <option value="groq">⚡ Groq</option>
+                          <option value="ollama">🖥 Ollama</option>
+                        </select>
+                      </div>
                     </div>
                     <div className="flex gap-2 justify-end">
                       <button type="button" onClick={() => setShowNewAppForm(false)} className="px-3 py-1.5 text-sm text-slate-500 hover:bg-muted rounded-lg transition-all">Cancel</button>

@@ -1,13 +1,14 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { 
   Sparkles, 
   Send, 
   Loader2, 
   AlertCircle,
-  FileText
+  FileText,
+  RefreshCw
 } from "lucide-react";
 
 /**
@@ -25,6 +26,12 @@ export default function AddinPage() {
   const [statusMsg, setStatusMsg] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [applyToAll, setApplyToAll] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isProcessing]);
 
   // 1. Initialize Office JS
   useEffect(() => {
@@ -92,7 +99,7 @@ export default function AddinPage() {
       await context.sync();
 
       if (selectedSlides.items.length === 0) return [];
-
+      const activeSlide = selectedSlides.items[0];
       const shapes = activeSlide.shapes;
       shapes.load("items/textFrame/hasText, items/textFrame/textRange/text");
       await context.sync();
@@ -104,6 +111,30 @@ export default function AddinPage() {
         }
       }
       return textBlocks;
+    });
+  };
+
+  /** Scrapes text from ALL slides */
+  const getFullDeckContent = async () => {
+    return await window.PowerPoint.run(async (context: any) => {
+      const slides = context.presentation.slides;
+      slides.load("items");
+      await context.sync();
+
+      const deckData: any[] = [];
+      for (let i = 0; i < slides.items.length; i++) {
+        const slide = slides.items[i];
+        const shapes = slide.shapes;
+        shapes.load("items/textFrame/hasText, items/textFrame/textRange/text");
+        await context.sync();
+
+        const slideText = shapes.items
+          .filter((s: any) => s.textFrame && s.textFrame.hasText)
+          .map((s: any) => s.textFrame.textRange.text);
+        
+        deckData.push({ slideIndex: i + 1, content: slideText });
+      }
+      return deckData;
     });
   };
 
@@ -140,6 +171,28 @@ export default function AddinPage() {
       }
       await context.sync();
     });
+  };
+
+  const handleScanDeck = async () => {
+    setIsProcessing(true);
+    setStatusMsg("Scanning full deck architecture...");
+    try {
+      const fullContent = await getFullDeckContent();
+      const res = await fetch("/api/addin/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fullContent, clientId: selectedClient })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Scan failed");
+
+      setMessages(prev => [...prev, { role: "ai", text: data.text }]);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsProcessing(false);
+      setStatusMsg("");
+    }
   };
 
   const processChat = async (e?: React.FormEvent) => {
@@ -194,14 +247,20 @@ export default function AddinPage() {
               prompt: userMsg,
               clientId: selectedClient,
               slideContent,
-              applyToAll
+              applyToAll,
+              history: messages.slice(-10) // Send last 10 messages for context
             })
           });
 
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Generation error");
 
-          // Apply Updates to this slide
+          // Display AI text response once (only for the current message)
+          if (i === 0) {
+             setMessages(prev => [...prev, { role: "ai", text: data.text }]);
+          }
+
+          // Apply Updates
           if (data.suggestions && data.suggestions.length > 0) {
             if (applyToAll) {
               const slide = slides.items[i];
@@ -275,26 +334,27 @@ export default function AddinPage() {
   return (
     <div className="flex flex-col h-screen bg-white">
       {/* ── Header ────────────────────────────────────────────────── */}
-      <div className="px-4 py-3 border-b border-slate-100 bg-white sticky top-0 z-10">
+      <div className="px-4 py-3 border-b border-slate-100 bg-white sticky top-0 z-10 transition-all hover:bg-slate-50/30">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-gradient-to-br from-[#2162F9] to-[#43EB7C] rounded-lg flex items-center justify-center">
+            <div className="w-6 h-6 bg-gradient-to-br from-[#2162F9] to-[#43EB7C] rounded-lg flex items-center justify-center shadow-sm shadow-blue-500/20">
               <Sparkles size={12} className="text-white" />
             </div>
             <span className="text-xs font-black uppercase tracking-widest text-slate-800">Tarkie AI</span>
           </div>
-          <div className="px-2 py-1 bg-blue-50 rounded-full">
-             <p className="text-[9px] text-[#2162F9] font-black uppercase tracking-tighter">
+          <div className="px-2 py-1 bg-blue-50/50 rounded-full flex items-center gap-1.5 grayscale opacity-70">
+             <div className="w-1 h-1 bg-green-500 rounded-full animate-pulse" />
+             <p className="text-[8px] text-[#2162F9] font-black uppercase tracking-tighter">
               Claude 3.5 Sonnet
             </p>
           </div>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-2">
           <select 
             value={selectedClient}
             onChange={(e) => setSelectedClient(e.target.value)}
-            className="w-full bg-slate-100 border-none rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#2162F9]/20 transition-all cursor-pointer"
+            className="w-full bg-slate-100/80 border-none rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#2162F9]/20 transition-all cursor-pointer shadow-inner"
           >
             <option value="">General Intelligence (Independent)</option>
             {clients.map(c => (
@@ -302,40 +362,52 @@ export default function AddinPage() {
             ))}
           </select>
 
-          <div className="flex items-center gap-2 px-1">
-            <input 
-              type="checkbox" 
-              id="applyAll" 
-              checked={applyToAll}
-              onChange={(e) => setApplyToAll(e.target.checked)}
-              className="w-3 h-3 rounded accent-[#2162F9]"
-            />
-            <label htmlFor="applyAll" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest cursor-pointer">
-              Apply to all slides
-            </label>
+          <div className="flex items-center justify-between px-1">
+             <div className="flex items-center gap-2">
+                <input 
+                  type="checkbox" 
+                  id="applyAll" 
+                  checked={applyToAll}
+                  onChange={(e) => setApplyToAll(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded-md accent-[#2162F9] cursor-pointer"
+                />
+                <label htmlFor="applyAll" className="text-[9px] font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:text-slate-600 transition-colors">
+                  Apply to all slides
+                </label>
+             </div>
+             
+             <button 
+              onClick={handleScanDeck}
+              disabled={isProcessing}
+              className="text-[9px] font-black text-[#2162F9] uppercase tracking-widest flex items-center gap-1 hover:underline disabled:opacity-30 disabled:no-underline"
+             >
+               <RefreshCw size={10} className={isProcessing && statusMsg.includes("Scan") ? "animate-spin" : ""} />
+               Scan Presentation
+             </button>
           </div>
         </div>
       </div>
 
       {/* ── Chat Messages ────────────────────────────────────────── */}
-      <div className="flex-1 overflow-auto p-4 space-y-4 styled-scroll">
+      <div className="flex-1 overflow-auto p-4 space-y-5 styled-scroll bg-[radial-gradient(#f1f5f9_1px,transparent_1px)] [background-size:20px_20px]">
         {messages.length === 0 && (
-          <div className="text-center py-12 px-6">
-            <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
-              <FileText className="text-slate-300" size={20} />
+          <div className="text-center py-10 px-6">
+            <div className="w-14 h-14 bg-white shadow-xl shadow-blue-500/5 rounded-2xl flex items-center justify-center mx-auto mb-5 border border-slate-50">
+              <Sparkles className="text-[#2162F9]/30" size={24} />
             </div>
-            <p className="text-xs font-bold text-slate-400 leading-relaxed italic">
-              "Update this slide with the client's account management team from intelligence."
+            <h3 className="text-[11px] font-black text-slate-800 uppercase tracking-widest mb-2">Ready to assist</h3>
+            <p className="text-[10px] font-bold text-slate-400 leading-relaxed italic max-w-[180px] mx-auto">
+              "Scan the presentation and tell me what's missing for Sol Manpower."
             </p>
           </div>
         )}
 
         {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[90%] p-3 rounded-2xl text-[11px] font-medium leading-relaxed ${
+          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
+            <div className={`max-w-[92%] p-3 shadow-sm text-[11px] font-medium leading-relaxed ${
               m.role === "user" 
-                ? "bg-[#2162F9] text-white rounded-tr-sm" 
-                : "bg-slate-100 text-slate-700 rounded-tl-sm"
+                ? "bg-gradient-to-br from-[#2162F9] to-[#3a79ff] text-white rounded-2xl rounded-tr-sm" 
+                : "bg-white border border-slate-100 text-slate-700 rounded-2xl rounded-tl-sm"
             }`}>
               {m.text}
             </div>
@@ -344,19 +416,20 @@ export default function AddinPage() {
 
         {isProcessing && (
           <div className="flex justify-start">
-            <div className="bg-slate-50 p-3 rounded-2xl rounded-tl-sm flex items-center gap-2 text-[10px] font-bold text-slate-400">
-              <Loader2 size={12} className="animate-spin text-[#2162F9]" />
+            <div className="bg-white/80 backdrop-blur-sm border border-slate-100 p-3 rounded-2xl rounded-tl-sm flex items-center gap-2 text-[10px] font-black text-[#2162F9] shadow-sm">
+              <Loader2 size={12} className="animate-spin" />
               {statusMsg}
             </div>
           </div>
         )}
 
         {error && (
-          <div className="p-3 bg-red-50 border border-red-100 rounded-xl flex items-start gap-2">
+          <div className="p-3 bg-red-50 border border-red-100 rounded-xl flex items-start gap-2 animate-shake">
             <AlertCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
-            <p className="text-[10px] font-bold text-red-600 leading-normal">{error}</p>
+            <p className="text-[10px] font-black text-red-600 leading-normal uppercase tracking-tighter">{error}</p>
           </div>
         )}
+        <div ref={messagesEndRef} />
       </div>
 
       {/* ── Chat Input ───────────────────────────────────────────── */}
@@ -372,21 +445,29 @@ export default function AddinPage() {
           <button 
             type="submit"
             disabled={isProcessing || !chatInput.trim()}
-            className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 bg-[#2162F9] text-white rounded-xl flex items-center justify-center hover:bg-blue-600 disabled:bg-slate-200 disabled:text-slate-400 transition-all"
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-11 h-11 bg-gradient-to-br from-[#2162F9] to-[#3a79ff] text-white rounded-xl flex items-center justify-center hover:shadow-lg hover:shadow-blue-500/30 disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:shadow-none transition-all active:scale-95"
           >
-            <Send size={16} />
+            <Send size={18} />
           </button>
         </form>
-        <p className="text-[9px] text-center text-slate-300 mt-3 font-medium uppercase tracking-widest">
-          Powered by Tarkie intelligence
-        </p>
+        <div className="flex items-center justify-center gap-4 mt-4">
+           <p className="text-[8px] text-slate-300 font-black uppercase tracking-[0.2em]">
+            Tarkie OS Ecosystem
+           </p>
+        </div>
       </div>
       
       <style jsx global>{`
-        .styled-scroll::-webkit-scrollbar { width: 4px; }
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          25% { transform: translateX(-4px); }
+          75% { transform: translateX(4px); }
+        }
+        .animate-shake { animation: shake 0.2s ease-in-out 0s 2; }
+        .styled-scroll::-webkit-scrollbar { width: 5px; }
         .styled-scroll::-webkit-scrollbar-track { background: transparent; }
-        .styled-scroll::-webkit-scrollbar-thumb { background: #F1F5F9; border-radius: 10px; }
-        .styled-scroll::-webkit-scrollbar-thumb:hover { background: #E2E8F0; }
+        .styled-scroll::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 20px; }
+        .styled-scroll::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
       `}</style>
     </div>
   );
