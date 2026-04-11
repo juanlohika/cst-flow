@@ -91,56 +91,96 @@ export default function AddinPage() {
     setTimeout(() => clearInterval(interval), 120000);
   };
 
+  /** Extracts text from a loaded shapes collection (must be already synced) */
+  const collectTextFromShapes = (shapesItems: any[]): string[] => {
+    const textBlocks: string[] = [];
+    for (const shape of shapesItems) {
+      try {
+        const text = shape.textFrame?.textRange?.text?.trim();
+        if (text) textBlocks.push(text);
+      } catch { /* skip */ }
+    }
+    return textBlocks;
+  };
+
   /** Scrapes all text from the current active slide */
   const getActiveSlideContent = async (): Promise<string[]> => {
     return await window.PowerPoint.run(async (context: any) => {
       const selectedSlides = context.presentation.getSelectedSlides();
-      selectedSlides.load("items/shapes/items/hasTextFrame,items/shapes/items/textFrame/hasText,items/shapes/items/textFrame/textRange/text");
+      selectedSlides.load("items");
       await context.sync();
 
       if (selectedSlides.items.length === 0) return [];
-      const textBlocks: string[] = [];
-      for (const shape of selectedSlides.items[0].shapes.items) {
-        try {
-          if (shape.hasTextFrame && shape.textFrame.hasText) {
-            const t = shape.textFrame.textRange.text?.trim();
-            if (t) textBlocks.push(t);
-          }
-        } catch { /* skip unreadable shape */ }
+
+      const shapes = selectedSlides.items[0].shapes;
+      shapes.load("items");
+      await context.sync();
+
+      for (const shape of shapes.items) {
+        shape.load("textFrame");
       }
-      return textBlocks;
+      await context.sync();
+
+      for (const shape of shapes.items) {
+        try {
+          shape.textFrame.load("textRange");
+        } catch { /* no textFrame */ }
+      }
+      await context.sync();
+
+      for (const shape of shapes.items) {
+        try {
+          shape.textFrame.textRange.load("text");
+        } catch { /* no textRange */ }
+      }
+      await context.sync();
+
+      return collectTextFromShapes(shapes.items);
     });
   };
 
-  /** Scrapes text from ALL slides — loads everything in one batch per slide */
+  /** Scrapes text from ALL slides */
   const getFullDeckContent = async (): Promise<{ slideIndex: number; content: string[] }[]> => {
     return await window.PowerPoint.run(async (context: any) => {
-      // Step 1: load slides list
       const slides = context.presentation.slides;
       slides.load("items");
       await context.sync();
 
-      // Step 2: load all shapes for all slides in one batch
+      // Load shapes collection for every slide
       for (const slide of slides.items) {
-        slide.shapes.load("items/hasTextFrame,items/textFrame/hasText,items/textFrame/textRange/text");
+        slide.shapes.load("items");
       }
       await context.sync();
 
-      // Step 3: collect text
-      const deckData: { slideIndex: number; content: string[] }[] = [];
-      for (let i = 0; i < slides.items.length; i++) {
-        const textBlocks: string[] = [];
-        for (const shape of slides.items[i].shapes.items) {
-          try {
-            if (shape.hasTextFrame && shape.textFrame.hasText) {
-              const t = shape.textFrame.textRange.text?.trim();
-              if (t) textBlocks.push(t);
-            }
-          } catch { /* skip */ }
+      // Load textFrame for every shape
+      for (const slide of slides.items) {
+        for (const shape of slide.shapes.items) {
+          shape.load("textFrame");
         }
-        deckData.push({ slideIndex: i + 1, content: textBlocks });
       }
-      return deckData;
+      await context.sync();
+
+      // Load textRange for every textFrame
+      for (const slide of slides.items) {
+        for (const shape of slide.shapes.items) {
+          try { shape.textFrame.load("textRange"); } catch { /* no textFrame */ }
+        }
+      }
+      await context.sync();
+
+      // Load text for every textRange
+      for (const slide of slides.items) {
+        for (const shape of slide.shapes.items) {
+          try { shape.textFrame.textRange.load("text"); } catch { /* no textRange */ }
+        }
+      }
+      await context.sync();
+
+      // Collect
+      return slides.items.map((slide: any, i: number) => ({
+        slideIndex: i + 1,
+        content: collectTextFromShapes(slide.shapes.items),
+      }));
     });
   };
 
