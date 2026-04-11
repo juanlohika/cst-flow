@@ -62,17 +62,25 @@ ${isBulk
 
 RULES:
 1. When the user asks to update/change/edit slides — ALWAYS return [[UPDATE_SUGGESTIONS]] with the exact text replacements.
-2. The "original" field MUST be copied EXACTLY from the slide content above — character for character. The add-in does a string match.
-3. One suggestion per text block you want to change. If replacing a full bullet list, use the entire current text as "original".
+2. The "original" field MUST be a SHORT snippet copied EXACTLY from the slide content above — a single line or phrase, NOT the whole block. The add-in does an exact string.includes() match, so shorter = more likely to match.
+3. One suggestion per individual line or phrase you want to change. Never combine multiple lines into one "original".
 4. Never say you cannot edit slides — you can, via the JSON output.
 5. Only use data from Account Intelligence or slide content — never invent facts.
+
+EXAMPLE — if the slide shows:
+"Lack of Delivery Tracking and On-site Visibility"
+"No Visibility of On-Site Engineers' Breaks"
+
+To replace both lines, output TWO separate suggestions:
+{"slideIndex": 7, "original": "Lack of Delivery Tracking and On-site Visibility", "replacement": "Manual DTR causing billing delays"}
+{"slideIndex": 7, "original": "No Visibility of On-Site Engineers' Breaks", "replacement": "OT tampering and timesheet disputes"}
 
 OUTPUT FORMAT when making edits:
 [[CONVERSATION_RESPONSE]]
 Brief explanation of what you changed and why.
 [[UPDATE_SUGGESTIONS]]
 [
-  {"slideIndex": 7, "original": "exact current text from slide", "replacement": "new text to replace it with"}
+  {"slideIndex": 7, "original": "single line or phrase from slide", "replacement": "new text"}
 ]
 
 OUTPUT FORMAT when just answering questions (no edits):

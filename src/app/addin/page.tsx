@@ -105,7 +105,10 @@ export default function AddinPage() {
           shape.textFrame.textRange.load("text");
           await context.sync();
           const t = shape.textFrame.textRange.text?.trim();
-          if (t) texts.push(t);
+          if (t) {
+            console.log(`[Tarkie] slide${slideIndex + 1} shape text (${t.length} chars):`, JSON.stringify(t.substring(0, 100)));
+            texts.push(t);
+          }
         } catch { /* not a text shape */ }
       }
       return texts;
