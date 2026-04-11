@@ -290,7 +290,8 @@ function buildGeminiAdapter(apiKey: string) {
 
 function buildClaudeAdapter(apiKey: string) {
   const client = new Anthropic({ apiKey });
-  const MODEL = "claude-3-5-sonnet-20241022";
+  // Using the 'latest' alias to ensure we target the most current version available for the API key
+  const MODEL = "claude-3-5-sonnet-latest";
   console.log(`[AI] Provider: Claude  Model: ${MODEL}`);
 
   return {
