@@ -216,117 +216,137 @@ export default function AddinPage() {
     return deckData;
   };
 
-  /** Applies text replacements to table cells on a slide (0-based slideIdx).
-   *  Uses the same load path as getSlideText which successfully reads table cells. */
-  const applyTableReplacements = async (slideIdx: number, original: string, replacement: string): Promise<number> => {
-    return await window.PowerPoint.run(async (context: any) => {
+  /**
+   * Escapes a string for use inside an XML text node.
+   * PowerPoint OOXML stores text as XML — we must escape special chars.
+   */
+  const escapeXml = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+
+  /**
+   * Applies all suggestions to a slide by patching the raw OOXML.
+   * This is the only reliable method for table cells in PowerPoint Web JS.
+   *
+   * Strategy:
+   *  1. Get the slide's XML via getSelectedSlideOoxml (if on that slide) or getFileAsync
+   *  2. In the XML, find <a:t>original</a:t> and replace with <a:t>replacement</a:t>
+   *  3. Set the modified XML back with setSelectedDataAsync
+   */
+  const applyToSlide = async (slideIdx: number, suggestions: { original: string; replacement: string }[]) => {
+    if (!suggestions || suggestions.length === 0) return;
+
+    // First try the fast Office JS text-shape path for non-table shapes
+    let unmatchedSuggestions = [...suggestions];
+
+    await window.PowerPoint.run(async (context: any) => {
       const slide = context.presentation.slides.getItemAt(slideIdx);
       slide.shapes.load("items");
       await context.sync();
 
-      let count = 0;
-
       for (const shape of slide.shapes.items) {
-        // Use same nested load path as getSlideText reading — this is confirmed working
-        let isTable = false;
         try {
-          // Load rows with nested cells in one shot (same as read path)
           shape.load("type");
-          shape.table.rows.load("items/cells/items");
-          await context.sync();
-          isTable = String(shape.type).toLowerCase().includes("table") || shape.type === 4;
-        } catch {
-          continue; // not a table shape — skip
-        }
-
-        if (!isTable) continue;
-        console.log(`[Tarkie] found table shape, iterating cells`);
-
-        // Now read text from each cell using the same path as getTableCellText
-        const allCells: any[] = [];
-        for (const row of shape.table.rows.items) {
-          for (const cell of row.cells.items) {
-            cell.textFrame.textRange.load("text");
-            allCells.push(cell);
-          }
-        }
-        await context.sync();
-
-        // Write replacements
-        let batchDirty = false;
-        for (const cell of allCells) {
-          const raw: string = cell.textFrame.textRange.text || "";
-          // Log exact bytes so we can see invisible chars (\r, \n, \u000b etc)
-          console.log(`[Tarkie] cell exact:`, JSON.stringify(raw));
-          // Normalize both sides: trim and collapse all whitespace variants
-          const normalizedRaw = raw.replace(/[\r\n\u000b\u000c\u0085\u2028\u2029]+/g, " ").trim();
-          const normalizedOriginal = original.replace(/[\r\n\u000b\u000c\u0085\u2028\u2029]+/g, " ").trim();
-          console.log(`[Tarkie] normalized cell:`, JSON.stringify(normalizedRaw), `| looking for:`, JSON.stringify(normalizedOriginal));
-          if (normalizedRaw.includes(normalizedOriginal)) {
-            // Write replacement using normalized text to avoid carrying over invisible chars
-            cell.textFrame.textRange.text = normalizedRaw.split(normalizedOriginal).join(replacement);
-            count++;
-            batchDirty = true;
-            console.log(`[Tarkie] ✓ table cell replaced "${original}" → "${replacement}"`);
-          }
-        }
-        if (batchDirty) await context.sync();
-      }
-
-      return count;
-    });
-  };
-
-  /** Applies text replacements to text shapes on a slide (0-based slideIdx) */
-  const applyTextReplacements = async (slideIdx: number, original: string, replacement: string): Promise<number> => {
-    return await window.PowerPoint.run(async (context: any) => {
-      const slide = context.presentation.slides.getItemAt(slideIdx);
-      slide.shapes.load("items");
-      await context.sync();
-
-      let count = 0;
-      for (const shape of slide.shapes.items) {
-        try {
           shape.textFrame.textRange.load("text");
           await context.sync();
+          if (String(shape.type).toLowerCase().includes("table")) continue; // skip tables here
           const raw: string = shape.textFrame.textRange.text || "";
           if (!raw || isFooterText(raw)) continue;
-          if (raw.includes(original)) {
-            shape.textFrame.textRange.text = raw.split(original).join(replacement);
-            await context.sync();
-            count++;
-            console.log(`[Tarkie] ✓ text shape replaced "${original}"`);
+
+          for (const s of unmatchedSuggestions) {
+            if (raw.includes(s.original)) {
+              shape.textFrame.textRange.text = raw.split(s.original).join(s.replacement);
+              await context.sync();
+              console.log(`[Tarkie] ✓ text shape replaced "${s.original}"`);
+              unmatchedSuggestions = unmatchedSuggestions.filter(x => x !== s);
+            }
           }
         } catch { /* not a text shape */ }
       }
-      return count;
+    }).catch(() => {});
+
+    if (unmatchedSuggestions.length === 0) return;
+
+    // For remaining suggestions (likely table cells) — use OOXML patch approach
+    console.log(`[Tarkie] Attempting OOXML patch for ${unmatchedSuggestions.length} unmatched suggestions`);
+
+    // Get the slide ID for the target slide, then navigate and patch OOXML
+    const slideId: string = await window.PowerPoint.run(async (context: any) => {
+      const slide = context.presentation.slides.getItemAt(slideIdx);
+      slide.load("id");
+      await context.sync();
+      return slide.id;
     });
-  };
 
-  /** Applies text replacements to all shape types on a slide */
-  const applyToSlide = async (slideIdx: number, suggestions: { original: string; replacement: string }[]) => {
-    if (!suggestions || suggestions.length === 0) return;
-    let matchCount = 0;
+    console.log(`[Tarkie] Navigating to slide id: ${slideId}`);
 
-    for (const s of suggestions) {
-      if (!s.original || !s.replacement) continue;
+    await new Promise<void>((resolve) => {
+      // Navigate to the target slide so getSelectedDataAsync returns its OOXML
+      window.Office.context.document.goToByIdAsync(
+        slideId,
+        window.Office.GoToType.Slide,
+        (gotoResult: any) => {
+          if (gotoResult.status !== window.Office.AsyncResultStatus.Succeeded) {
+            console.warn("[Tarkie] goToByIdAsync failed:", gotoResult.error?.message);
+            resolve();
+            return;
+          }
 
-      // Try table cells first (separate run per shape to avoid context corruption)
-      const tableMatches = await applyTableReplacements(slideIdx, s.original, s.replacement);
-      matchCount += tableMatches;
+          // Get the OOXML for the now-selected slide
+          window.Office.context.document.getSelectedDataAsync(
+            "ooxml" as any,
+            (ooxmlResult: any) => {
+              if (ooxmlResult.status !== window.Office.AsyncResultStatus.Succeeded) {
+                console.warn("[Tarkie] OOXML get failed:", ooxmlResult.error?.message);
+                resolve();
+                return;
+              }
 
-      // Then try text shapes
-      if (tableMatches === 0) {
-        const textMatches = await applyTextReplacements(slideIdx, s.original, s.replacement);
-        matchCount += textMatches;
-      }
-    }
+              let xml: string = ooxmlResult.value;
+              console.log(`[Tarkie] Got OOXML, length: ${xml.length}`);
+              let changed = 0;
 
-    if (matchCount === 0) {
-      console.warn(`[Tarkie] applyToSlide ${slideIdx + 1}: no matches found`, suggestions.map(s => s.original));
-    } else {
-      console.log(`[Tarkie] applyToSlide ${slideIdx + 1}: applied ${matchCount} total replacements`);
-    }
+              for (const s of unmatchedSuggestions) {
+                const escapedOriginal = escapeXml(s.original);
+                const escapedReplacement = escapeXml(s.replacement);
+                const before = xml;
+                // Try escaped version first
+                xml = xml.split(`<a:t>${escapedOriginal}</a:t>`).join(`<a:t>${escapedReplacement}</a:t>`);
+                // Fallback: unescaped (some Office versions store text literally)
+                if (xml === before) {
+                  xml = xml.split(`<a:t>${s.original}</a:t>`).join(`<a:t>${s.replacement}</a:t>`);
+                }
+                if (xml !== before) {
+                  changed++;
+                  console.log(`[Tarkie] ✓ OOXML patched "${s.original}" → "${s.replacement}"`);
+                } else {
+                  // Log a snippet of the XML around <a:t> tags for debugging
+                  const aTagMatches = xml.match(/<a:t>[^<]{1,60}<\/a:t>/g)?.slice(0, 10) || [];
+                  console.warn(`[Tarkie] OOXML no match for "${s.original}". Sample <a:t> values:`, aTagMatches);
+                }
+              }
+
+              if (changed === 0) {
+                resolve();
+                return;
+              }
+
+              window.Office.context.document.setSelectedDataAsync(
+                xml,
+                { coercionType: "ooxml" as any },
+                (setResult: any) => {
+                  if (setResult.status === window.Office.AsyncResultStatus.Succeeded) {
+                    console.log(`[Tarkie] ✓ OOXML written back, ${changed} replacements applied`);
+                  } else {
+                    console.error("[Tarkie] OOXML write failed:", setResult.error?.message);
+                  }
+                  resolve();
+                }
+              );
+            }
+          );
+        }
+      );
+    });
   };
 
   const handleScanDeck = async () => {
