@@ -6,21 +6,20 @@
     xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides" 
     xsi:type="TaskPaneApp">
 
-  <!-- SCHEMA 1.1 - 2026 STRICT MODE -->
-  <Id>d4c5b6a7-8e9f-0d1c-2b3a-4f5e6d7c8b9a</Id>
-  <Version>1.6.0.0</Version>
+  <!-- SCHEMA 1.1 - 2026 SCIENTIFIC FIX -->
+  <Id>a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6</Id>
+  <Version>1.7.0.0</Version>
   <ProviderName>Tarkie</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Tarkie AI Generator" />
   <Description DefaultValue="AI-powered presentation builder for Tarkie intelligence." />
   
-  <!-- ROOT ICONS: MANDATORY 32/64 -->
+  <!-- ROOT ICONS: MANDATORY 32/80 -->
   <IconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png" />
-  <HighResolutionIconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-64.png" />
+  <HighResolutionIconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-80.png" />
   
   <SupportUrl DefaultValue="https://www.tarkie.com" />
   
-  <!-- 2026 STRICT: DOMAIN ONLY, NO HTTPS, NO SLASH -->
   <AppDomains>
     <AppDomain>cst-flow--cst-flowdesk.asia-east1.hosted.app</AppDomain>
   </AppDomains>
@@ -30,7 +29,7 @@
   </Hosts>
 
   <Requirements>
-    <Sets DefaultMinVersion="1.1">
+    <Sets>
       <Set Name="PresentationML" MinVersion="1.1" />
     </Sets>
   </Requirements>
@@ -46,8 +45,8 @@
       <Host xsi:type="Presentation">
         <DesktopFormFactor>
           <GetStarted>
-            <Title DefaultValue="Tarkie AI" />
-            <Description DefaultValue="Your AI-powered presentation assistant is ready." />
+            <Title DefaultValue="Tarkie AI Ready" />
+            <Description DefaultValue="Open the taskpane to start generating slides." />
             <LearnMoreUrl DefaultValue="https://www.tarkie.com" />
           </GetStarted>
           
@@ -65,7 +64,11 @@
                   </Supertip>
                   <Icon>
                     <bt:Image size="16" resid="Icon.16" />
+                    <bt:Image size="20" resid="Icon.20" />
+                    <bt:Image size="24" resid="Icon.24" />
                     <bt:Image size="32" resid="Icon.32" />
+                    <bt:Image size="48" resid="Icon.48" />
+                    <bt:Image size="64" resid="Icon.64" />
                     <bt:Image size="80" resid="Icon.80" />
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
@@ -82,9 +85,12 @@
     <Resources>
       <bt:Images>
         <bt:Image id="Icon.16" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-16.png" />
+        <bt:Image id="Icon.20" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-20.png" />
+        <bt:Image id="Icon.24" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-24.png" />
         <bt:Image id="Icon.25" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-25.png" />
         <bt:Image id="Icon.32" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png" />
         <bt:Image id="Icon.48" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-48.png" />
+        <bt:Image id="Icon.64" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-64.png" />
         <bt:Image id="Icon.80" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-80.png" />
       </bt:Images>
       <bt:Urls>
@@ -93,7 +99,7 @@
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="Tarkie.GroupLabel" DefaultValue="Tarkie" />
-        <bt:String id="Tarkie.ButtonLabel" DefaultValue="Tarkie Generator" />
+        <bt:String id="Tarkie.ButtonLabel" DefaultValue="Tarkie AI" />
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="Tarkie.ButtonTip" DefaultValue="Open the AI Presentation Builder" />
@@ -101,6 +107,7 @@
     </Resources>
   </VersionOverrides>
 </OfficeApp>
+
 
 
 
