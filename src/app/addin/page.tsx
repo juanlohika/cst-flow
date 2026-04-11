@@ -218,66 +218,60 @@ export default function AddinPage() {
 
   /** Applies text replacements to table cells on a slide (0-based slideIdx) */
   const applyTableReplacements = async (slideIdx: number, original: string, replacement: string): Promise<number> => {
-    let count = 0;
-    // Get shape count first
-    const shapeCount = await window.PowerPoint.run(async (context: any) => {
+    return await window.PowerPoint.run(async (context: any) => {
+      // Step 1: load shapes
       const slide = context.presentation.slides.getItemAt(slideIdx);
       slide.shapes.load("items");
       await context.sync();
-      return slide.shapes.items.length;
-    });
 
-    // Process each shape in its own run to avoid context corruption
-    for (let shapeIdx = 0; shapeIdx < shapeCount; shapeIdx++) {
-      const replaced = await window.PowerPoint.run(async (context: any) => {
-        const slide = context.presentation.slides.getItemAt(slideIdx);
-        slide.shapes.load("items");
-        await context.sync();
-        const shape = slide.shapes.items[shapeIdx];
+      let count = 0;
 
-        // Load shape type to determine if it's a table
+      for (const shape of slide.shapes.items) {
+        // Step 2: load type for this shape
         shape.load("type");
         await context.sync();
-        // Shape type 4 = Table in PowerPoint JS API; also try by name pattern
-        const isTable = shape.type === 4 || shape.type === "Table" || String(shape.type).toLowerCase().includes("table");
-        console.log(`[Tarkie] shape[${shapeIdx}] type: ${shape.type}, isTable: ${isTable}`);
 
-        if (!isTable) return 0;
+        const isTable = String(shape.type).toLowerCase().includes("table") || shape.type === 4;
+        console.log(`[Tarkie] shape type: ${shape.type}, isTable: ${isTable}`);
+        if (!isTable) continue;
 
-        // It's a table — load row count first
-        const tableObj = shape.table;
-        tableObj.load("rowCount");
+        // Step 3: load the table's rows collection
+        const table = shape.table;
+        table.rows.load("items");
         await context.sync();
-        const rowCount: number = tableObj.rowCount;
-        console.log(`[Tarkie] table[${shapeIdx}] rowCount: ${rowCount}`);
+        console.log(`[Tarkie] table rows loaded: ${table.rows.items.length}`);
 
-        let localCount = 0;
-        for (let rowIdx = 0; rowIdx < rowCount; rowIdx++) {
-          // Get row by index, load cell count
-          const row = tableObj.rows.getItemAt(rowIdx);
-          row.load("cellCount");
-          await context.sync();
-          const cellCount: number = row.cellCount;
+        // Step 4: for each row, load its cells
+        for (const row of table.rows.items) {
+          row.cells.load("items");
+        }
+        await context.sync();
 
-          for (let cellIdx = 0; cellIdx < cellCount; cellIdx++) {
-            const cell = row.cells.getItemAt(cellIdx);
+        // Step 5: for each cell, load textFrame text
+        const allCells: any[] = [];
+        for (const row of table.rows.items) {
+          for (const cell of row.cells.items) {
             cell.textFrame.textRange.load("text");
-            await context.sync();
-            const raw: string = cell.textFrame.textRange.text || "";
-            console.log(`[Tarkie] table[${shapeIdx}] row[${rowIdx}] cell[${cellIdx}]: "${raw.substring(0, 50)}"`);
-            if (raw.includes(original)) {
-              cell.textFrame.textRange.text = raw.split(original).join(replacement);
-              await context.sync();
-              localCount++;
-              console.log(`[Tarkie] ✓ table cell [${shapeIdx}][${rowIdx}][${cellIdx}] replaced "${original}" → "${replacement}"`);
-            }
+            allCells.push(cell);
           }
         }
-        return localCount;
-      });
-      count += replaced;
-    }
-    return count;
+        await context.sync();
+
+        // Step 6: read and write
+        for (const cell of allCells) {
+          const raw: string = cell.textFrame.textRange.text || "";
+          console.log(`[Tarkie] cell: "${raw.substring(0, 50)}"`);
+          if (raw.includes(original)) {
+            cell.textFrame.textRange.text = raw.split(original).join(replacement);
+            count++;
+            console.log(`[Tarkie] ✓ replaced "${original}" → "${replacement}"`);
+          }
+        }
+        if (count > 0) await context.sync();
+      }
+
+      return count;
+    });
   };
 
   /** Applies text replacements to text shapes on a slide (0-based slideIdx) */
