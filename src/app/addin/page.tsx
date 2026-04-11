@@ -96,6 +96,20 @@ export default function AddinPage() {
     t.includes("©") || t.includes("All rights reserved") || t.includes("confidential") ||
     (t.length > 120 && !t.includes("\n"));
 
+  /** Read/write text from a table cell via its shape's textFrame (PowerPoint Web API) */
+  const getTableCellText = async (cell: any, context: any): Promise<string> => {
+    try {
+      cell.body.load("text");
+      await context.sync();
+      return cell.body.text?.trim() ?? "";
+    } catch { /* body.text not supported, try paragraphs */ }
+    try {
+      cell.body.paragraphs.load("items/text");
+      await context.sync();
+      return cell.body.paragraphs.items.map((p: any) => p.text?.trim()).filter(Boolean).join(" ");
+    } catch { return ""; }
+  };
+
   /** Reads all text from a slide's shapes + tables (0-based index) */
   const getSlideText = async (slideIndex: number): Promise<string[]> => {
     return await window.PowerPoint.run(async (context: any) => {
@@ -106,30 +120,27 @@ export default function AddinPage() {
 
       const texts: string[] = [];
       for (const shape of shapes.items) {
-        // ── Try table first ────────────────────────────────────────────────
+        // ── Try table ─────────────────────────────────────────────────────
+        let handledAsTable = false;
         try {
           const table = shape.table;
-          table.rows.load("items");
+          table.rows.load("items/cells/items");
           await context.sync();
           const tableLines: string[] = [];
           for (const row of table.rows.items) {
-            row.cells.load("items");
-            await context.sync();
             const rowCells: string[] = [];
             for (const cell of row.cells.items) {
-              cell.body.paragraphs.load("items");
-              await context.sync();
-              for (const para of cell.body.paragraphs.items) {
-                para.load("text");
-                await context.sync();
-                if (para.text?.trim()) rowCells.push(para.text.trim());
-              }
+              const t = await getTableCellText(cell, context);
+              if (t) rowCells.push(t);
             }
             if (rowCells.length) tableLines.push(rowCells.join(" | "));
           }
-          if (tableLines.length) texts.push("[TABLE]\n" + tableLines.join("\n"));
-          continue; // shape was a table, skip textFrame attempt
-        } catch { /* not a table */ }
+          if (tableLines.length) {
+            texts.push("[TABLE]\n" + tableLines.join("\n"));
+            handledAsTable = true;
+          }
+        } catch { /* not a table shape */ }
+        if (handledAsTable) continue;
 
         // ── Try text frame ─────────────────────────────────────────────────
         try {
@@ -157,28 +168,23 @@ export default function AddinPage() {
 
       const texts: string[] = [];
       for (const shape of shapes.items) {
+        let handledAsTable = false;
         try {
           const table = shape.table;
-          table.rows.load("items");
+          table.rows.load("items/cells/items");
           await context.sync();
           const tableLines: string[] = [];
           for (const row of table.rows.items) {
-            row.cells.load("items");
-            await context.sync();
             const rowCells: string[] = [];
             for (const cell of row.cells.items) {
-              cell.body.paragraphs.load("items");
-              await context.sync();
-              for (const para of cell.body.paragraphs.items) {
-                para.load("text");
-                await context.sync();
-                if (para.text?.trim()) rowCells.push(para.text.trim());
-              }
+              const t = await getTableCellText(cell, context);
+              if (t) rowCells.push(t);
             }
             if (rowCells.length) tableLines.push(rowCells.join(" | "));
           }
-          if (tableLines.length) { texts.push("[TABLE]\n" + tableLines.join("\n")); continue; }
+          if (tableLines.length) { texts.push("[TABLE]\n" + tableLines.join("\n")); handledAsTable = true; }
         } catch { /* not a table */ }
+        if (handledAsTable) continue;
 
         try {
           shape.textFrame.textRange.load("text");
@@ -225,32 +231,47 @@ export default function AddinPage() {
         let isTable = false;
         try {
           const table = shape.table;
-          table.rows.load("items");
+          table.rows.load("items/cells/items");
           await context.sync();
           isTable = true;
 
           for (const row of table.rows.items) {
-            row.cells.load("items");
-            await context.sync();
             for (const cell of row.cells.items) {
-              cell.body.paragraphs.load("items");
-              await context.sync();
-              for (const para of cell.body.paragraphs.items) {
-                para.load("text");
+              // Try body.text (read + write)
+              let cellText = "";
+              let useBodyText = false;
+              try {
+                cell.body.load("text");
                 await context.sync();
-                let text: string = para.text || "";
-                let changed = false;
-                for (const s of suggestions) {
-                  if (s.original && text.includes(s.original)) {
-                    text = text.split(s.original).join(s.replacement);
-                    changed = true;
-                    matchCount++;
-                  }
-                }
-                if (changed) {
-                  para.text = text;
+                cellText = cell.body.text?.trim() ?? "";
+                useBodyText = true;
+              } catch {
+                try {
+                  cell.body.paragraphs.load("items/text");
                   await context.sync();
+                  cellText = cell.body.paragraphs.items.map((p: any) => p.text?.trim()).filter(Boolean).join(" ");
+                } catch { continue; }
+              }
+
+              let changed = false;
+              let newText = cellText;
+              for (const s of suggestions) {
+                if (s.original && newText.includes(s.original)) {
+                  newText = newText.split(s.original).join(s.replacement);
+                  changed = true;
+                  matchCount++;
                 }
+              }
+              if (changed) {
+                if (useBodyText) {
+                  cell.body.text = newText;
+                } else {
+                  // Fall back: set text on first paragraph
+                  try {
+                    cell.body.paragraphs.items[0].text = newText;
+                  } catch { /* can't write */ }
+                }
+                await context.sync();
               }
             }
           }
