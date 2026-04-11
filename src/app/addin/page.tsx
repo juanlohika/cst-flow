@@ -101,12 +101,19 @@ export default function AddinPage() {
       if (selectedSlides.items.length === 0) return [];
       const activeSlide = selectedSlides.items[0];
       const shapes = activeSlide.shapes;
-      shapes.load("items/textFrame/hasText, items/textFrame/textRange/text");
+      shapes.load("items/hasTextFrame");
       await context.sync();
 
       const textBlocks: string[] = [];
       for (const shape of shapes.items) {
-        if (shape.textFrame && shape.textFrame.hasText) {
+        if (shape.hasTextFrame) {
+          shape.textFrame.load("hasText, textRange/text");
+        }
+      }
+      await context.sync();
+
+      for (const shape of shapes.items) {
+        if (shape.hasTextFrame && shape.textFrame.hasText) {
           textBlocks.push(shape.textFrame.textRange.text);
         }
       }
@@ -125,11 +132,18 @@ export default function AddinPage() {
       for (let i = 0; i < slides.items.length; i++) {
         const slide = slides.items[i];
         const shapes = slide.shapes;
-        shapes.load("items/textFrame/hasText, items/textFrame/textRange/text");
+        shapes.load("items/hasTextFrame");
+        await context.sync();
+
+        for (const shape of shapes.items) {
+          if (shape.hasTextFrame) {
+            shape.textFrame.load("hasText, textRange/text");
+          }
+        }
         await context.sync();
 
         const slideText = shapes.items
-          .filter((s: any) => s.textFrame && s.textFrame.hasText)
+          .filter((s: any) => s.hasTextFrame && s.textFrame.hasText)
           .map((s: any) => s.textFrame.textRange.text);
         
         deckData.push({ slideIndex: i + 1, content: slideText });
@@ -149,11 +163,18 @@ export default function AddinPage() {
 
       const activeSlide = selectedSlides.items[0];
       const shapes = activeSlide.shapes;
-      shapes.load("items/textFrame/hasText, items/textFrame/textRange");
+      shapes.load("items/hasTextFrame");
       await context.sync();
 
       for (const shape of shapes.items) {
-        if (shape.textFrame && shape.textFrame.hasText) {
+        if (shape.hasTextFrame) {
+          shape.textFrame.load("hasText, textRange");
+        }
+      }
+      await context.sync();
+
+      for (const shape of shapes.items) {
+        if (shape.hasTextFrame && shape.textFrame.hasText) {
           let currentText = shape.textFrame.textRange.text;
           let updated = false;
 
@@ -227,11 +248,18 @@ export default function AddinPage() {
           if (applyToAll) {
             const slide = slides.items[i];
             const shapes = slide.shapes;
-            shapes.load("items/textFrame/hasText, items/textFrame/textRange/text");
+            shapes.load("items/hasTextFrame");
+            await context.sync();
+
+            for (const shape of shapes.items) {
+              if (shape.hasTextFrame) {
+                shape.textFrame.load("hasText, textRange/text");
+              }
+            }
             await context.sync();
 
             slideContent = shapes.items
-              .filter((s: any) => s.textFrame && s.textFrame.hasText)
+              .filter((s: any) => s.hasTextFrame && s.textFrame.hasText)
               .map((s: any) => s.textFrame.textRange.text);
           } else {
             slideContent = await getActiveSlideContent();
@@ -265,11 +293,18 @@ export default function AddinPage() {
             if (applyToAll) {
               const slide = slides.items[i];
               const shapes = slide.shapes;
-              shapes.load("items/textFrame/hasText, items/textFrame/textRange");
+              shapes.load("items/hasTextFrame");
               await context.sync();
 
               for (const shape of shapes.items) {
-                if (shape.textFrame && shape.textFrame.hasText) {
+                if (shape.hasTextFrame) {
+                  shape.textFrame.load("hasText, textRange");
+                }
+              }
+              await context.sync();
+
+              for (const shape of shapes.items) {
+                if (shape.hasTextFrame && shape.textFrame.hasText) {
                   let currentText = shape.textFrame.textRange.text;
                   let updated = false;
                   for (const s of data.suggestions) {
