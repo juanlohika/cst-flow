@@ -216,88 +216,108 @@ export default function AddinPage() {
     return deckData;
   };
 
-  /** Applies text replacements using presentation-level search — works on ALL shape types including tables */
+  /** Applies text replacements to table cells on a slide (0-based slideIdx) */
+  const applyTableReplacements = async (slideIdx: number, original: string, replacement: string): Promise<number> => {
+    let count = 0;
+    // Get shape count first
+    const shapeCount = await window.PowerPoint.run(async (context: any) => {
+      const slide = context.presentation.slides.getItemAt(slideIdx);
+      slide.shapes.load("items");
+      await context.sync();
+      return slide.shapes.items.length;
+    });
+
+    // Process each shape in its own run to avoid context corruption
+    for (let shapeIdx = 0; shapeIdx < shapeCount; shapeIdx++) {
+      const replaced = await window.PowerPoint.run(async (context: any) => {
+        const slide = context.presentation.slides.getItemAt(slideIdx);
+        slide.shapes.load("items");
+        await context.sync();
+        const shape = slide.shapes.items[shapeIdx];
+
+        // Load shape type to determine if it's a table
+        shape.load("type");
+        await context.sync();
+        // Shape type 4 = Table in PowerPoint JS API; also try by name pattern
+        const isTable = shape.type === 4 || shape.type === "Table" || String(shape.type).toLowerCase().includes("table");
+        console.log(`[Tarkie] shape[${shapeIdx}] type: ${shape.type}, isTable: ${isTable}`);
+
+        if (!isTable) return 0;
+
+        // It's a table — traverse rows and cells
+        const table = shape.table;
+        table.rows.load("items");
+        await context.sync();
+
+        let localCount = 0;
+        for (let rowIdx = 0; rowIdx < table.rows.items.length; rowIdx++) {
+          const row = table.rows.items[rowIdx];
+          row.cells.load("items");
+          await context.sync();
+
+          for (let cellIdx = 0; cellIdx < row.cells.items.length; cellIdx++) {
+            const cell = row.cells.items[cellIdx];
+            cell.textFrame.textRange.load("text");
+            await context.sync();
+            const raw: string = cell.textFrame.textRange.text || "";
+            console.log(`[Tarkie] table[${shapeIdx}] row[${rowIdx}] cell[${cellIdx}]: "${raw.substring(0, 50)}"`);
+            if (raw.includes(original)) {
+              cell.textFrame.textRange.text = raw.split(original).join(replacement);
+              await context.sync();
+              localCount++;
+              console.log(`[Tarkie] ✓ table cell [${shapeIdx}][${rowIdx}][${cellIdx}] replaced "${original}" → "${replacement}"`);
+            }
+          }
+        }
+        return localCount;
+      });
+      count += replaced;
+    }
+    return count;
+  };
+
+  /** Applies text replacements to text shapes on a slide (0-based slideIdx) */
+  const applyTextReplacements = async (slideIdx: number, original: string, replacement: string): Promise<number> => {
+    return await window.PowerPoint.run(async (context: any) => {
+      const slide = context.presentation.slides.getItemAt(slideIdx);
+      slide.shapes.load("items");
+      await context.sync();
+
+      let count = 0;
+      for (const shape of slide.shapes.items) {
+        try {
+          shape.textFrame.textRange.load("text");
+          await context.sync();
+          const raw: string = shape.textFrame.textRange.text || "";
+          if (!raw || isFooterText(raw)) continue;
+          if (raw.includes(original)) {
+            shape.textFrame.textRange.text = raw.split(original).join(replacement);
+            await context.sync();
+            count++;
+            console.log(`[Tarkie] ✓ text shape replaced "${original}"`);
+          }
+        } catch { /* not a text shape */ }
+      }
+      return count;
+    });
+  };
+
+  /** Applies text replacements to all shape types on a slide */
   const applyToSlide = async (slideIdx: number, suggestions: { original: string; replacement: string }[]) => {
     if (!suggestions || suggestions.length === 0) return;
     let matchCount = 0;
 
     for (const s of suggestions) {
       if (!s.original || !s.replacement) continue;
-      try {
-        await window.PowerPoint.run(async (context: any) => {
-          // searchOptions: exact match within the full presentation search
-          const results = context.presentation.search(s.original, { matchCase: true, matchWholeWord: false });
-          results.load("items");
-          await context.sync();
 
-          // Filter to only results on the target slide
-          const slideResults = results.items.filter((r: any) => {
-            try { return r.slideIndex === slideIdx + 1; } catch { return true; }
-          });
+      // Try table cells first (separate run per shape to avoid context corruption)
+      const tableMatches = await applyTableReplacements(slideIdx, s.original, s.replacement);
+      matchCount += tableMatches;
 
-          if (slideResults.length > 0) {
-            for (const range of slideResults) {
-              range.text = s.replacement;
-            }
-            await context.sync();
-            matchCount += slideResults.length;
-            console.log(`[Tarkie] search replaced "${s.original}" → "${s.replacement}" (${slideResults.length} matches)`);
-          } else if (results.items.length > 0) {
-            // slideIndex filter failed — apply to all found instances
-            for (const range of results.items) {
-              range.text = s.replacement;
-            }
-            await context.sync();
-            matchCount += results.items.length;
-            console.log(`[Tarkie] search replaced (no slide filter) "${s.original}" → ${results.items.length} matches`);
-          }
-        });
-      } catch (e) {
-        console.warn(`[Tarkie] search API failed for "${s.original}", trying full traversal:`, e);
-        await window.PowerPoint.run(async (context: any) => {
-          const slide = context.presentation.slides.getItemAt(slideIdx);
-          slide.shapes.load("items");
-          await context.sync();
-
-          for (const shape of slide.shapes.items) {
-            // ── Try as table ──────────────────────────────────────────────
-            try {
-              const table = shape.table;
-              table.rows.load("items/cells/items");
-              await context.sync();
-              for (const row of table.rows.items) {
-                for (const cell of row.cells.items) {
-                  try {
-                    cell.textFrame.textRange.load("text");
-                    await context.sync();
-                    const raw: string = cell.textFrame.textRange.text || "";
-                    if (raw.includes(s.original)) {
-                      cell.textFrame.textRange.text = raw.split(s.original).join(s.replacement);
-                      await context.sync();
-                      matchCount++;
-                      console.log(`[Tarkie] table cell replaced "${s.original}"`);
-                    }
-                  } catch { /* cell not writable */ }
-                }
-              }
-              continue; // was a table, skip textFrame
-            } catch { /* not a table */ }
-
-            // ── Try as text shape ─────────────────────────────────────────
-            try {
-              shape.textFrame.textRange.load("text");
-              await context.sync();
-              const raw: string = shape.textFrame.textRange.text || "";
-              if (isFooterText(raw)) continue;
-              if (raw.includes(s.original)) {
-                shape.textFrame.textRange.text = raw.split(s.original).join(s.replacement);
-                await context.sync();
-                matchCount++;
-                console.log(`[Tarkie] text shape replaced "${s.original}"`);
-              }
-            } catch { /* not a text shape */ }
-          }
-        });
+      // Then try text shapes
+      if (tableMatches === 0) {
+        const textMatches = await applyTextReplacements(slideIdx, s.original, s.replacement);
+        matchCount += textMatches;
       }
     }
 
