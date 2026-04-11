@@ -3,7 +3,7 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { clientProfiles } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { getClaudeModel } from "@/lib/ai";
+import { getModelForApp } from "@/lib/ai";
 
 /**
  * POST /api/addin/scan
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const model = await getClaudeModel();
+    const model = await getModelForApp("tarkie-ai");
 
     const systemPrompt = `You are an expert Presentation Strategist. 
 The user has just opened their PowerPoint deck and wants an "Initial Scan" to understand what needs work.

@@ -12,7 +12,8 @@ const BUILT_IN_APPS = [
   { name: "BRD Maker",    slug: "brd",         icon: "FileText",      href: "/brd",         sortOrder: 3, isBuiltIn: true },
   { name: "Mockup Maker", slug: "mockup",      icon: "Paintbrush",    href: "/mockup",      sortOrder: 4, isBuiltIn: true },
   { name: "Timeline",     slug: "timeline",    icon: "Clock",         href: "/timeline",    sortOrder: 5, isBuiltIn: true },
-  { name: "Meeting Prep", slug: "meeting-prep",icon: "ClipboardList", href: "/meeting-prep",sortOrder: 0, isBuiltIn: true },
+  { name: "Meeting Prep", slug: "meeting-prep",icon: "ClipboardList", href: "/meeting-prep",sortOrder: 6, isBuiltIn: true },
+  { name: "Tarkie AI",    slug: "tarkie-ai",   icon: "Sparkles",      href: "/addin",       sortOrder: 0, isBuiltIn: true, provider: "claude" },
 ];
 
 export async function POST() {
@@ -40,6 +41,7 @@ export async function POST() {
           isActive: true,
           isBuiltIn: app.isBuiltIn,
           sortOrder: app.sortOrder,
+          provider: (app as any).provider ?? null,
         });
         seeded++;
       }

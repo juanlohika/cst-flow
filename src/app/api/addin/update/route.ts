@@ -3,7 +3,7 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { clientProfiles } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { getClaudeModel } from "@/lib/ai";
+import { getModelForApp } from "@/lib/ai";
 
 /**
  * POST /api/addin/update
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Initialize AI Model
-    const model = await getClaudeModel();
+    const model = await getModelForApp("tarkie-ai");
 
     // 3. Construct System Prompt
     const systemPrompt = `You are an expert Presentation Assistant and Business Analyst part of the Team OS ecosystem.
