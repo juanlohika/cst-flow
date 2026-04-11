@@ -57,14 +57,36 @@ export default function AddinPage() {
   }, [status]);
 
   const handleLogin = () => {
-    // Office Task Panes require pop-ups for Auth to avoid iframe blocking
-    const width = 600;
-    const height = 700;
+    // Office Task Panes run inside iframes — Google OAuth blocks redirects in iframes.
+    // We must open a popup window for auth, then detect when the user is logged in.
+    const width = 500;
+    const height = 600;
     const left = window.screenX + (window.outerWidth - width) / 2;
     const top = window.screenY + (window.outerHeight - height) / 2;
     
-    // Simple NextAuth sign in
-    signIn("google", { callbackUrl: "/addin" });
+    const popup = window.open(
+      "/auth/signin?callbackUrl=/addin/auth-complete",
+      "tarkie-auth",
+      `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no`
+    );
+
+    // Poll for session changes after popup opens
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch("/api/auth/session");
+        const session = await res.json();
+        if (session?.user) {
+          clearInterval(interval);
+          if (popup && !popup.closed) popup.close();
+          window.location.reload();
+        }
+      } catch (e) {
+        // ignore fetch errors
+      }
+    }, 1500);
+
+    // Stop polling after 2 minutes
+    setTimeout(() => clearInterval(interval), 120000);
   };
 
   const generateFullDeck = async () => {
