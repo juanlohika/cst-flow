@@ -98,7 +98,7 @@ export async function getGeminiModel(apiKeyOverride?: string): Promise<AIModel> 
       return buildClaudeAdapter(config.anthropicApiKey);
     case "gemini":
     default:
-      if (!config.geminiApiKey) throw new Error("Gemini API key not set. Go to Admin → Settings.");
+      if (!config.geminiApiKey) throw new Error("Gemini API key is missing. Please go to Admin → Settings and add your Google Gemini API key.");
       return buildGeminiAdapter(config.geminiApiKey);
   }
 }
@@ -113,7 +113,12 @@ export async function getClaudeModel() {
   if (config.anthropicApiKey) {
     return buildClaudeAdapter(config.anthropicApiKey);
   }
-  return getGeminiModel();
+  // If we wanted Claude but no key is set, try to fallback safely OR error clearly
+  if (config.geminiApiKey) {
+    console.warn("Anthropic key missing, falling back to Gemini for Tarkie AI.");
+    return buildGeminiAdapter(config.geminiApiKey);
+  }
+  throw new Error("No AI API keys configured (Claude or Gemini). Please go to Admin → Settings to configure your AI brains.");
 }
 
 /**
@@ -143,10 +148,10 @@ export async function getModelForApp(slug: string) {
 
   switch (resolved) {
     case "claude":
-      if (!config.anthropicApiKey) throw new Error(`Claude API key not set. Go to Admin → Settings.`);
+      if (!config.anthropicApiKey) throw new Error(`Claude (Anthropic) API key is missing. Go to Admin → Settings.`);
       return buildClaudeAdapter(config.anthropicApiKey);
     case "gemini":
-      if (!config.geminiApiKey) throw new Error(`Gemini API key not set. Go to Admin → Settings.`);
+      if (!config.geminiApiKey) throw new Error(`Gemini API key is missing. Go to Admin → Settings.`);
       return buildGeminiAdapter(config.geminiApiKey);
     case "groq":
       if (!config.groqApiKey) throw new Error(`Groq API key not set. Go to Admin → Settings.`);

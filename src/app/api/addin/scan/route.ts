@@ -14,12 +14,19 @@ export async function POST(req: NextRequest) {
     const session = await auth();
     if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { fullContent, clientId } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const { fullContent, clientId } = body;
+
+    if (!fullContent || !Array.isArray(fullContent)) {
+       return NextResponse.json({ error: "Missing or invalid deck content" }, { status: 400 });
+    }
+
+    console.log(`[SCAN] Received deck scan request. Slides: ${fullContent.length}, Payload Size: ${JSON.stringify(fullContent).length} chars`);
 
     let intelligence = "";
     let companyName = "General Context";
     
-    if (clientId) {
+    if (clientId && typeof clientId === "string" && clientId.trim() !== "") {
       const results = await db.select().from(clientProfiles).where(eq(clientProfiles.id, clientId)).limit(1);
       const client = results[0];
       if (client) {
@@ -57,6 +64,13 @@ Return a conversational response that ends with a question about how to proceed.
 
   } catch (err: any) {
     console.error("POST /api/addin/scan error:", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    // Return detailed error for debugging
+    const errorMsg = err.message || "Unknown error";
+    const errorStack = process.env.NODE_ENV === "development" ? err.stack : undefined;
+    
+    return NextResponse.json({ 
+      error: `Server Scan Error: ${errorMsg}`,
+      details: errorStack
+    }, { status: 500 });
   }
 }

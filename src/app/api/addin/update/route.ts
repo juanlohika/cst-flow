@@ -15,13 +15,18 @@ export async function POST(req: NextRequest) {
     const session = await auth();
     if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { prompt, clientId, slideContent, applyToAll, history } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const { prompt, clientId, slideContent, applyToAll, history } = body;
+
+    if (!prompt) {
+      return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
+    }
 
     let intelligence = "";
     let companyName = "General Context";
     
     // 1. Fetch Account Intelligence if a client is selected
-    if (clientId) {
+    if (clientId && typeof clientId === "string" && clientId.trim() !== "") {
       const results = await db.select().from(clientProfiles).where(eq(clientProfiles.id, clientId)).limit(1);
       const client = results[0];
       if (client) {
@@ -30,7 +35,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Initialize Claude
+    // 2. Initialize AI Model
     const model = await getClaudeModel();
 
     // 3. Construct System Prompt
@@ -86,6 +91,10 @@ If no updates are needed, just return your conversational response.
 
   } catch (err: any) {
     console.error("POST /api/addin/update error:", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    const errorMsg = err.message || "Unknown error";
+    
+    return NextResponse.json({ 
+      error: `AI Processing Error: ${errorMsg}` 
+    }, { status: 500 });
   }
 }
