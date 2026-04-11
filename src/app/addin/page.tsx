@@ -175,56 +175,27 @@ export default function AddinPage() {
     });
   };
 
-  /** Scrapes all text from the current active slide */
-  const getActiveSlideContent = async (): Promise<string[]> => {
+  /** Gets the 0-based index of the currently active slide */
+  const getActiveSlideIndex = async (): Promise<number> => {
     return await window.PowerPoint.run(async (context: any) => {
       const slides = context.presentation.getSelectedSlides();
       slides.load("items");
       await context.sync();
-      if (slides.items.length === 0) return [];
-
-      const shapes = slides.items[0].shapes;
-      shapes.load("items");
+      if (slides.items.length === 0) return 0;
+      // Get index by comparing with presentation slides
+      const allSlides = context.presentation.slides;
+      allSlides.load("items");
       await context.sync();
-
-      const texts: string[] = [];
-      for (const shape of shapes.items) {
-        let handledAsTable = false;
-        try {
-          const table = shape.table;
-          table.rows.load("items/cells/items");
-          await context.sync();
-          const tableLines: string[] = [];
-          for (const row of table.rows.items) {
-            const rowCells: string[] = [];
-            for (const cell of row.cells.items) {
-              const t = await getTableCellText(cell, context);
-              if (t) rowCells.push(t);
-            }
-            if (rowCells.length) tableLines.push(rowCells.join(" | "));
-          }
-          if (tableLines.length) {
-            const headers = tableLines[0].split(" | ");
-            const colCount = headers.length;
-            let tableStr = `[TABLE - ${colCount} columns: ${headers.join(", ")}]\n`;
-            tableLines.forEach((line, i) => {
-              tableStr += `Row ${i + 1}${i === 0 ? " (header)" : ""}: ${line}\n`;
-            });
-            texts.push(tableStr.trim());
-            handledAsTable = true;
-          }
-        } catch { /* not a table */ }
-        if (handledAsTable) continue;
-
-        try {
-          shape.textFrame.textRange.load("text");
-          await context.sync();
-          const t = shape.textFrame.textRange.text?.trim();
-          if (t && !isFooterText(t)) texts.push(t);
-        } catch { /* not a text shape */ }
-      }
-      return texts;
+      const selectedId = slides.items[0].id;
+      const idx = allSlides.items.findIndex((s: any) => s.id === selectedId);
+      return idx >= 0 ? idx : 0;
     });
+  };
+
+  /** Scrapes all text from the current active slide */
+  const getActiveSlideContent = async (): Promise<string[]> => {
+    const idx = await getActiveSlideIndex();
+    return getSlideText(idx);
   };
 
   /** Scrapes text from ALL slides */
@@ -374,12 +345,14 @@ export default function AddinPage() {
       // ── Step 1: Read slide content via Office JS ──────────────────────────
       let slideContent: string[] = [];
       let allSlides: { slideIndex: number; content: string[] }[] = [];
+      let activeSlideIdx = 0;
 
       if (applyToAll) {
-        // Use getFullDeckContent which handles groups/tables properly
         allSlides = await getFullDeckContent();
+        activeSlideIdx = 0;
       } else {
-        slideContent = await getActiveSlideContent();
+        activeSlideIdx = await getActiveSlideIndex();
+        slideContent = await getSlideText(activeSlideIdx);
       }
 
       // ── Step 2: Call AI once with all content ─────────────────────────────
@@ -389,6 +362,7 @@ export default function AddinPage() {
         prompt: userMsg,
         clientId: selectedClient,
         history: messages.slice(-14),
+        activeSlideIndex: activeSlideIdx + 1, // 1-based for AI
       };
       if (applyToAll) {
         body.allSlides = allSlides;
@@ -412,11 +386,10 @@ export default function AddinPage() {
       if (data.suggestions && data.suggestions.length > 0) {
         setStatusMsg("Applying updates to slides...");
 
-        // Group suggestions by slideIndex
+        // Group suggestions by slideIndex — default to active slide if AI omits it
         const bySlide: Record<number, { original: string; replacement: string }[]> = {};
         for (const s of data.suggestions) {
-          // slideIndex is 1-based from AI; default to current slide (index 1) if missing
-          const idx = (s.slideIndex ?? 1) - 1; // convert to 0-based
+          const idx = (s.slideIndex ?? (activeSlideIdx + 1)) - 1; // convert to 0-based
           if (!bySlide[idx]) bySlide[idx] = [];
           bySlide[idx].push(s);
         }

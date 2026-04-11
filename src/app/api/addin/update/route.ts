@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
-    const { prompt, clientId, slideContent, allSlides, history } = body;
+    const { prompt, clientId, slideContent, allSlides, history, activeSlideIndex } = body;
 
     if (!prompt) {
       return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
 
     // ── 3. Build slide context string ─────────────────────────────────────────
     const isBulk = Array.isArray(allSlides) && allSlides.length > 0;
+    const currentSlideNum = activeSlideIndex || 1;
     const slideContext = isBulk
       ? allSlides.map((s: any) => `[Slide ${s.slideIndex}]\n${(s.content || []).join("\n")}`).join("\n\n")
       : (slideContent || []).join("\n");
@@ -57,7 +58,7 @@ ${intelligence || "No specific intelligence on file. Rely on the slide content a
 
 ${isBulk
   ? `FULL DECK CONTENT (${allSlides.length} slides):\n${slideContext}`
-  : `CURRENT SLIDE CONTENT:\n${slideContext || "(no text content on this slide)"}`
+  : `CURRENT SLIDE: Slide ${currentSlideNum}\nCONTENT:\n${slideContext || "(no text content on this slide)"}`
 }
 
 RULES:
