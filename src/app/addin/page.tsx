@@ -359,31 +359,37 @@ export default function AddinPage() {
 
     // Use stored Graph token — try silent refresh if expired
     let currentToken = graphToken;
+    console.log("[Tarkie] graphToken state:", currentToken ? "present" : "null");
     if (!currentToken && msalRef.current) {
       const accounts = msalRef.current.getAllAccounts();
+      console.log("[Tarkie] MSAL accounts:", accounts.length);
       if (accounts.length > 0) {
         try {
           const r = await msalRef.current.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: accounts[0] });
           currentToken = r.accessToken;
           setGraphToken(currentToken);
           setMsalConnected(true);
-        } catch { /* still no token */ }
+          console.log("[Tarkie] Silent token refresh OK");
+        } catch (silentErr: any) {
+          console.warn("[Tarkie] Silent refresh failed:", silentErr.message || silentErr.errorCode);
+        }
       }
     }
     if (!currentToken) {
       setError("Microsoft not connected. Click 'Connect Microsoft' above to enable table editing.");
       return;
     }
-    console.log("[Tarkie] Using Graph token for OOXML patch");
+    console.log("[Tarkie] Graph token OK, length:", currentToken.length);
 
-    // Extract file ID from URL
+    // Extract file ID from document URL
+    const docUrl = window.Office?.context?.document?.url || "";
+    console.log("[Tarkie] Office document URL:", docUrl);
     const fileId = getFileId();
+    console.log("[Tarkie] Extracted file ID:", fileId);
     if (!fileId) {
-      console.error("[Tarkie] Could not extract file ID from URL:", window.location.href);
-      setError("Could not identify the PowerPoint file. Make sure it's saved to OneDrive.");
+      setError(`Could not identify the PowerPoint file. Document URL: "${docUrl.slice(0, 80)}..."`);
       return;
     }
-    console.log("[Tarkie] File ID:", fileId);
 
     // Call server to patch the slide XML
     const res = await fetch("/api/addin/patch-slide", {
