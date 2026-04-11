@@ -271,26 +271,23 @@ export default function AddinPage() {
     // ── Step 2: Graph API + server OOXML patch for table cells ────────────────
     console.log(`[Tarkie] ${remaining.length} suggestions need Graph/OOXML patch`);
 
-    // Get Graph token — try OfficeRuntime first, fall back to Office.auth
+    // Get Graph token — try with consent prompt on first use
     let graphToken: string;
     try {
-      if (window.OfficeRuntime?.auth?.getAccessTokenAsync) {
-        graphToken = await window.OfficeRuntime.auth.getAccessTokenAsync({
-          allowSignInPrompt: true,
-          allowConsentPrompt: true,
-        });
-      } else if (window.Office?.auth?.getAccessToken) {
-        graphToken = await window.Office.auth.getAccessToken({
-          allowSignInPrompt: true,
-          allowConsentPrompt: true,
-        });
-      } else {
-        throw new Error("No Office auth API available");
+      const authAPI = window.OfficeRuntime?.auth ?? window.Office?.auth;
+      if (!authAPI) throw new Error("No Office auth API available");
+
+      try {
+        // First try silent
+        graphToken = await authAPI.getAccessToken({ allowSignInPrompt: false, allowConsentPrompt: false });
+      } catch {
+        // If silent fails, show consent/sign-in prompt
+        graphToken = await authAPI.getAccessToken({ allowSignInPrompt: true, allowConsentPrompt: true });
       }
       console.log("[Tarkie] Got Graph token");
     } catch (e: any) {
       console.error("[Tarkie] Failed to get Graph token:", e.message);
-      setError("Microsoft sign-in required for table editing. Please ensure the add-in is loaded via manifest.");
+      setError("Microsoft sign-in required. Please close and reopen the add-in to authorize.");
       return;
     }
 

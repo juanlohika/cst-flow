@@ -36,12 +36,40 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing suggestions" }, { status: 400 });
     }
 
-    // ── 1. Download the .pptx from OneDrive via Graph API ─────────────────────
+    // ── 1. Exchange the add-in token for a Graph token (On-Behalf-Of flow) ──────
+    console.log(`[patch-slide] Exchanging token via OBO flow...`);
+    const oboRes = await fetch(
+      `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/oauth2/v2.0/token`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+          client_id: process.env.AZURE_CLIENT_ID!,
+          client_secret: process.env.AZURE_CLIENT_SECRET!,
+          assertion: graphToken,
+          scope: "https://graph.microsoft.com/Files.ReadWrite offline_access",
+          requested_token_use: "on_behalf_of",
+        }),
+      }
+    );
+
+    if (!oboRes.ok) {
+      const oboErr = await oboRes.text();
+      console.error("[patch-slide] OBO token exchange failed:", oboErr);
+      return NextResponse.json({ error: `Token exchange failed: ${oboErr}` }, { status: 401 });
+    }
+
+    const oboData = await oboRes.json();
+    const accessToken = oboData.access_token;
+    console.log(`[patch-slide] OBO token obtained successfully`);
+
+    // ── 2. Download the .pptx from OneDrive via Graph API ─────────────────────
     console.log(`[patch-slide] Downloading file ${fileId} from OneDrive...`);
     const downloadRes = await fetch(
       `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/content`,
       {
-        headers: { Authorization: `Bearer ${graphToken}` },
+        headers: { Authorization: `Bearer ${accessToken}` },
         redirect: "follow",
       }
     );
