@@ -96,18 +96,32 @@ export default function AddinPage() {
     t.includes("©") || t.includes("All rights reserved") || t.includes("confidential") ||
     (t.length > 120 && !t.includes("\n"));
 
-  /** Read/write text from a table cell via its shape's textFrame (PowerPoint Web API) */
+  /** Read text from a table cell — tries every known PowerPoint Web API path */
   const getTableCellText = async (cell: any, context: any): Promise<string> => {
+    // Attempt 1: cell has a direct textFrame (some PPT versions treat table cells like shapes)
+    try {
+      cell.textFrame.textRange.load("text");
+      await context.sync();
+      const t = cell.textFrame.textRange.text?.trim();
+      if (t !== undefined) { console.log("[Tarkie] cell via textFrame:", JSON.stringify(t)); return t; }
+    } catch (e) { console.log("[Tarkie] cell.textFrame failed:", e); }
+    // Attempt 2: cell.body.text
     try {
       cell.body.load("text");
       await context.sync();
-      return cell.body.text?.trim() ?? "";
-    } catch { /* body.text not supported, try paragraphs */ }
+      const t = cell.body.text?.trim() ?? "";
+      console.log("[Tarkie] cell via body.text:", JSON.stringify(t));
+      return t;
+    } catch (e) { console.log("[Tarkie] cell.body.text failed:", e); }
+    // Attempt 3: cell.body.paragraphs
     try {
       cell.body.paragraphs.load("items/text");
       await context.sync();
-      return cell.body.paragraphs.items.map((p: any) => p.text?.trim()).filter(Boolean).join(" ");
-    } catch { return ""; }
+      const t = cell.body.paragraphs.items.map((p: any) => p.text?.trim()).filter(Boolean).join(" ");
+      console.log("[Tarkie] cell via paragraphs:", JSON.stringify(t));
+      return t;
+    } catch (e) { console.log("[Tarkie] cell.body.paragraphs failed:", e); }
+    return "";
   };
 
   /** Reads all text from a slide's shapes + tables (0-based index) */
@@ -136,7 +150,14 @@ export default function AddinPage() {
             if (rowCells.length) tableLines.push(rowCells.join(" | "));
           }
           if (tableLines.length) {
-            texts.push("[TABLE]\n" + tableLines.join("\n"));
+            // First row = headers; format with column labels for Claude context
+            const headers = tableLines[0].split(" | ");
+            const colCount = headers.length;
+            let tableStr = `[TABLE - ${colCount} columns: ${headers.join(", ")}]\n`;
+            tableLines.forEach((line, i) => {
+              tableStr += `Row ${i + 1}${i === 0 ? " (header)" : ""}: ${line}\n`;
+            });
+            texts.push(tableStr.trim());
             handledAsTable = true;
           }
         } catch { /* not a table shape */ }
@@ -182,7 +203,16 @@ export default function AddinPage() {
             }
             if (rowCells.length) tableLines.push(rowCells.join(" | "));
           }
-          if (tableLines.length) { texts.push("[TABLE]\n" + tableLines.join("\n")); handledAsTable = true; }
+          if (tableLines.length) {
+            const headers = tableLines[0].split(" | ");
+            const colCount = headers.length;
+            let tableStr = `[TABLE - ${colCount} columns: ${headers.join(", ")}]\n`;
+            tableLines.forEach((line, i) => {
+              tableStr += `Row ${i + 1}${i === 0 ? " (header)" : ""}: ${line}\n`;
+            });
+            texts.push(tableStr.trim());
+            handledAsTable = true;
+          }
         } catch { /* not a table */ }
         if (handledAsTable) continue;
 

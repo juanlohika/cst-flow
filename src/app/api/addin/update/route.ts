@@ -61,22 +61,33 @@ ${isBulk
 }
 
 RULES:
-1. When the user asks to update/change/edit slides — ALWAYS return [[UPDATE_SUGGESTIONS]] with the exact text replacements.
-2. The "original" field MUST be a SHORT snippet copied EXACTLY from the slide content above — a single line or phrase, NOT the whole block. The add-in does an exact string.includes() match, so shorter = more likely to match.
-3. One suggestion per individual line or phrase you want to change. Never combine multiple lines into one "original".
-4. For tables (shown as [TABLE] with rows like "ROLE | NAME | CONTACT DETAILS"): each cell value is its own suggestion. Use the exact cell text as "original".
-5. NEVER touch footer text (copyright notices, "All rights reserved", long single-line legal text at the bottom). Only edit the main content shapes.
-6. Never say you cannot edit slides — you can, via the JSON output.
-7. Only use data from Account Intelligence or slide content — never invent facts.
+1. When the user asks to update/change/edit slides — ALWAYS return [[UPDATE_SUGGESTIONS]] with exact text replacements.
+2. The "original" field MUST be copied EXACTLY from the slide content — a single cell value, word, or short phrase. The add-in does string.includes() matching — shorter and more exact = better match.
+3. One suggestion per individual cell or phrase. Never combine multiple cells/lines into one "original".
+4. NEVER touch footer/copyright text (lines with ©, "All rights reserved", long legal text). Only edit main content.
+5. NEVER invent data — only use values from Account Intelligence or existing slide content.
+6. NEVER say you cannot edit slides — you can, via JSON output.
 
-EXAMPLE for table update — if slide shows:
-[TABLE]
-ROLE | NAME | CONTACT DETAILS
-Decision Maker | Mr. Hanz Chan | hanzjordanchan@gmail.com
+TABLE RULES (critical):
+- Tables are shown as: [TABLE - N columns: ColHeader1, ColHeader2, ColHeader3]
+  Row 1 (header): ColHeader1 | ColHeader2 | ColHeader3
+  Row 2: value1 | value2 | value3
+- The column headers tell you what TYPE of data each cell contains.
+- To update a cell, use its EXACT current value as "original" and provide the replacement.
+- Only update DATA rows (Row 2+). Never change header row values unless explicitly asked.
+- If a cell in a row needs updating, create one suggestion per cell — do NOT combine the whole row.
 
-Output separate suggestions per cell value:
+EXAMPLE — table on slide 4:
+[TABLE - 3 columns: ROLE, NAME, CONTACT DETAILS]
+Row 1 (header): ROLE | NAME | CONTACT DETAILS
+Row 2: Decision Maker | Mr. Hanz Chan | hanzjordanchan@gmail.com
+Row 3: HR Officer | Ms. Sonia Briton | hraccutechsteel01@gmail.com
+
+To replace the NAME and CONTACT of Row 2:
 {"slideIndex": 4, "original": "Mr. Hanz Chan", "replacement": "Sir Brian"}
 {"slideIndex": 4, "original": "hanzjordanchan@gmail.com", "replacement": "brian@solmanpower.com"}
+To replace Row 3 NAME only:
+{"slideIndex": 4, "original": "Ms. Sonia Briton", "replacement": "Ma'am Mariel"}
 
 OUTPUT FORMAT when making edits:
 [[CONVERSATION_RESPONSE]]
