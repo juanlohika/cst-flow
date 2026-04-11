@@ -155,45 +155,33 @@ export default function AddinPage() {
     return deckData;
   };
 
-  /** Applies string-level replacements suggested by the AI */
-  const applySlideUpdates = async (suggestions: { original: string; replacement: string }[]) => {
+  /** Applies text replacements to a slide (0-based index) */
+  const applyToSlide = async (slideIdx: number, suggestions: { original: string; replacement: string }[]) => {
     if (!suggestions || suggestions.length === 0) return;
-
     await window.PowerPoint.run(async (context: any) => {
-      const selectedSlides = context.presentation.getSelectedSlides();
-      selectedSlides.load("items");
-      await context.sync();
-
-      const activeSlide = selectedSlides.items[0];
-      const shapes = activeSlide.shapes;
-      shapes.load("items/hasTextFrame");
+      const slide = context.presentation.slides.getItemAt(slideIdx);
+      const shapes = slide.shapes;
+      shapes.load("items");
       await context.sync();
 
       for (const shape of shapes.items) {
-        if (shape.hasTextFrame) {
-          shape.textFrame.load("hasText, textRange");
-        }
-      }
-      await context.sync();
-
-      for (const shape of shapes.items) {
-        if (shape.hasTextFrame && shape.textFrame.hasText) {
-          let currentText = shape.textFrame.textRange.text;
-          let updated = false;
-
+        try {
+          shape.textFrame.textRange.load("text");
+          await context.sync();
+          let text: string = shape.textFrame.textRange.text;
+          let changed = false;
           for (const s of suggestions) {
-            if (currentText.includes(s.original)) {
-              currentText = currentText.replace(s.original, s.replacement);
-              updated = true;
+            if (s.original && text.includes(s.original)) {
+              text = text.split(s.original).join(s.replacement);
+              changed = true;
             }
           }
-
-          if (updated) {
-            shape.textFrame.textRange.text = currentText;
+          if (changed) {
+            shape.textFrame.textRange.text = text;
+            await context.sync();
           }
-        }
+        } catch { /* not a text shape */ }
       }
-      await context.sync();
     });
   };
 
@@ -272,48 +260,18 @@ export default function AddinPage() {
       if (data.suggestions && data.suggestions.length > 0) {
         setStatusMsg("Applying updates to slides...");
 
-        await window.PowerPoint.run(async (context: any) => {
-          if (applyToAll) {
-            const slides = context.presentation.slides;
-            slides.load("items");
-            await context.sync();
+        // Group suggestions by slideIndex
+        const bySlide: Record<number, { original: string; replacement: string }[]> = {};
+        for (const s of data.suggestions) {
+          // slideIndex is 1-based from AI; default to current slide (index 1) if missing
+          const idx = (s.slideIndex ?? 1) - 1; // convert to 0-based
+          if (!bySlide[idx]) bySlide[idx] = [];
+          bySlide[idx].push(s);
+        }
 
-            for (let i = 0; i < slides.items.length; i++) {
-              // Collect suggestions for this slide (1-indexed) or slideIndex-less ones
-              const slideSuggestions = data.suggestions.filter(
-                (s: any) => s.slideIndex == null || s.slideIndex === i + 1
-              );
-              if (slideSuggestions.length === 0) continue;
-
-              const slide = slides.items[i];
-              const shapes = slide.shapes;
-              shapes.load("items/hasTextFrame");
-              await context.sync();
-
-              for (const shape of shapes.items) {
-                if (shape.hasTextFrame) shape.textFrame.load("hasText, textRange");
-              }
-              await context.sync();
-
-              for (const shape of shapes.items) {
-                if (!shape.hasTextFrame || !shape.textFrame.hasText) continue;
-                let text = shape.textFrame.textRange.text as string;
-                let changed = false;
-                for (const s of slideSuggestions) {
-                  if (s.original && text.includes(s.original)) {
-                    text = text.split(s.original).join(s.replacement);
-                    changed = true;
-                  }
-                }
-                if (changed) shape.textFrame.textRange.text = text;
-              }
-              await context.sync();
-            }
-          } else {
-            // Single slide — apply using existing helper
-            await applySlideUpdates(data.suggestions);
-          }
-        });
+        for (const [idxStr, suggestions] of Object.entries(bySlide)) {
+          await applyToSlide(Number(idxStr), suggestions);
+        }
       }
 
     } catch (err: any) {
