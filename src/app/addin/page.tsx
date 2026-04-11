@@ -282,13 +282,37 @@ export default function AddinPage() {
           }
         });
       } catch (e) {
-        // presentation.search not available — fall back to shape textFrame traversal
-        console.warn(`[Tarkie] search API failed for "${s.original}", trying textFrame fallback:`, e);
+        console.warn(`[Tarkie] search API failed for "${s.original}", trying full traversal:`, e);
         await window.PowerPoint.run(async (context: any) => {
           const slide = context.presentation.slides.getItemAt(slideIdx);
           slide.shapes.load("items");
           await context.sync();
+
           for (const shape of slide.shapes.items) {
+            // ── Try as table ──────────────────────────────────────────────
+            try {
+              const table = shape.table;
+              table.rows.load("items/cells/items");
+              await context.sync();
+              for (const row of table.rows.items) {
+                for (const cell of row.cells.items) {
+                  try {
+                    cell.textFrame.textRange.load("text");
+                    await context.sync();
+                    const raw: string = cell.textFrame.textRange.text || "";
+                    if (raw.includes(s.original)) {
+                      cell.textFrame.textRange.text = raw.split(s.original).join(s.replacement);
+                      await context.sync();
+                      matchCount++;
+                      console.log(`[Tarkie] table cell replaced "${s.original}"`);
+                    }
+                  } catch { /* cell not writable */ }
+                }
+              }
+              continue; // was a table, skip textFrame
+            } catch { /* not a table */ }
+
+            // ── Try as text shape ─────────────────────────────────────────
             try {
               shape.textFrame.textRange.load("text");
               await context.sync();
@@ -298,6 +322,7 @@ export default function AddinPage() {
                 shape.textFrame.textRange.text = raw.split(s.original).join(s.replacement);
                 await context.sync();
                 matchCount++;
+                console.log(`[Tarkie] text shape replaced "${s.original}"`);
               }
             } catch { /* not a text shape */ }
           }
