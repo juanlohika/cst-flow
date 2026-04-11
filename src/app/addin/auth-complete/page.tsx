@@ -1,18 +1,63 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { PublicClientApplication } from "@azure/msal-browser";
+
+const MSAL_CONFIG = {
+  auth: {
+    clientId: "d35494c1-a8b2-4877-b6ba-e7e580768b72",
+    authority: "https://login.microsoftonline.com/common",
+    redirectUri: typeof window !== "undefined" ? window.location.origin + "/addin/auth-complete" : "",
+  },
+  cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
+};
 
 /**
- * This page is the OAuth callback target for the Office Add-in popup auth flow.
- * After Google sign-in completes, the user lands here and the popup closes itself.
- * The parent taskpane detects the session via polling and reloads.
+ * Handles both:
+ * 1. Google OAuth popup callback — closes itself after session settles
+ * 2. MSAL redirect callback — processes the auth response then closes/redirects back to /addin
  */
 export default function AuthCompletePage() {
+  const [status, setStatus] = useState("Completing sign-in...");
+
   useEffect(() => {
-    // Give the session cookie a moment to settle, then close the popup
-    setTimeout(() => {
-      window.close();
-    }, 1000);
+    const handleAuth = async () => {
+      // Handle MSAL redirect response if hash/search contains auth params
+      const hasAuthParams =
+        window.location.hash.includes("access_token") ||
+        window.location.hash.includes("code=") ||
+        window.location.search.includes("code=") ||
+        window.location.search.includes("error=");
+
+      if (hasAuthParams) {
+        try {
+          const msal = new PublicClientApplication(MSAL_CONFIG);
+          await msal.initialize();
+          const result = await msal.handleRedirectPromise();
+          if (result) {
+            setStatus("Microsoft connected! Returning to add-in...");
+            // Redirect back to the task pane
+            setTimeout(() => {
+              window.location.href = "/addin";
+            }, 1000);
+            return;
+          }
+        } catch (e) {
+          console.error("MSAL redirect handling failed:", e);
+          setStatus("Sign-in failed. Returning...");
+          setTimeout(() => { window.location.href = "/addin"; }, 2000);
+          return;
+        }
+      }
+
+      // Default: Google OAuth popup — close this window
+      setStatus("Signed in! Closing...");
+      setTimeout(() => {
+        window.close();
+      }, 1000);
+    };
+
+    handleAuth();
   }, []);
 
   return (
@@ -23,7 +68,7 @@ export default function AuthCompletePage() {
         </svg>
       </div>
       <h1 className="text-xl font-black text-slate-800 mb-2">Signed In!</h1>
-      <p className="text-sm text-slate-500">This window will close automatically...</p>
+      <p className="text-sm text-slate-500">{status}</p>
     </div>
   );
 }

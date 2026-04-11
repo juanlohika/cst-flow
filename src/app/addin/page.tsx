@@ -34,29 +34,26 @@ async function getMsalInstance(): Promise<PublicClientApplication> {
   if (!msalInstance) {
     msalInstance = new PublicClientApplication(MSAL_CONFIG);
     await msalInstance.initialize();
+    // Handle redirect result on page load (for redirect flow fallback)
+    await msalInstance.handleRedirectPromise().catch(() => {});
   }
   return msalInstance;
 }
 
-async function getGraphToken(): Promise<string> {
-  const msal = await getMsalInstance();
-  const accounts = msal.getAllAccounts();
-
-  if (accounts.length > 0) {
-    try {
-      const result = await msal.acquireTokenSilent({
-        scopes: GRAPH_SCOPES,
-        account: accounts[0],
-      });
-      return result.accessToken;
-    } catch (e) {
-      if (!(e instanceof InteractionRequiredAuthError)) throw e;
-    }
+/** Tries silent token refresh only — does NOT trigger popups */
+async function getGraphTokenSilent(): Promise<string | null> {
+  try {
+    const msal = await getMsalInstance();
+    const accounts = msal.getAllAccounts();
+    if (accounts.length === 0) return null;
+    const result = await msal.acquireTokenSilent({
+      scopes: GRAPH_SCOPES,
+      account: accounts[0],
+    });
+    return result.accessToken;
+  } catch {
+    return null;
   }
-
-  // Silent failed or no account — show popup
-  const result = await msal.acquireTokenPopup({ scopes: GRAPH_SCOPES });
-  return result.accessToken;
 }
 
 export default function AddinPage() {
@@ -65,6 +62,7 @@ export default function AddinPage() {
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState("");
   const [msalConnected, setMsalConnected] = useState(false);
+  const [graphToken, setGraphToken] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [messages, setMessages] = useState<{ role: "user" | "ai"; text: string }[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -78,23 +76,36 @@ export default function AddinPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isProcessing]);
 
-  // Check if already connected to Microsoft on mount
+  // Check if already connected to Microsoft on mount — try silent token
   useEffect(() => {
-    getMsalInstance().then(msal => {
-      const accounts = msal.getAllAccounts();
-      if (accounts.length > 0) setMsalConnected(true);
+    getGraphTokenSilent().then(token => {
+      if (token) {
+        setGraphToken(token);
+        setMsalConnected(true);
+      }
     }).catch(() => {});
   }, []);
 
-  // Connect Microsoft account — must be called directly from a button click
+  // Connect Microsoft account — MUST be called directly from a button click (popup)
   const handleConnectMicrosoft = async () => {
     try {
       const msal = await getMsalInstance();
-      await msal.acquireTokenPopup({ scopes: GRAPH_SCOPES });
+      let result;
+      try {
+        result = await msal.acquireTokenPopup({ scopes: GRAPH_SCOPES });
+      } catch (popupErr: any) {
+        // Popup blocked — fall back to redirect
+        if (popupErr.errorCode === "popup_window_error" || popupErr.message?.includes("popup")) {
+          await msal.acquireTokenRedirect({ scopes: GRAPH_SCOPES });
+          return; // page will redirect, execution stops
+        }
+        throw popupErr;
+      }
+      setGraphToken(result.accessToken);
       setMsalConnected(true);
       setError(null);
     } catch (e: any) {
-      setError("Microsoft sign-in failed: " + e.message);
+      setError("Microsoft sign-in failed: " + (e.message || e.errorCode));
     }
   };
 
@@ -281,15 +292,37 @@ export default function AddinPage() {
     return deckData;
   };
 
-  /** Extracts the OneDrive file ID from the PowerPoint Online URL */
+  /** Extracts the OneDrive file ID from the Office document URL */
   const getFileId = (): string | null => {
     try {
-      const url = new URL(window.location.href);
-      // URL format: ...?docId=XXX&driveId=YYY or embedded in path
-      const docId = url.searchParams.get("docId") ||
-        url.searchParams.get("id") ||
-        window.location.href.match(/[?&](?:docId|id)=([^&]+)/)?.[1];
-      return docId ? decodeURIComponent(docId) : null;
+      // Office JS exposes the document URL — not window.location (which is the task pane URL)
+      const docUrl = window.Office?.context?.document?.url || "";
+      console.log("[Tarkie] Document URL:", docUrl);
+
+      // SharePoint/OneDrive URL patterns:
+      // https://{tenant}.sharepoint.com/.../_layouts/15/...&id=%2F...
+      // https://1drv.ms/... (short link)
+      // https://{tenant}-my.sharepoint.com/...?id=...
+
+      // Try "sourcedoc" param (used by PowerPoint Online embed URLs)
+      const sourcedoc = docUrl.match(/[?&]sourcedoc=([^&]+)/i)?.[1];
+      if (sourcedoc) return decodeURIComponent(sourcedoc);
+
+      // Try "id" param
+      const idParam = docUrl.match(/[?&]id=([^&]+)/i)?.[1];
+      if (idParam) return decodeURIComponent(idParam);
+
+      // Try "docid" param
+      const docidParam = docUrl.match(/[?&]docid=([^&]+)/i)?.[1];
+      if (docidParam) return decodeURIComponent(docidParam);
+
+      // For SharePoint document library paths like /sites/.../Documents/file.pptx
+      // We can use Graph to resolve by path — return full path if it starts with /
+      const spPath = docUrl.match(/https?:\/\/[^/]+(\/[^?]+\.pptx)/i)?.[1];
+      if (spPath) return spPath;
+
+      console.warn("[Tarkie] Could not extract file ID from:", docUrl);
+      return null;
     } catch {
       return null;
     }
@@ -336,17 +369,19 @@ export default function AddinPage() {
     // ── Step 2: Graph API + server OOXML patch for table cells ────────────────
     console.log(`[Tarkie] ${remaining.length} suggestions need Graph/OOXML patch`);
 
-    // Get Graph token via MSAL (works with personal Microsoft accounts)
-    let graphToken: string;
-    try {
-      setStatusMsg("Connecting to Microsoft...");
-      graphToken = await getGraphToken();
-      console.log("[Tarkie] Got Graph token via MSAL");
-    } catch (e: any) {
-      console.error("[Tarkie] Failed to get Graph token:", e.message);
-      setError("Microsoft sign-in required to edit tables. Please try again.");
+    // Use stored Graph token (acquired via "Connect Microsoft" button)
+    // Try silent refresh first in case the stored token expired
+    let currentToken = graphToken || await getGraphTokenSilent();
+    if (!currentToken) {
+      setError("Microsoft not connected. Click 'Connect Microsoft' button above to enable table editing.");
       return;
     }
+    // Refresh state if we got a fresh token
+    if (currentToken !== graphToken) {
+      setGraphToken(currentToken);
+      setMsalConnected(true);
+    }
+    console.log("[Tarkie] Using stored Graph token");
 
     // Extract file ID from URL
     const fileId = getFileId();
@@ -362,7 +397,7 @@ export default function AddinPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        graphToken,
+        graphToken: currentToken,
         fileId,
         slideIndex: slideIdx + 1, // convert to 1-based
         suggestions: remaining,
@@ -390,21 +425,24 @@ export default function AddinPage() {
       await context.sync();
       const targetId = targetSlide.id;
 
-      // Insert patched slide after the target
+      // insertSlidesFromBase64 inserts BEFORE the targetSlideId slide
+      // So new patched slide ends up at slideIdx, original shifts to slideIdx+1
       context.presentation.insertSlidesFromBase64(data.base64, {
         formatting: "UseDestinationTheme",
         targetSlideId: targetId,
       });
       await context.sync();
 
-      // The new slide was inserted after targetId — find and delete the original
+      // Reload slide list — original is now at slideIdx+1
       slides.load("items");
       await context.sync();
 
-      // Delete the original (now at slideIdx, since new one inserted after)
-      const originalSlide = slides.items[slideIdx];
-      originalSlide.delete();
-      await context.sync();
+      // Delete the original (shifted to slideIdx+1 after insert)
+      const originalSlide = slides.items[slideIdx + 1];
+      if (originalSlide) {
+        originalSlide.delete();
+        await context.sync();
+      }
 
       console.log(`[Tarkie] ✓ Slide ${slideIdx + 1} replaced with patched version`);
     });

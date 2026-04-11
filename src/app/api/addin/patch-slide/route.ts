@@ -39,13 +39,24 @@ export async function POST(req: NextRequest) {
     // ── 1. Download the .pptx from OneDrive via Graph API ─────────────────────
     // graphToken is a direct Graph access token from MSAL (no OBO needed)
     console.log(`[patch-slide] Downloading file ${fileId} from OneDrive...`);
-    const downloadRes = await fetch(
-      `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/content`,
-      {
-        headers: { Authorization: `Bearer ${graphToken}` },
-        redirect: "follow",
-      }
-    );
+
+    // Build the correct Graph URL:
+    // - If fileId looks like a path (starts with /), use path-based API
+    // - If it looks like a SharePoint sourcedoc GUID {XXXX-...}, use items API
+    // - Otherwise try items API directly
+    let graphUrl: string;
+    if (fileId.startsWith("/")) {
+      // Path-based: /me/drive/root:/path/to/file.pptx:/content
+      graphUrl = `https://graph.microsoft.com/v1.0/me/drive/root:${encodeURIComponent(fileId)}:/content`;
+    } else {
+      graphUrl = `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/content`;
+    }
+    console.log(`[patch-slide] Graph URL: ${graphUrl}`);
+
+    const downloadRes = await fetch(graphUrl, {
+      headers: { Authorization: `Bearer ${graphToken}` },
+      redirect: "follow",
+    });
 
     if (!downloadRes.ok) {
       const errText = await downloadRes.text();
