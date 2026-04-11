@@ -16,45 +16,7 @@ import {
  * Tarkie PowerPoint Add-in Sidebar
  * This page loads inside the PowerPoint Task Pane.
  */
-// MSAL configuration for Microsoft Graph access
-const MSAL_CONFIG = {
-  auth: {
-    clientId: "d35494c1-a8b2-4877-b6ba-e7e580768b72",
-    authority: "https://login.microsoftonline.com/common",
-    redirectUri: typeof window !== "undefined" ? window.location.origin + "/addin/auth-complete" : "",
-  },
-  cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
-};
-
 const GRAPH_SCOPES = ["Files.ReadWrite", "openid", "profile"];
-
-let msalInstance: PublicClientApplication | null = null;
-
-async function getMsalInstance(): Promise<PublicClientApplication> {
-  if (!msalInstance) {
-    msalInstance = new PublicClientApplication(MSAL_CONFIG);
-    await msalInstance.initialize();
-    // Handle redirect result on page load (for redirect flow fallback)
-    await msalInstance.handleRedirectPromise().catch(() => {});
-  }
-  return msalInstance;
-}
-
-/** Tries silent token refresh only — does NOT trigger popups */
-async function getGraphTokenSilent(): Promise<string | null> {
-  try {
-    const msal = await getMsalInstance();
-    const accounts = msal.getAllAccounts();
-    if (accounts.length === 0) return null;
-    const result = await msal.acquireTokenSilent({
-      scopes: GRAPH_SCOPES,
-      account: accounts[0],
-    });
-    return result.accessToken;
-  } catch {
-    return null;
-  }
-}
 
 export default function AddinPage() {
   const { data: session, status } = useSession();
@@ -70,43 +32,69 @@ export default function AddinPage() {
   const [error, setError] = useState<string | null>(null);
   const [applyToAll, setApplyToAll] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // MSAL instance stored in ref — initialized eagerly so popup needs no await before it
+  const msalRef = useRef<PublicClientApplication | null>(null);
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isProcessing]);
 
-  // Check if already connected to Microsoft on mount — try silent token
+  // Eagerly initialize MSAL and try silent token on mount
   useEffect(() => {
-    getGraphTokenSilent().then(token => {
-      if (token) {
-        setGraphToken(token);
-        setMsalConnected(true);
+    const init = async () => {
+      try {
+        const msal = new PublicClientApplication({
+          auth: {
+            clientId: "d35494c1-a8b2-4877-b6ba-e7e580768b72",
+            authority: "https://login.microsoftonline.com/common",
+            redirectUri: window.location.origin + "/addin/auth-complete",
+          },
+          cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
+        });
+        await msal.initialize();
+        // Handle any pending redirect result (from redirect fallback flow)
+        await msal.handleRedirectPromise().catch(() => {});
+        msalRef.current = msal;
+
+        // Try silent token — user may already be signed in from a previous session
+        const accounts = msal.getAllAccounts();
+        if (accounts.length > 0) {
+          try {
+            const result = await msal.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: accounts[0] });
+            setGraphToken(result.accessToken);
+            setMsalConnected(true);
+          } catch { /* needs interactive — that's fine */ }
+        }
+      } catch (e) {
+        console.error("[Tarkie] MSAL init failed:", e);
       }
-    }).catch(() => {});
+    };
+    init();
   }, []);
 
-  // Connect Microsoft account — MUST be called directly from a button click (popup)
-  const handleConnectMicrosoft = async () => {
-    try {
-      const msal = await getMsalInstance();
-      let result;
-      try {
-        result = await msal.acquireTokenPopup({ scopes: GRAPH_SCOPES });
-      } catch (popupErr: any) {
-        // Popup blocked — fall back to redirect
-        if (popupErr.errorCode === "popup_window_error" || popupErr.message?.includes("popup")) {
-          await msal.acquireTokenRedirect({ scopes: GRAPH_SCOPES });
-          return; // page will redirect, execution stops
-        }
-        throw popupErr;
-      }
-      setGraphToken(result.accessToken);
-      setMsalConnected(true);
-      setError(null);
-    } catch (e: any) {
-      setError("Microsoft sign-in failed: " + (e.message || e.errorCode));
+  // Connect Microsoft — button click goes DIRECTLY to acquireTokenPopup (no awaits before it)
+  const handleConnectMicrosoft = () => {
+    const msal = msalRef.current;
+    if (!msal) {
+      setError("MSAL not ready yet. Wait a moment and try again.");
+      return;
     }
+    // acquireTokenPopup MUST be called synchronously from the click handler
+    msal.acquireTokenPopup({ scopes: GRAPH_SCOPES })
+      .then(result => {
+        setGraphToken(result.accessToken);
+        setMsalConnected(true);
+        setError(null);
+      })
+      .catch((e: any) => {
+        if (e.errorCode === "popup_window_error" || e.message?.includes("popup")) {
+          // Popup blocked — fall back to redirect flow
+          msal.acquireTokenRedirect({ scopes: GRAPH_SCOPES }).catch(() => {});
+        } else {
+          setError("Microsoft sign-in failed: " + (e.message || e.errorCode));
+        }
+      });
   };
 
   // 1. Initialize Office JS
@@ -369,19 +357,24 @@ export default function AddinPage() {
     // ── Step 2: Graph API + server OOXML patch for table cells ────────────────
     console.log(`[Tarkie] ${remaining.length} suggestions need Graph/OOXML patch`);
 
-    // Use stored Graph token (acquired via "Connect Microsoft" button)
-    // Try silent refresh first in case the stored token expired
-    let currentToken = graphToken || await getGraphTokenSilent();
+    // Use stored Graph token — try silent refresh if expired
+    let currentToken = graphToken;
+    if (!currentToken && msalRef.current) {
+      const accounts = msalRef.current.getAllAccounts();
+      if (accounts.length > 0) {
+        try {
+          const r = await msalRef.current.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: accounts[0] });
+          currentToken = r.accessToken;
+          setGraphToken(currentToken);
+          setMsalConnected(true);
+        } catch { /* still no token */ }
+      }
+    }
     if (!currentToken) {
-      setError("Microsoft not connected. Click 'Connect Microsoft' button above to enable table editing.");
+      setError("Microsoft not connected. Click 'Connect Microsoft' above to enable table editing.");
       return;
     }
-    // Refresh state if we got a fresh token
-    if (currentToken !== graphToken) {
-      setGraphToken(currentToken);
-      setMsalConnected(true);
-    }
-    console.log("[Tarkie] Using stored Graph token");
+    console.log("[Tarkie] Using Graph token for OOXML patch");
 
     // Extract file ID from URL
     const fileId = getFileId();
