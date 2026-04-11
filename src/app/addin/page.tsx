@@ -256,9 +256,15 @@ export default function AddinPage() {
         let batchDirty = false;
         for (const cell of allCells) {
           const raw: string = cell.textFrame.textRange.text || "";
-          console.log(`[Tarkie] cell: "${raw.substring(0, 50)}"`);
-          if (raw.includes(original)) {
-            cell.textFrame.textRange.text = raw.split(original).join(replacement);
+          // Log exact bytes so we can see invisible chars (\r, \n, \u000b etc)
+          console.log(`[Tarkie] cell exact:`, JSON.stringify(raw));
+          // Normalize both sides: trim and collapse all whitespace variants
+          const normalizedRaw = raw.replace(/[\r\n\u000b\u000c\u0085\u2028\u2029]+/g, " ").trim();
+          const normalizedOriginal = original.replace(/[\r\n\u000b\u000c\u0085\u2028\u2029]+/g, " ").trim();
+          console.log(`[Tarkie] normalized cell:`, JSON.stringify(normalizedRaw), `| looking for:`, JSON.stringify(normalizedOriginal));
+          if (normalizedRaw.includes(normalizedOriginal)) {
+            // Write replacement using normalized text to avoid carrying over invisible chars
+            cell.textFrame.textRange.text = normalizedRaw.split(normalizedOriginal).join(replacement);
             count++;
             batchDirty = true;
             console.log(`[Tarkie] ✓ table cell replaced "${original}" → "${replacement}"`);
