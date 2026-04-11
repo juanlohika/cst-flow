@@ -28,3 +28,9 @@ environmentVariables:
     secret: SMTP_FROM
   - variable: AUTH_TRUST_HOST
     value: "true"
+  - variable: AZURE_CLIENT_ID
+    secret: AZURE_CLIENT_ID
+  - variable: AZURE_CLIENT_SECRET
+    secret: AZURE_CLIENT_SECRET
+  - variable: AZURE_TENANT_ID
+    secret: AZURE_TENANT_ID

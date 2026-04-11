@@ -216,27 +216,30 @@ export default function AddinPage() {
     return deckData;
   };
 
-  /**
-   * Escapes a string for use inside an XML text node.
-   * PowerPoint OOXML stores text as XML — we must escape special chars.
-   */
-  const escapeXml = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  /** Extracts the OneDrive file ID from the PowerPoint Online URL */
+  const getFileId = (): string | null => {
+    try {
+      const url = new URL(window.location.href);
+      // URL format: ...?docId=XXX&driveId=YYY or embedded in path
+      const docId = url.searchParams.get("docId") ||
+        url.searchParams.get("id") ||
+        window.location.href.match(/[?&](?:docId|id)=([^&]+)/)?.[1];
+      return docId ? decodeURIComponent(docId) : null;
+    } catch {
+      return null;
+    }
+  };
 
   /**
-   * Applies all suggestions to a slide by patching the raw OOXML.
-   * This is the only reliable method for table cells in PowerPoint Web JS.
-   *
-   * Strategy:
-   *  1. Get the slide's XML via getSelectedSlideOoxml (if on that slide) or getFileAsync
-   *  2. In the XML, find <a:t>original</a:t> and replace with <a:t>replacement</a:t>
-   *  3. Set the modified XML back with setSelectedDataAsync
+   * Applies all suggestions using:
+   * 1. Office JS for regular text shapes (fast, works on Web + Desktop)
+   * 2. Graph API + OOXML patch via server for table cells (works everywhere)
    */
   const applyToSlide = async (slideIdx: number, suggestions: { original: string; replacement: string }[]) => {
     if (!suggestions || suggestions.length === 0) return;
 
-    // First try the fast Office JS text-shape path for non-table shapes
-    let unmatchedSuggestions = [...suggestions];
+    // ── Step 1: Try Office JS for regular text shapes ─────────────────────────
+    let remaining = [...suggestions];
 
     await window.PowerPoint.run(async (context: any) => {
       const slide = context.presentation.slides.getItemAt(slideIdx);
@@ -248,104 +251,99 @@ export default function AddinPage() {
           shape.load("type");
           shape.textFrame.textRange.load("text");
           await context.sync();
-          if (String(shape.type).toLowerCase().includes("table")) continue; // skip tables here
+          if (String(shape.type).toLowerCase().includes("table")) continue;
           const raw: string = shape.textFrame.textRange.text || "";
           if (!raw || isFooterText(raw)) continue;
-
-          for (const s of unmatchedSuggestions) {
+          for (const s of remaining) {
             if (raw.includes(s.original)) {
               shape.textFrame.textRange.text = raw.split(s.original).join(s.replacement);
               await context.sync();
               console.log(`[Tarkie] ✓ text shape replaced "${s.original}"`);
-              unmatchedSuggestions = unmatchedSuggestions.filter(x => x !== s);
+              remaining = remaining.filter(x => x !== s);
             }
           }
         } catch { /* not a text shape */ }
       }
     }).catch(() => {});
 
-    if (unmatchedSuggestions.length === 0) return;
+    if (remaining.length === 0) return;
 
-    // For remaining suggestions (likely table cells) — use OOXML patch approach
-    console.log(`[Tarkie] Attempting OOXML patch for ${unmatchedSuggestions.length} unmatched suggestions`);
+    // ── Step 2: Graph API + server OOXML patch for table cells ────────────────
+    console.log(`[Tarkie] ${remaining.length} suggestions need Graph/OOXML patch`);
 
-    // Get the slide ID for the target slide, then navigate and patch OOXML
-    const slideId: string = await window.PowerPoint.run(async (context: any) => {
-      const slide = context.presentation.slides.getItemAt(slideIdx);
-      slide.load("id");
-      await context.sync();
-      return slide.id;
+    // Get Graph token silently (user already authenticated via Microsoft)
+    let graphToken: string;
+    try {
+      graphToken = await window.OfficeRuntime.auth.getAccessTokenAsync({
+        allowSignInPrompt: true,
+        allowConsentPrompt: true,
+      });
+      console.log("[Tarkie] Got Graph token");
+    } catch (e: any) {
+      console.error("[Tarkie] Failed to get Graph token:", e.message);
+      setError("Sign in to Microsoft required for table editing. Please refresh and try again.");
+      return;
+    }
+
+    // Extract file ID from URL
+    const fileId = getFileId();
+    if (!fileId) {
+      console.error("[Tarkie] Could not extract file ID from URL:", window.location.href);
+      setError("Could not identify the PowerPoint file. Make sure it's saved to OneDrive.");
+      return;
+    }
+    console.log("[Tarkie] File ID:", fileId);
+
+    // Call server to patch the slide XML
+    const res = await fetch("/api/addin/patch-slide", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        graphToken,
+        fileId,
+        slideIndex: slideIdx + 1, // convert to 1-based
+        suggestions: remaining,
+      }),
     });
 
-    console.log(`[Tarkie] Navigating to slide id: ${slideId}`);
+    const data = await res.json();
 
-    await new Promise<void>((resolve) => {
-      // Navigate to the target slide so getSelectedDataAsync returns its OOXML
-      window.Office.context.document.goToByIdAsync(
-        slideId,
-        window.Office.GoToType.Slide,
-        (gotoResult: any) => {
-          if (gotoResult.status !== window.Office.AsyncResultStatus.Succeeded) {
-            console.warn("[Tarkie] goToByIdAsync failed:", gotoResult.error?.message);
-            resolve();
-            return;
-          }
+    if (!res.ok || !data.base64) {
+      console.error("[Tarkie] patch-slide failed:", data.error);
+      setError(`Table update failed: ${data.error}`);
+      return;
+    }
 
-          // Get the OOXML for the now-selected slide
-          window.Office.context.document.getSelectedDataAsync(
-            "ooxml" as any,
-            (ooxmlResult: any) => {
-              if (ooxmlResult.status !== window.Office.AsyncResultStatus.Succeeded) {
-                console.warn("[Tarkie] OOXML get failed:", ooxmlResult.error?.message);
-                resolve();
-                return;
-              }
+    console.log(`[Tarkie] Server patched ${data.replaced} replacements. Inserting slide...`);
 
-              let xml: string = ooxmlResult.value;
-              console.log(`[Tarkie] Got OOXML, length: ${xml.length}`);
-              let changed = 0;
+    // Insert the patched slide and replace the original
+    await window.PowerPoint.run(async (context: any) => {
+      const slides = context.presentation.slides;
+      slides.load("items");
+      await context.sync();
 
-              for (const s of unmatchedSuggestions) {
-                const escapedOriginal = escapeXml(s.original);
-                const escapedReplacement = escapeXml(s.replacement);
-                const before = xml;
-                // Try escaped version first
-                xml = xml.split(`<a:t>${escapedOriginal}</a:t>`).join(`<a:t>${escapedReplacement}</a:t>`);
-                // Fallback: unescaped (some Office versions store text literally)
-                if (xml === before) {
-                  xml = xml.split(`<a:t>${s.original}</a:t>`).join(`<a:t>${s.replacement}</a:t>`);
-                }
-                if (xml !== before) {
-                  changed++;
-                  console.log(`[Tarkie] ✓ OOXML patched "${s.original}" → "${s.replacement}"`);
-                } else {
-                  // Log a snippet of the XML around <a:t> tags for debugging
-                  const aTagMatches = xml.match(/<a:t>[^<]{1,60}<\/a:t>/g)?.slice(0, 10) || [];
-                  console.warn(`[Tarkie] OOXML no match for "${s.original}". Sample <a:t> values:`, aTagMatches);
-                }
-              }
+      const targetSlide = slides.items[slideIdx];
+      targetSlide.load("id");
+      await context.sync();
+      const targetId = targetSlide.id;
 
-              if (changed === 0) {
-                resolve();
-                return;
-              }
+      // Insert patched slide after the target
+      context.presentation.insertSlidesFromBase64(data.base64, {
+        formatting: "UseDestinationTheme",
+        targetSlideId: targetId,
+      });
+      await context.sync();
 
-              window.Office.context.document.setSelectedDataAsync(
-                xml,
-                { coercionType: "ooxml" as any },
-                (setResult: any) => {
-                  if (setResult.status === window.Office.AsyncResultStatus.Succeeded) {
-                    console.log(`[Tarkie] ✓ OOXML written back, ${changed} replacements applied`);
-                  } else {
-                    console.error("[Tarkie] OOXML write failed:", setResult.error?.message);
-                  }
-                  resolve();
-                }
-              );
-            }
-          );
-        }
-      );
+      // The new slide was inserted after targetId — find and delete the original
+      slides.load("items");
+      await context.sync();
+
+      // Delete the original (now at slideIdx, since new one inserted after)
+      const originalSlide = slides.items[slideIdx];
+      originalSlide.delete();
+      await context.sync();
+
+      console.log(`[Tarkie] ✓ Slide ${slideIdx + 1} replaced with patched version`);
     });
   };
 
