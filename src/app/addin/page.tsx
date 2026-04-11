@@ -91,14 +91,14 @@ export default function AddinPage() {
     setTimeout(() => clearInterval(interval), 120000);
   };
 
-  /** Extracts text from a loaded shapes collection (must be already synced) */
+  /** Extracts text from a shapes collection after textFrame/textRange/text has been loaded */
   const collectTextFromShapes = (shapesItems: any[]): string[] => {
     const textBlocks: string[] = [];
     for (const shape of shapesItems) {
       try {
-        const text = shape.textFrame?.textRange?.text?.trim();
-        if (text) textBlocks.push(text);
-      } catch { /* skip */ }
+        const text = shape.textFrame.textRange.text;
+        if (typeof text === "string" && text.trim()) textBlocks.push(text.trim());
+      } catch { /* shape has no textFrame (image, icon, etc.) */ }
     }
     return textBlocks;
   };
@@ -106,49 +106,17 @@ export default function AddinPage() {
   /** Scrapes all text from the current active slide */
   const getActiveSlideContent = async (): Promise<string[]> => {
     return await window.PowerPoint.run(async (context: any) => {
-      console.log("[Tarkie] getActiveSlideContent: start");
       const selectedSlides = context.presentation.getSelectedSlides();
       selectedSlides.load("items");
       await context.sync();
-      console.log("[Tarkie] slides loaded, count:", selectedSlides.items.length);
-
       if (selectedSlides.items.length === 0) return [];
 
+      // Load the text property directly via path — no intermediate object loads
       const shapes = selectedSlides.items[0].shapes;
-      shapes.load("items");
+      shapes.load("items/textFrame/textRange/text");
       await context.sync();
-      console.log("[Tarkie] shapes loaded, count:", shapes.items.length);
 
-      for (let si = 0; si < shapes.items.length; si++) {
-        try {
-          shapes.items[si].load("textFrame");
-        } catch (e) { console.log("[Tarkie] shape.load textFrame error at", si, e); }
-      }
-      await context.sync();
-      console.log("[Tarkie] textFrames loaded");
-
-      for (let si = 0; si < shapes.items.length; si++) {
-        try {
-          shapes.items[si].textFrame.load("textRange");
-        } catch (e) { console.log("[Tarkie] textFrame.load textRange error at", si, e); }
-      }
-      await context.sync();
-      console.log("[Tarkie] textRanges loaded");
-
-      for (let si = 0; si < shapes.items.length; si++) {
-        try {
-          shapes.items[si].textFrame.textRange.load("text");
-        } catch (e) { console.log("[Tarkie] textRange.load text error at", si, e); }
-      }
-      await context.sync();
-      console.log("[Tarkie] text loaded");
-
-      const result = collectTextFromShapes(shapes.items);
-      console.log("[Tarkie] extracted text blocks:", result);
-      return result;
-    }).catch((err: any) => {
-      console.error("[Tarkie] getActiveSlideContent FAILED:", err?.code, err?.message, err);
-      throw err;
+      return collectTextFromShapes(shapes.items);
     });
   };
 
@@ -159,37 +127,12 @@ export default function AddinPage() {
       slides.load("items");
       await context.sync();
 
-      // Load shapes collection for every slide
+      // Load text via path on each slide's shapes collection in one batch
       for (const slide of slides.items) {
-        slide.shapes.load("items");
+        slide.shapes.load("items/textFrame/textRange/text");
       }
       await context.sync();
 
-      // Load textFrame for every shape
-      for (const slide of slides.items) {
-        for (const shape of slide.shapes.items) {
-          shape.load("textFrame");
-        }
-      }
-      await context.sync();
-
-      // Load textRange for every textFrame
-      for (const slide of slides.items) {
-        for (const shape of slide.shapes.items) {
-          try { shape.textFrame.load("textRange"); } catch { /* no textFrame */ }
-        }
-      }
-      await context.sync();
-
-      // Load text for every textRange
-      for (const slide of slides.items) {
-        for (const shape of slide.shapes.items) {
-          try { shape.textFrame.textRange.load("text"); } catch { /* no textRange */ }
-        }
-      }
-      await context.sync();
-
-      // Collect
       return slides.items.map((slide: any, i: number) => ({
         slideIndex: i + 1,
         content: collectTextFromShapes(slide.shapes.items),
