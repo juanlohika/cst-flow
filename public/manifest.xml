@@ -7,20 +7,20 @@
     xsi:type="TaskPaneApp">
 
   <!-- SCHEMA 1.1 - TARGET: POWERPOINT WEB/DESKTOP -->
-  <Id>c3d4b5e6-7f8a-9b0c-1d2e-3f4a5b6c7d8e</Id>
-  <Version>1.4.0.0</Version>
+  <Id>f9e8d7c6-5b4a-3a21-0e9d-8c7b6a5f4e3d</Id>
+  <Version>1.5.0.0</Version>
   <ProviderName>Tarkie</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Tarkie AI" />
-  <Description DefaultValue="AI-powered presentation assistant for Tarkie intelligence." />
+  <Description DefaultValue="AI-powered assistant for Tarkie intelligence." />
   
-  <!-- MANDATORY: TRAILING SLASH ON URLS TO PREVENT REDIRECT FAILURES -->
+  <!-- MANDATORY: NO TRAILING SLASHES TO PREVENT REDIRECTS -->
   <IconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png" />
   <HighResolutionIconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-64.png" />
-  <SupportUrl DefaultValue="https://www.tarkie.com/" />
+  <SupportUrl DefaultValue="https://www.tarkie.com" />
   
   <AppDomains>
-    <AppDomain>https://cst-flow--cst-flowdesk.asia-east1.hosted.app/</AppDomain>
+    <AppDomain>https://cst-flow--cst-flowdesk.asia-east1.hosted.app</AppDomain>
   </AppDomains>
   
   <Hosts>
@@ -34,7 +34,7 @@
   </Requirements>
   
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/addin/" />
+    <SourceLocation DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/addin" />
   </DefaultSettings>
   
   <Permissions>ReadWriteDocument</Permissions>
@@ -46,7 +46,7 @@
           <GetStarted>
             <Title DefaultValue="Tarkie AI Ready" />
             <Description DefaultValue="Open the taskpane to start generating slides." />
-            <LearnMoreUrl DefaultValue="https://www.tarkie.com/" />
+            <LearnMoreUrl DefaultValue="https://www.tarkie.com" />
           </GetStarted>
           
           <FunctionFile resid="Commands.Url" />
@@ -85,7 +85,7 @@
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Commands.Url" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/addin/commands.html" />
-        <bt:Url id="Taskpane.Url" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/addin/" />
+        <bt:Url id="Taskpane.Url" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/addin" />
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="Tarkie.GroupLabel" DefaultValue="Tarkie" />
@@ -97,5 +97,6 @@
     </Resources>
   </VersionOverrides>
 </OfficeApp>
+
 
 
