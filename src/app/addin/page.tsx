@@ -245,80 +245,70 @@ export default function AddinPage() {
     return deckData;
   };
 
-  /** Applies text replacements to a slide (0-based index), handles both text shapes and tables */
+  /** Applies text replacements using presentation-level search — works on ALL shape types including tables */
   const applyToSlide = async (slideIdx: number, suggestions: { original: string; replacement: string }[]) => {
     if (!suggestions || suggestions.length === 0) return;
     let matchCount = 0;
 
-    await window.PowerPoint.run(async (context: any) => {
-      const slide = context.presentation.slides.getItemAt(slideIdx);
-      const shapes = slide.shapes;
-      shapes.load("items");
-      await context.sync();
-
-      for (const shape of shapes.items) {
-        // ── Try table cells ────────────────────────────────────────────────
-        let isTable = false;
-        try {
-          const table = shape.table;
-          table.rows.load("items/cells/items");
+    for (const s of suggestions) {
+      if (!s.original || !s.replacement) continue;
+      try {
+        await window.PowerPoint.run(async (context: any) => {
+          // searchOptions: exact match within the full presentation search
+          const results = context.presentation.search(s.original, { matchCase: true, matchWholeWord: false });
+          results.load("items");
           await context.sync();
-          isTable = true;
 
-          for (const row of table.rows.items) {
-            for (const cell of row.cells.items) {
-              // Use textFrame — same path that successfully reads cells
-              try {
-                cell.textFrame.textRange.load("text");
-                await context.sync();
-                let cellText: string = cell.textFrame.textRange.text?.trim() ?? "";
-                let newText = cellText;
-                let changed = false;
-                for (const s of suggestions) {
-                  if (s.original && newText.includes(s.original)) {
-                    newText = newText.split(s.original).join(s.replacement);
-                    changed = true;
-                    matchCount++;
-                  }
-                }
-                if (changed) {
-                  cell.textFrame.textRange.text = newText;
-                  await context.sync();
-                }
-              } catch { /* cell not readable via textFrame */ }
+          // Filter to only results on the target slide
+          const slideResults = results.items.filter((r: any) => {
+            try { return r.slideIndex === slideIdx + 1; } catch { return true; }
+          });
+
+          if (slideResults.length > 0) {
+            for (const range of slideResults) {
+              range.text = s.replacement;
             }
-          }
-        } catch { /* not a table */ }
-
-        if (isTable) continue;
-
-        // ── Try text frame ─────────────────────────────────────────────────
-        try {
-          shape.textFrame.textRange.load("text");
-          await context.sync();
-          const raw: string = shape.textFrame.textRange.text || "";
-          if (isFooterText(raw)) continue; // skip footer shapes
-          let text = raw;
-          let changed = false;
-          for (const s of suggestions) {
-            if (s.original && text.includes(s.original)) {
-              text = text.split(s.original).join(s.replacement);
-              changed = true;
-              matchCount++;
-            }
-          }
-          if (changed) {
-            shape.textFrame.textRange.text = text;
             await context.sync();
+            matchCount += slideResults.length;
+            console.log(`[Tarkie] search replaced "${s.original}" → "${s.replacement}" (${slideResults.length} matches)`);
+          } else if (results.items.length > 0) {
+            // slideIndex filter failed — apply to all found instances
+            for (const range of results.items) {
+              range.text = s.replacement;
+            }
+            await context.sync();
+            matchCount += results.items.length;
+            console.log(`[Tarkie] search replaced (no slide filter) "${s.original}" → ${results.items.length} matches`);
           }
-        } catch { /* not a text shape */ }
+        });
+      } catch (e) {
+        // presentation.search not available — fall back to shape textFrame traversal
+        console.warn(`[Tarkie] search API failed for "${s.original}", trying textFrame fallback:`, e);
+        await window.PowerPoint.run(async (context: any) => {
+          const slide = context.presentation.slides.getItemAt(slideIdx);
+          slide.shapes.load("items");
+          await context.sync();
+          for (const shape of slide.shapes.items) {
+            try {
+              shape.textFrame.textRange.load("text");
+              await context.sync();
+              const raw: string = shape.textFrame.textRange.text || "";
+              if (isFooterText(raw)) continue;
+              if (raw.includes(s.original)) {
+                shape.textFrame.textRange.text = raw.split(s.original).join(s.replacement);
+                await context.sync();
+                matchCount++;
+              }
+            } catch { /* not a text shape */ }
+          }
+        });
       }
-    });
+    }
 
     if (matchCount === 0) {
       console.warn(`[Tarkie] applyToSlide ${slideIdx + 1}: no matches found`, suggestions.map(s => s.original));
     } else {
-      console.log(`[Tarkie] applyToSlide ${slideIdx + 1}: applied ${matchCount} replacements`);
+      console.log(`[Tarkie] applyToSlide ${slideIdx + 1}: applied ${matchCount} total replacements`);
     }
   };
 
