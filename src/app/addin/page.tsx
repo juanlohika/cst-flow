@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useSession } from "next-auth/react";
+import { PublicClientApplication, InteractionRequiredAuthError } from "@azure/msal-browser";
 import { 
   Sparkles, 
   Send, 
@@ -15,6 +16,49 @@ import {
  * Tarkie PowerPoint Add-in Sidebar
  * This page loads inside the PowerPoint Task Pane.
  */
+// MSAL configuration for Microsoft Graph access
+const MSAL_CONFIG = {
+  auth: {
+    clientId: "d35494c1-a8b2-4877-b6ba-e7e580768b72",
+    authority: "https://login.microsoftonline.com/common",
+    redirectUri: typeof window !== "undefined" ? window.location.origin + "/addin/auth-complete" : "",
+  },
+  cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
+};
+
+const GRAPH_SCOPES = ["Files.ReadWrite", "openid", "profile"];
+
+let msalInstance: PublicClientApplication | null = null;
+
+async function getMsalInstance(): Promise<PublicClientApplication> {
+  if (!msalInstance) {
+    msalInstance = new PublicClientApplication(MSAL_CONFIG);
+    await msalInstance.initialize();
+  }
+  return msalInstance;
+}
+
+async function getGraphToken(): Promise<string> {
+  const msal = await getMsalInstance();
+  const accounts = msal.getAllAccounts();
+
+  if (accounts.length > 0) {
+    try {
+      const result = await msal.acquireTokenSilent({
+        scopes: GRAPH_SCOPES,
+        account: accounts[0],
+      });
+      return result.accessToken;
+    } catch (e) {
+      if (!(e instanceof InteractionRequiredAuthError)) throw e;
+    }
+  }
+
+  // Silent failed or no account — show popup
+  const result = await msal.acquireTokenPopup({ scopes: GRAPH_SCOPES });
+  return result.accessToken;
+}
+
 export default function AddinPage() {
   const { data: session, status } = useSession();
   const [officeInitialized, setOfficeInitialized] = useState(false);
@@ -271,23 +315,15 @@ export default function AddinPage() {
     // ── Step 2: Graph API + server OOXML patch for table cells ────────────────
     console.log(`[Tarkie] ${remaining.length} suggestions need Graph/OOXML patch`);
 
-    // Get Graph token — try with consent prompt on first use
+    // Get Graph token via MSAL (works with personal Microsoft accounts)
     let graphToken: string;
     try {
-      const authAPI = window.OfficeRuntime?.auth ?? window.Office?.auth;
-      if (!authAPI) throw new Error("No Office auth API available");
-
-      try {
-        // First try silent
-        graphToken = await authAPI.getAccessToken({ allowSignInPrompt: false, allowConsentPrompt: false });
-      } catch {
-        // If silent fails, show consent/sign-in prompt
-        graphToken = await authAPI.getAccessToken({ allowSignInPrompt: true, allowConsentPrompt: true });
-      }
-      console.log("[Tarkie] Got Graph token");
+      setStatusMsg("Connecting to Microsoft...");
+      graphToken = await getGraphToken();
+      console.log("[Tarkie] Got Graph token via MSAL");
     } catch (e: any) {
       console.error("[Tarkie] Failed to get Graph token:", e.message);
-      setError("Microsoft sign-in required. Please close and reopen the add-in to authorize.");
+      setError("Microsoft sign-in required to edit tables. Please try again.");
       return;
     }
 
