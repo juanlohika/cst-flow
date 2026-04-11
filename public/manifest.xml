@@ -6,21 +6,23 @@
     xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides" 
     xsi:type="TaskPaneApp">
 
-  <!-- SCHEMA 1.1 - TARGET: POWERPOINT WEB/DESKTOP -->
-  <Id>f9e8d7c6-5b4a-3a21-0e9d-8c7b6a5f4e3d</Id>
-  <Version>1.5.0.0</Version>
+  <!-- SCHEMA 1.1 - 2026 STRICT MODE -->
+  <Id>d4c5b6a7-8e9f-0d1c-2b3a-4f5e6d7c8b9a</Id>
+  <Version>1.6.0.0</Version>
   <ProviderName>Tarkie</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Tarkie AI" />
-  <Description DefaultValue="AI-powered assistant for Tarkie intelligence." />
+  <DisplayName DefaultValue="Tarkie AI Generator" />
+  <Description DefaultValue="AI-powered presentation builder for Tarkie intelligence." />
   
-  <!-- MANDATORY: NO TRAILING SLASHES TO PREVENT REDIRECTS -->
+  <!-- ROOT ICONS: MANDATORY 32/64 -->
   <IconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png" />
   <HighResolutionIconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-64.png" />
+  
   <SupportUrl DefaultValue="https://www.tarkie.com" />
   
+  <!-- 2026 STRICT: DOMAIN ONLY, NO HTTPS, NO SLASH -->
   <AppDomains>
-    <AppDomain>https://cst-flow--cst-flowdesk.asia-east1.hosted.app</AppDomain>
+    <AppDomain>cst-flow--cst-flowdesk.asia-east1.hosted.app</AppDomain>
   </AppDomains>
   
   <Hosts>
@@ -44,8 +46,8 @@
       <Host xsi:type="Presentation">
         <DesktopFormFactor>
           <GetStarted>
-            <Title DefaultValue="Tarkie AI Ready" />
-            <Description DefaultValue="Open the taskpane to start generating slides." />
+            <Title DefaultValue="Tarkie AI" />
+            <Description DefaultValue="Your AI-powered presentation assistant is ready." />
             <LearnMoreUrl DefaultValue="https://www.tarkie.com" />
           </GetStarted>
           
@@ -79,8 +81,10 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png" />
+        <bt:Image id="Icon.16" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-16.png" />
+        <bt:Image id="Icon.25" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-25.png" />
         <bt:Image id="Icon.32" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png" />
+        <bt:Image id="Icon.48" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-48.png" />
         <bt:Image id="Icon.80" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-80.png" />
       </bt:Images>
       <bt:Urls>
@@ -97,6 +101,7 @@
     </Resources>
   </VersionOverrides>
 </OfficeApp>
+
 
 
 
