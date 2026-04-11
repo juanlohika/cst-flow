@@ -323,12 +323,13 @@ export default function AddinPage() {
           }
         }
 
-        setMessages(prev => [...prev, { 
-          role: "ai", 
-          text: applyToAll 
-            ? `I've processed all slides and applied intelligence where applicable.`
-            : `I've updated the current slide based on your instructions and client intelligence.` 
-        }]);
+        // Only append a summary message when applying to all slides (individual slide updates already show AI response above)
+        if (applyToAll) {
+          setMessages(prev => [...prev, {
+            role: "ai",
+            text: `Done — I've processed all slides and applied intelligence where applicable.`
+          }]);
+        }
       });
 
     } catch (err: any) {
@@ -377,10 +378,10 @@ export default function AddinPage() {
             </div>
             <span className="text-xs font-black uppercase tracking-widest text-slate-800">Tarkie AI</span>
           </div>
-          <div className="px-2 py-1 bg-blue-50/50 rounded-full flex items-center gap-1.5 grayscale opacity-70">
+          <div className="px-2 py-1 bg-blue-50/50 rounded-full flex items-center gap-1.5">
              <div className="w-1 h-1 bg-green-500 rounded-full animate-pulse" />
              <p className="text-[8px] text-[#2162F9] font-black uppercase tracking-tighter">
-              Claude 3.5 Sonnet
+              Claude Sonnet 4.5
             </p>
           </div>
         </div>
@@ -396,6 +397,21 @@ export default function AddinPage() {
               <option key={c.id} value={c.id}>{c.companyName}</option>
             ))}
           </select>
+
+          {selectedClient && (() => {
+            const client = clients.find(c => c.id === selectedClient);
+            if (client && !client.intelligenceContent) {
+              return (
+                <div className="px-2 py-1.5 bg-amber-50 border border-amber-100 rounded-lg flex items-start gap-1.5">
+                  <AlertCircle size={10} className="text-amber-500 shrink-0 mt-0.5" />
+                  <p className="text-[9px] font-bold text-amber-700 leading-tight">
+                    No intelligence for this account. Add it in <span className="font-black">Accounts → Intelligence</span>.
+                  </p>
+                </div>
+              );
+            }
+            return null;
+          })()}
 
           <div className="flex items-center justify-between px-1">
              <div className="flex items-center gap-2">
@@ -451,9 +467,15 @@ export default function AddinPage() {
 
         {isProcessing && (
           <div className="flex justify-start">
-            <div className="bg-white/80 backdrop-blur-sm border border-slate-100 p-3 rounded-2xl rounded-tl-sm flex items-center gap-2 text-[10px] font-black text-[#2162F9] shadow-sm">
-              <Loader2 size={12} className="animate-spin" />
-              {statusMsg}
+            <div className="bg-white border border-slate-100 px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 bg-[#2162F9] rounded-full animate-bounce [animation-delay:-0.3s]" />
+                <span className="w-2 h-2 bg-[#2162F9] rounded-full animate-bounce [animation-delay:-0.15s]" />
+                <span className="w-2 h-2 bg-[#2162F9] rounded-full animate-bounce" />
+              </div>
+              {statusMsg && (
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{statusMsg}</p>
+              )}
             </div>
           </div>
         )}

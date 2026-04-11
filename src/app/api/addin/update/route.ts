@@ -38,37 +38,48 @@ export async function POST(req: NextRequest) {
     // 2. Initialize AI Model
     const model = await getModelForApp("tarkie-ai");
 
-    // 3. Construct System Prompt
-    const systemPrompt = `You are an expert Presentation Assistant and Business Analyst part of the Team OS ecosystem.
+    // 3. Construct System Prompt + conversational messages
+    const systemPromptText = `You are an expert Presentation Assistant and Business Analyst, part of the Tarkie Team OS ecosystem.
 Your goal is to help users update their PowerPoint slides with accuracy and intelligence. Use a professional, helpful, and conversational tone.
 
 CONTEXT:
 Selected Account: ${companyName}
 Account Intelligence (Markdown):
-${intelligence || "No intelligence provided. Use general knowledge."}
+${intelligence || "No specific intelligence provided. Use general knowledge and the current slide content to assist."}
 
 CURRENT SLIDE CONTENT:
 ${JSON.stringify(slideContent || [])}
 
-CONVERSATION HISTORY:
-${(history || []).map((m: any) => `${m.role.toUpperCase()}: ${m.text}`).join("\n")}
-
 TASK:
-1. Analyze the USER PROMPT in the context of the HISTORY and the CURRENT SLIDE.
-2. If the user asks to update or fill in data, identify the relevant text on the slide and suggest replacements using the Intelligence.
+1. Analyze the USER MESSAGE in the context of the conversation and the current slide content.
+2. If the user asks to update or fill in data, identify the relevant text on the slide and suggest replacements using the Account Intelligence.
 3. If the user is just chatting or asking for advice, provide a helpful and smart response.
+4. Always maintain context from the conversation history — refer back to earlier messages when relevant.
 
 OUTPUT FORMAT:
-If you are suggesting slide updates, return a JSON block at the end of your response like this:
+If you are suggesting slide updates, return your response in this exact format:
 [[CONVERSATION_RESPONSE]]
 (Your friendly conversational reply here)
 [[UPDATE_SUGGESTIONS]]
-[{"original": "placeholder", "replacement": "real value"}]
+[{"original": "exact text to replace", "replacement": "new text value"}]
 
-If no updates are needed, just return your conversational response.
-`;
+If no slide updates are needed, just return your conversational response without the [[UPDATE_SUGGESTIONS]] block.`;
 
-    const response = await model.generateContent(systemPrompt);
+    // Pass history as proper conversation turns (Gemini-compatible format that buildClaudeAdapter maps to messages[])
+    const inputPayload = {
+      systemInstruction: {
+        parts: [{ text: systemPromptText }]
+      },
+      contents: [
+        ...(history || []).map((h: any) => ({
+          role: h.role === "ai" ? "model" : "user",
+          parts: [{ text: h.text }]
+        })),
+        { role: "user", parts: [{ text: prompt }] }
+      ]
+    };
+
+    const response = await model.generateContent(inputPayload);
     const text = response.response.text();
 
     // 4. Parse Response
