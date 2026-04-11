@@ -244,19 +244,23 @@ export default function AddinPage() {
 
         if (!isTable) return 0;
 
-        // It's a table — traverse rows and cells
-        const table = shape.table;
-        table.rows.load("items");
+        // It's a table — load row count first
+        const tableObj = shape.table;
+        tableObj.load("rowCount");
         await context.sync();
+        const rowCount: number = tableObj.rowCount;
+        console.log(`[Tarkie] table[${shapeIdx}] rowCount: ${rowCount}`);
 
         let localCount = 0;
-        for (let rowIdx = 0; rowIdx < table.rows.items.length; rowIdx++) {
-          const row = table.rows.items[rowIdx];
-          row.cells.load("items");
+        for (let rowIdx = 0; rowIdx < rowCount; rowIdx++) {
+          // Get row by index, load cell count
+          const row = tableObj.rows.getItemAt(rowIdx);
+          row.load("cellCount");
           await context.sync();
+          const cellCount: number = row.cellCount;
 
-          for (let cellIdx = 0; cellIdx < row.cells.items.length; cellIdx++) {
-            const cell = row.cells.items[cellIdx];
+          for (let cellIdx = 0; cellIdx < cellCount; cellIdx++) {
+            const cell = row.cells.getItemAt(cellIdx);
             cell.textFrame.textRange.load("text");
             await context.sync();
             const raw: string = cell.textFrame.textRange.text || "";
