@@ -23,16 +23,6 @@
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
-    <WebApplicationInfo>
-      <Id>d35494c1-a8b2-4877-b6ba-e7e580768b72</Id>
-      <Resource>api://cst-flow--cst-flowdesk.asia-east1.hosted.app/d35494c1-a8b2-4877-b6ba-e7e580768b72</Resource>
-      <Scopes>
-        <Scope>Files.ReadWrite</Scope>
-        <Scope>openid</Scope>
-        <Scope>profile</Scope>
-        <Scope>offline_access</Scope>
-      </Scopes>
-    </WebApplicationInfo>
     <Hosts>
       <Host xsi:type="Presentation">
         <DesktopFormFactor>
@@ -93,5 +83,15 @@
         <bt:String id="TaskpaneButton.SupertipText" DefaultValue="Open the AI Presentation Builder"/>
       </bt:LongStrings>
     </Resources>
+    <WebApplicationInfo>
+      <Id>d35494c1-a8b2-4877-b6ba-e7e580768b72</Id>
+      <Resource>api://cst-flow--cst-flowdesk.asia-east1.hosted.app/d35494c1-a8b2-4877-b6ba-e7e580768b72</Resource>
+      <Scopes>
+        <Scope>Files.ReadWrite</Scope>
+        <Scope>openid</Scope>
+        <Scope>profile</Scope>
+        <Scope>offline_access</Scope>
+      </Scopes>
+    </WebApplicationInfo>
   </VersionOverrides>
 </OfficeApp>
