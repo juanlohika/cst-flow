@@ -101,12 +101,20 @@ function PresentationsContent() {
             </h1>
             <p className="text-sm text-slate-500 mt-1">Create AI-powered presentation decks for client meetings</p>
           </div>
-          <button
-            onClick={() => setShowNewModal(true)}
-            className="flex items-center gap-2 bg-[#2162F9] text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:shadow-lg hover:translate-y-[-1px] transition-all"
-          >
-            <Plus size={16} /> New Presentation
-          </button>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/presentations/premium"
+              className="group flex items-center gap-2 bg-white border border-[#2162F9]/20 text-[#2162F9] px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-[#2162F9] hover:text-white transition-all shadow-sm"
+            >
+              <Sparkles size={16} className="group-hover:animate-pulse" /> Premium Native Deck
+            </Link>
+            <button
+              onClick={() => setShowNewModal(true)}
+              className="flex items-center gap-2 bg-[#2162F9] text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:shadow-lg hover:translate-y-[-1px] transition-all"
+            >
+              <Plus size={16} /> New Presentation
+            </button>
+          </div>
         </div>
 
         {/* Presentation Grid */}
