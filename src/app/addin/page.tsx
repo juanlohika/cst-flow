@@ -158,6 +158,7 @@ export default function AddinPage() {
   /** Applies text replacements to a slide (0-based index) */
   const applyToSlide = async (slideIdx: number, suggestions: { original: string; replacement: string }[]) => {
     if (!suggestions || suggestions.length === 0) return;
+    let matchCount = 0;
     await window.PowerPoint.run(async (context: any) => {
       const slide = context.presentation.slides.getItemAt(slideIdx);
       const shapes = slide.shapes;
@@ -174,6 +175,7 @@ export default function AddinPage() {
             if (s.original && text.includes(s.original)) {
               text = text.split(s.original).join(s.replacement);
               changed = true;
+              matchCount++;
             }
           }
           if (changed) {
@@ -183,6 +185,11 @@ export default function AddinPage() {
         } catch { /* not a text shape */ }
       }
     });
+    if (matchCount === 0) {
+      console.warn(`[Tarkie] applyToSlide ${slideIdx + 1}: no matches found for suggestions:`, suggestions.map(s => s.original));
+    } else {
+      console.log(`[Tarkie] applyToSlide ${slideIdx + 1}: applied ${matchCount} replacements`);
+    }
   };
 
   const handleScanDeck = async () => {
