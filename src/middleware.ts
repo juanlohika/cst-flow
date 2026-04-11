@@ -13,7 +13,8 @@ export default auth((req) => {
   const isPublicPage = pathname === "/" ||
                       pathname.startsWith("/meetings/attend") ||
                       pathname.startsWith("/meetings/scan") ||
-                      pathname.startsWith("/share/");
+                      pathname.startsWith("/share/") ||
+                      pathname.startsWith("/addin");
 
   // Allow auth-related paths to bypass middleware
   if (isAuthPage || isAuthApi) {

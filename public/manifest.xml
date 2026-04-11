@@ -1,77 +1,59 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<OfficeApp 
-    xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" 
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
-    xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0" 
-    xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides" 
-    xsi:type="TaskPaneApp">
-
-  <!-- SCHEMA 1.1 - TARGET: POWERPOINT WEB/DESKTOP -->
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="TaskPaneApp">
   <Id>e6a83a86-5ff2-4086-b172-95167456aa8c</Id>
-  <Version>1.8.0.0</Version>
+  <Version>2.0.0.0</Version>
   <ProviderName>Tarkie</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Tarkie AI Generator" />
-  <Description DefaultValue="AI-powered presentation assistant for Tarkie intelligence." />
-  
-  <IconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png" />
-  <HighResolutionIconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-80.png" />
-  <SupportUrl DefaultValue="https://www.tarkie.com" />
-  
+  <DisplayName DefaultValue="Tarkie AI Generator"/>
+  <Description DefaultValue="AI-powered presentation builder for Tarkie intelligence."/>
+  <IconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-64.png"/>
+  <SupportUrl DefaultValue="https://www.tarkie.com"/>
   <AppDomains>
-    <AppDomain>cst-flow--cst-flowdesk.asia-east1.hosted.app</AppDomain>
+    <AppDomain>https://cst-flow--cst-flowdesk.asia-east1.hosted.app</AppDomain>
   </AppDomains>
-  
   <Hosts>
-    <Host Name="Presentation" />
+    <Host Name="Presentation"/>
   </Hosts>
-
-  <Requirements>
-    <Sets>
-      <Set Name="PresentationML" MinVersion="1.1" />
-    </Sets>
-  </Requirements>
-  
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/addin" />
+    <SourceLocation DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/addin"/>
   </DefaultSettings>
-  
   <Permissions>ReadWriteDocument</Permissions>
-
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
     <Hosts>
       <Host xsi:type="Presentation">
         <DesktopFormFactor>
           <GetStarted>
-            <Title DefaultValue="Tarkie AI Ready" />
-            <Description DefaultValue="Open the Home ribbon to find the Tarkie AI Generator." />
-            <LearnMoreUrl DefaultValue="https://www.tarkie.com" />
+            <Title resid="GetStarted.Title"/>
+            <Description resid="GetStarted.Description"/>
+            <LearnMoreUrl resid="GetStarted.LearnMoreUrl"/>
           </GetStarted>
-          
-          <FunctionFile resid="Commands.Url" />
-          
           <ExtensionPoint xsi:type="PrimaryCommandSurface">
             <OfficeTab id="TabHome">
               <Group id="Tarkie.Group">
-                <Label resid="Tarkie.GroupLabel" />
+                <Label resid="Group.Label"/>
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16x16"/>
+                  <bt:Image size="32" resid="Icon.32x32"/>
+                  <bt:Image size="80" resid="Icon.80x80"/>
+                </Icon>
                 <Control xsi:type="Button" id="Tarkie.TaskpaneButton">
-                  <Label resid="Tarkie.ButtonLabel" />
+                  <Label resid="TaskpaneButton.Label"/>
                   <Supertip>
-                    <Title resid="Tarkie.ButtonLabel" />
-                    <Description resid="Tarkie.ButtonTip" />
+                    <Title resid="TaskpaneButton.SupertipTitle"/>
+                    <Description resid="TaskpaneButton.SupertipText"/>
                   </Supertip>
                   <Icon>
-                    <bt:Image size="16" resid="Icon.16" />
-                    <bt:Image size="20" resid="Icon.20" />
-                    <bt:Image size="24" resid="Icon.24" />
-                    <bt:Image size="32" resid="Icon.32" />
-                    <bt:Image size="48" resid="Icon.48" />
-                    <bt:Image size="64" resid="Icon.64" />
-                    <bt:Image size="80" resid="Icon.80" />
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
                     <TaskpaneId>TarkiePane</TaskpaneId>
-                    <SourceLocation resid="Taskpane.Url" />
+                    <SourceLocation resid="Taskpane.Url"/>
                   </Action>
                 </Control>
               </Group>
@@ -82,32 +64,24 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-16.png" />
-        <bt:Image id="Icon.20" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-20.png" />
-        <bt:Image id="Icon.24" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-24.png" />
-        <bt:Image id="Icon.25" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-25.png" />
-        <bt:Image id="Icon.32" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png" />
-        <bt:Image id="Icon.48" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-48.png" />
-        <bt:Image id="Icon.64" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-64.png" />
-        <bt:Image id="Icon.80" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-80.png" />
+        <bt:Image id="Icon.16x16" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-16.png"/>
+        <bt:Image id="Icon.32x32" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-32.png"/>
+        <bt:Image id="Icon.80x80" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="Commands.Url" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/addin/commands.html" />
-        <bt:Url id="Taskpane.Url" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/addin" />
+        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://www.tarkie.com"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://cst-flow--cst-flowdesk.asia-east1.hosted.app/addin"/>
       </bt:Urls>
       <bt:ShortStrings>
-        <bt:String id="Tarkie.GroupLabel" DefaultValue="Tarkie" />
-        <bt:String id="Tarkie.ButtonLabel" DefaultValue="Tarkie AI" />
+        <bt:String id="GetStarted.Title" DefaultValue="Tarkie AI is ready!"/>
+        <bt:String id="Group.Label" DefaultValue="Tarkie"/>
+        <bt:String id="TaskpaneButton.Label" DefaultValue="Tarkie AI"/>
+        <bt:String id="TaskpaneButton.SupertipTitle" DefaultValue="Tarkie AI Generator"/>
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="Tarkie.ButtonTip" DefaultValue="Open the AI Presentation Builder" />
+        <bt:String id="GetStarted.Description" DefaultValue="Your Tarkie AI add-in loaded successfully. Go to the HOME tab and click the Tarkie AI button to get started."/>
+        <bt:String id="TaskpaneButton.SupertipText" DefaultValue="Open the AI Presentation Builder"/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
 </OfficeApp>
-
-
-
-
-
-
