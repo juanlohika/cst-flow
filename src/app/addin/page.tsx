@@ -91,7 +91,12 @@ export default function AddinPage() {
     setTimeout(() => clearInterval(interval), 120000);
   };
 
-  /** Reads text from a single slide given its index (0-based) */
+  /** Returns true if text looks like a footer/copyright — skip these */
+  const isFooterText = (t: string) =>
+    t.includes("©") || t.includes("All rights reserved") || t.includes("confidential") ||
+    (t.length > 120 && !t.includes("\n"));
+
+  /** Reads all text from a slide's shapes + tables (0-based index) */
   const getSlideText = async (slideIndex: number): Promise<string[]> => {
     return await window.PowerPoint.run(async (context: any) => {
       const slide = context.presentation.slides.getItemAt(slideIndex);
@@ -101,14 +106,37 @@ export default function AddinPage() {
 
       const texts: string[] = [];
       for (const shape of shapes.items) {
+        // ── Try table first ────────────────────────────────────────────────
+        try {
+          const table = shape.table;
+          table.rows.load("items");
+          await context.sync();
+          const tableLines: string[] = [];
+          for (const row of table.rows.items) {
+            row.cells.load("items");
+            await context.sync();
+            const rowCells: string[] = [];
+            for (const cell of row.cells.items) {
+              cell.body.paragraphs.load("items");
+              await context.sync();
+              for (const para of cell.body.paragraphs.items) {
+                para.load("text");
+                await context.sync();
+                if (para.text?.trim()) rowCells.push(para.text.trim());
+              }
+            }
+            if (rowCells.length) tableLines.push(rowCells.join(" | "));
+          }
+          if (tableLines.length) texts.push("[TABLE]\n" + tableLines.join("\n"));
+          continue; // shape was a table, skip textFrame attempt
+        } catch { /* not a table */ }
+
+        // ── Try text frame ─────────────────────────────────────────────────
         try {
           shape.textFrame.textRange.load("text");
           await context.sync();
           const t = shape.textFrame.textRange.text?.trim();
-          if (t) {
-            console.log(`[Tarkie] slide${slideIndex + 1} shape text (${t.length} chars):`, JSON.stringify(t.substring(0, 100)));
-            texts.push(t);
-          }
+          if (t && !isFooterText(t)) texts.push(t);
         } catch { /* not a text shape */ }
       }
       return texts;
@@ -130,10 +158,33 @@ export default function AddinPage() {
       const texts: string[] = [];
       for (const shape of shapes.items) {
         try {
+          const table = shape.table;
+          table.rows.load("items");
+          await context.sync();
+          const tableLines: string[] = [];
+          for (const row of table.rows.items) {
+            row.cells.load("items");
+            await context.sync();
+            const rowCells: string[] = [];
+            for (const cell of row.cells.items) {
+              cell.body.paragraphs.load("items");
+              await context.sync();
+              for (const para of cell.body.paragraphs.items) {
+                para.load("text");
+                await context.sync();
+                if (para.text?.trim()) rowCells.push(para.text.trim());
+              }
+            }
+            if (rowCells.length) tableLines.push(rowCells.join(" | "));
+          }
+          if (tableLines.length) { texts.push("[TABLE]\n" + tableLines.join("\n")); continue; }
+        } catch { /* not a table */ }
+
+        try {
           shape.textFrame.textRange.load("text");
           await context.sync();
           const t = shape.textFrame.textRange.text?.trim();
-          if (t) texts.push(t);
+          if (t && !isFooterText(t)) texts.push(t);
         } catch { /* not a text shape */ }
       }
       return texts;
@@ -158,10 +209,11 @@ export default function AddinPage() {
     return deckData;
   };
 
-  /** Applies text replacements to a slide (0-based index) */
+  /** Applies text replacements to a slide (0-based index), handles both text shapes and tables */
   const applyToSlide = async (slideIdx: number, suggestions: { original: string; replacement: string }[]) => {
     if (!suggestions || suggestions.length === 0) return;
     let matchCount = 0;
+
     await window.PowerPoint.run(async (context: any) => {
       const slide = context.presentation.slides.getItemAt(slideIdx);
       const shapes = slide.shapes;
@@ -169,10 +221,50 @@ export default function AddinPage() {
       await context.sync();
 
       for (const shape of shapes.items) {
+        // ── Try table cells ────────────────────────────────────────────────
+        let isTable = false;
+        try {
+          const table = shape.table;
+          table.rows.load("items");
+          await context.sync();
+          isTable = true;
+
+          for (const row of table.rows.items) {
+            row.cells.load("items");
+            await context.sync();
+            for (const cell of row.cells.items) {
+              cell.body.paragraphs.load("items");
+              await context.sync();
+              for (const para of cell.body.paragraphs.items) {
+                para.load("text");
+                await context.sync();
+                let text: string = para.text || "";
+                let changed = false;
+                for (const s of suggestions) {
+                  if (s.original && text.includes(s.original)) {
+                    text = text.split(s.original).join(s.replacement);
+                    changed = true;
+                    matchCount++;
+                  }
+                }
+                if (changed) {
+                  para.text = text;
+                  await context.sync();
+                }
+              }
+            }
+          }
+        } catch { /* not a table */ }
+
+        if (isTable) continue;
+
+        // ── Try text frame ─────────────────────────────────────────────────
         try {
           shape.textFrame.textRange.load("text");
           await context.sync();
-          let text: string = shape.textFrame.textRange.text;
+          const raw: string = shape.textFrame.textRange.text || "";
+          if (isFooterText(raw)) continue; // skip footer shapes
+          let text = raw;
           let changed = false;
           for (const s of suggestions) {
             if (s.original && text.includes(s.original)) {
@@ -188,8 +280,9 @@ export default function AddinPage() {
         } catch { /* not a text shape */ }
       }
     });
+
     if (matchCount === 0) {
-      console.warn(`[Tarkie] applyToSlide ${slideIdx + 1}: no matches found for suggestions:`, suggestions.map(s => s.original));
+      console.warn(`[Tarkie] applyToSlide ${slideIdx + 1}: no matches found`, suggestions.map(s => s.original));
     } else {
       console.log(`[Tarkie] applyToSlide ${slideIdx + 1}: applied ${matchCount} replacements`);
     }

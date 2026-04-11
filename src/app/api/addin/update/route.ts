@@ -64,16 +64,19 @@ RULES:
 1. When the user asks to update/change/edit slides — ALWAYS return [[UPDATE_SUGGESTIONS]] with the exact text replacements.
 2. The "original" field MUST be a SHORT snippet copied EXACTLY from the slide content above — a single line or phrase, NOT the whole block. The add-in does an exact string.includes() match, so shorter = more likely to match.
 3. One suggestion per individual line or phrase you want to change. Never combine multiple lines into one "original".
-4. Never say you cannot edit slides — you can, via the JSON output.
-5. Only use data from Account Intelligence or slide content — never invent facts.
+4. For tables (shown as [TABLE] with rows like "ROLE | NAME | CONTACT DETAILS"): each cell value is its own suggestion. Use the exact cell text as "original".
+5. NEVER touch footer text (copyright notices, "All rights reserved", long single-line legal text at the bottom). Only edit the main content shapes.
+6. Never say you cannot edit slides — you can, via the JSON output.
+7. Only use data from Account Intelligence or slide content — never invent facts.
 
-EXAMPLE — if the slide shows:
-"Lack of Delivery Tracking and On-site Visibility"
-"No Visibility of On-Site Engineers' Breaks"
+EXAMPLE for table update — if slide shows:
+[TABLE]
+ROLE | NAME | CONTACT DETAILS
+Decision Maker | Mr. Hanz Chan | hanzjordanchan@gmail.com
 
-To replace both lines, output TWO separate suggestions:
-{"slideIndex": 7, "original": "Lack of Delivery Tracking and On-site Visibility", "replacement": "Manual DTR causing billing delays"}
-{"slideIndex": 7, "original": "No Visibility of On-Site Engineers' Breaks", "replacement": "OT tampering and timesheet disputes"}
+Output separate suggestions per cell value:
+{"slideIndex": 4, "original": "Mr. Hanz Chan", "replacement": "Sir Brian"}
+{"slideIndex": 4, "original": "hanzjordanchan@gmail.com", "replacement": "brian@solmanpower.com"}
 
 OUTPUT FORMAT when making edits:
 [[CONVERSATION_RESPONSE]]
