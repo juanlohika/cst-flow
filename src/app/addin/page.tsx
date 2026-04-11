@@ -224,113 +224,115 @@ export default function AddinPage() {
     setMessages(prev => [...prev, { role: "user", text: userMsg }]);
     setChatInput("");
     setIsProcessing(true);
-    setStatusMsg("Analyzing slide context...");
+    setStatusMsg(applyToAll ? "Reading all slides..." : "Reading current slide...");
     setError(null);
 
     try {
-      // 1. Get Slides count or current slide
+      // ── Step 1: Read slide content via Office JS ──────────────────────────
+      let slideContent: string[] = [];
+      let allSlides: { slideIndex: number; content: string[] }[] = [];
+
       await window.PowerPoint.run(async (context: any) => {
-        const presentation = context.presentation;
-        const slides = presentation.slides;
-        slides.load("items");
-        await context.sync();
+        if (applyToAll) {
+          const slides = context.presentation.slides;
+          slides.load("items");
+          await context.sync();
 
-        const slideIndices = applyToAll 
-          ? Array.from({ length: slides.items.length }, (_, i) => i) 
-          : [0]; // 0 here is a placeholder for "current", but we use selectedSlides below
-
-        for (let i = 0; i < slideIndices.length; i++) {
-          if (applyToAll) setStatusMsg(`Processing slide ${i + 1} of ${slides.items.length}...`);
-          else setStatusMsg("Analyzing current slide...");
-
-          // Get content for specific slide index if looping, else current
-          let slideContent: string[] = [];
-          if (applyToAll) {
+          for (let i = 0; i < slides.items.length; i++) {
             const slide = slides.items[i];
             const shapes = slide.shapes;
             shapes.load("items/hasTextFrame");
             await context.sync();
 
             for (const shape of shapes.items) {
-              if (shape.hasTextFrame) {
-                shape.textFrame.load("hasText, textRange/text");
-              }
+              if (shape.hasTextFrame) shape.textFrame.load("hasText, textRange/text");
             }
             await context.sync();
 
-            slideContent = shapes.items
+            const content = shapes.items
               .filter((s: any) => s.hasTextFrame && s.textFrame.hasText)
-              .map((s: any) => s.textFrame.textRange.text);
-          } else {
-            slideContent = await getActiveSlideContent();
+              .map((s: any) => s.textFrame.textRange.text as string);
+
+            allSlides.push({ slideIndex: i + 1, content });
           }
+        } else {
+          slideContent = await getActiveSlideContent();
+        }
+      });
 
-          if (slideContent.length === 0) continue;
+      // ── Step 2: Call AI once with all content ─────────────────────────────
+      setStatusMsg("Thinking...");
 
-          // Call AI
-          const res = await fetch("/api/addin/update", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              prompt: userMsg,
-              clientId: selectedClient,
-              slideContent,
-              applyToAll,
-              history: messages.slice(-10) // Send last 10 messages for context
-            })
-          });
+      const body: any = {
+        prompt: userMsg,
+        clientId: selectedClient,
+        history: messages.slice(-14),
+      };
+      if (applyToAll) {
+        body.allSlides = allSlides;
+      } else {
+        body.slideContent = slideContent;
+      }
 
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Generation error");
+      const res = await fetch("/api/addin/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
 
-          // Display AI text response once (only for the current message)
-          if (i === 0) {
-             setMessages(prev => [...prev, { role: "ai", text: data.text }]);
-          }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "AI returned an error");
 
-          // Apply Updates
-          if (data.suggestions && data.suggestions.length > 0) {
-            if (applyToAll) {
+      // ── Step 3: Show AI response ──────────────────────────────────────────
+      setMessages(prev => [...prev, { role: "ai", text: data.text || "(no response)" }]);
+
+      // ── Step 4: Apply suggestions to slides ───────────────────────────────
+      if (data.suggestions && data.suggestions.length > 0) {
+        setStatusMsg("Applying updates to slides...");
+
+        await window.PowerPoint.run(async (context: any) => {
+          if (applyToAll) {
+            const slides = context.presentation.slides;
+            slides.load("items");
+            await context.sync();
+
+            for (let i = 0; i < slides.items.length; i++) {
+              // Collect suggestions for this slide (1-indexed) or slideIndex-less ones
+              const slideSuggestions = data.suggestions.filter(
+                (s: any) => s.slideIndex == null || s.slideIndex === i + 1
+              );
+              if (slideSuggestions.length === 0) continue;
+
               const slide = slides.items[i];
               const shapes = slide.shapes;
               shapes.load("items/hasTextFrame");
               await context.sync();
 
               for (const shape of shapes.items) {
-                if (shape.hasTextFrame) {
-                  shape.textFrame.load("hasText, textRange");
-                }
+                if (shape.hasTextFrame) shape.textFrame.load("hasText, textRange");
               }
               await context.sync();
 
               for (const shape of shapes.items) {
-                if (shape.hasTextFrame && shape.textFrame.hasText) {
-                  let currentText = shape.textFrame.textRange.text;
-                  let updated = false;
-                  for (const s of data.suggestions) {
-                    if (currentText.includes(s.original)) {
-                      currentText = currentText.replace(s.original, s.replacement);
-                      updated = true;
-                    }
+                if (!shape.hasTextFrame || !shape.textFrame.hasText) continue;
+                let text = shape.textFrame.textRange.text as string;
+                let changed = false;
+                for (const s of slideSuggestions) {
+                  if (s.original && text.includes(s.original)) {
+                    text = text.split(s.original).join(s.replacement);
+                    changed = true;
                   }
-                  if (updated) shape.textFrame.textRange.text = currentText;
                 }
+                if (changed) shape.textFrame.textRange.text = text;
               }
               await context.sync();
-            } else {
-              await applySlideUpdates(data.suggestions);
             }
+          } else {
+            // Single slide — apply using existing helper
+            await applySlideUpdates(data.suggestions);
           }
-        }
-
-        // Only append a summary message when applying to all slides (individual slide updates already show AI response above)
-        if (applyToAll) {
-          setMessages(prev => [...prev, {
-            role: "ai",
-            text: `Done — I've processed all slides and applied intelligence where applicable.`
-          }]);
-        }
-      });
+        });
+      }
 
     } catch (err: any) {
       setError(err.message || "Failed to process request.");

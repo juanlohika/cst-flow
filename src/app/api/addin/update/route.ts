@@ -7,8 +7,11 @@ import { getModelForApp } from "@/lib/ai";
 
 /**
  * POST /api/addin/update
- * Analyzes slide content vs account intelligence using Claude
- * and returns suggested text replacements.
+ *
+ * Single-slide mode:  { prompt, clientId, slideContent: string[], history }
+ * All-slides mode:    { prompt, clientId, allSlides: {slideIndex:number, content:string[]}[], history }
+ *
+ * Returns: { text: string, suggestions: {slideIndex?:number, original:string, replacement:string}[] }
  */
 export async function POST(req: NextRequest) {
   try {
@@ -16,16 +19,15 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
-    const { prompt, clientId, slideContent, applyToAll, history } = body;
+    const { prompt, clientId, slideContent, allSlides, history } = body;
 
     if (!prompt) {
       return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
     }
 
+    // ── 1. Account Intelligence ───────────────────────────────────────────────
     let intelligence = "";
     let companyName = "General Context";
-    
-    // 1. Fetch Account Intelligence if a client is selected
     if (clientId && typeof clientId === "string" && clientId.trim() !== "") {
       const results = await db.select().from(clientProfiles).where(eq(clientProfiles.id, clientId)).limit(1);
       const client = results[0];
@@ -35,66 +37,76 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Initialize AI Model
+    // ── 2. AI Model ───────────────────────────────────────────────────────────
     const model = await getModelForApp("tarkie-ai");
 
-    // 3. Construct System Prompt + conversational messages
-    const systemPromptText = `You are an expert Presentation Assistant and Business Analyst, part of the Tarkie Team OS ecosystem.
-Your goal is to help users update their PowerPoint slides with accuracy and intelligence. Use a professional, helpful, and conversational tone.
+    // ── 3. Build slide context string ─────────────────────────────────────────
+    const isBulk = Array.isArray(allSlides) && allSlides.length > 0;
+    const slideContext = isBulk
+      ? allSlides.map((s: any) => `[Slide ${s.slideIndex}]\n${(s.content || []).join("\n")}`).join("\n\n")
+      : (slideContent || []).join("\n");
 
-CONTEXT:
-Selected Account: ${companyName}
-Account Intelligence (Markdown):
-${intelligence || "No specific intelligence provided. Use general knowledge and the current slide content to assist."}
+    // ── 4. System Prompt ──────────────────────────────────────────────────────
+    const systemPromptText = `You are Tarkie AI — an expert Presentation Strategist and Business Analyst embedded in PowerPoint via the Tarkie Team OS.
+Your job: help the user craft, update, and improve their slides using real client intelligence.
+Be conversational, smart, and proactive. Think like a senior consultant who knows the client deeply.
 
-CURRENT SLIDE CONTENT:
-${JSON.stringify(slideContent || [])}
+ACCOUNT: ${companyName}
+INTELLIGENCE:
+${intelligence || "No specific intelligence on file. Rely on the slide content and your general expertise."}
 
-TASK:
-1. Analyze the USER MESSAGE in the context of the conversation and the current slide content.
-2. If the user asks to update or fill in data, identify the relevant text on the slide and suggest replacements using the Account Intelligence.
-3. If the user is just chatting or asking for advice, provide a helpful and smart response.
-4. Always maintain context from the conversation history — refer back to earlier messages when relevant.
+${isBulk
+  ? `FULL DECK CONTENT (${allSlides.length} slides):\n${slideContext}`
+  : `CURRENT SLIDE CONTENT:\n${slideContext || "(no text content on this slide)"}`
+}
 
-OUTPUT FORMAT:
-If you are suggesting slide updates, return your response in this exact format:
+INSTRUCTIONS:
+1. Read the user's request carefully, in context of the conversation history.
+2. If they want updates: identify exact text on the slides and propose precise replacements sourced from the Account Intelligence.
+3. If they are just asking questions or chatting: respond helpfully without making up updates.
+4. Never invent company data — only use what is in the Account Intelligence or slide content.
+5. Be specific: mention slide numbers and quote the text you're changing.
+
+OUTPUT FORMAT when suggesting updates:
 [[CONVERSATION_RESPONSE]]
-(Your friendly conversational reply here)
+Your natural, helpful reply explaining what you changed and why.
 [[UPDATE_SUGGESTIONS]]
-[{"original": "exact text to replace", "replacement": "new text value"}]
+[
+  {"slideIndex": 1, "original": "exact text to find", "replacement": "new text"},
+  {"slideIndex": 3, "original": "another placeholder", "replacement": "real value"}
+]
 
-If no slide updates are needed, just return your conversational response without the [[UPDATE_SUGGESTIONS]] block.`;
+OUTPUT FORMAT when NO updates needed (just conversation):
+Your natural response — no JSON block.`;
 
-    // Pass history as proper conversation turns (Gemini-compatible format that buildClaudeAdapter maps to messages[])
+    // ── 5. Call AI with proper conversation history ───────────────────────────
     const inputPayload = {
-      systemInstruction: {
-        parts: [{ text: systemPromptText }]
-      },
+      systemInstruction: { parts: [{ text: systemPromptText }] },
       contents: [
         ...(history || []).map((h: any) => ({
           role: h.role === "ai" ? "model" : "user",
-          parts: [{ text: h.text }]
+          parts: [{ text: h.text }],
         })),
-        { role: "user", parts: [{ text: prompt }] }
-      ]
+        { role: "user", parts: [{ text: prompt }] },
+      ],
     };
 
     const response = await model.generateContent(inputPayload);
     const text = response.response.text();
 
-    // 4. Parse Response
+    // ── 6. Parse ──────────────────────────────────────────────────────────────
     let aiResponse = text;
     let suggestions: any[] = [];
 
     if (text.includes("[[UPDATE_SUGGESTIONS]]")) {
       const parts = text.split("[[UPDATE_SUGGESTIONS]]");
       aiResponse = parts[0].replace("[[CONVERSATION_RESPONSE]]", "").trim();
-      const suggestionPart = parts[1].trim();
+      const suggestionPart = parts[1]?.trim() || "";
       try {
         const jsonMatch = suggestionPart.match(/\[[\s\S]*\]/);
         suggestions = JSON.parse(jsonMatch ? jsonMatch[0] : suggestionPart);
       } catch (e) {
-        console.error("Failed to parse suggestions JSON", e);
+        console.error("[addin/update] Failed to parse suggestions JSON:", e);
       }
     }
 
@@ -102,10 +114,6 @@ If no slide updates are needed, just return your conversational response without
 
   } catch (err: any) {
     console.error("POST /api/addin/update error:", err);
-    const errorMsg = err.message || "Unknown error";
-    
-    return NextResponse.json({ 
-      error: `AI Processing Error: ${errorMsg}` 
-    }, { status: 500 });
+    return NextResponse.json({ error: err.message || "AI Processing Error" }, { status: 500 });
   }
 }
