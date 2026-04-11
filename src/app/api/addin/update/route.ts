@@ -108,6 +108,9 @@ Your natural response — no JSON block.`;
       } catch (e) {
         console.error("[addin/update] Failed to parse suggestions JSON:", e);
       }
+    } else {
+      // Always strip the tag even when no update suggestions follow
+      aiResponse = aiResponse.replace("[[CONVERSATION_RESPONSE]]", "").trim();
     }
 
     return NextResponse.json({ text: aiResponse, suggestions });

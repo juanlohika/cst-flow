@@ -92,59 +92,62 @@ export default function AddinPage() {
   };
 
   /**
-   * Extracts all text from a shapes collection.
-   * Handles flat shapes, grouped shapes (1 level deep), tables, and placeholders.
-   * Office JS does not support deep recursive group traversal in a single sync,
-   * so we do two passes: top-level shapes, then shapes inside any groups.
+   * Extracts all text from a slide's shapes collection using Office JS.
+   *
+   * Office JS requires property paths to be declared in load() before access.
+   * We use the deep load path that covers top-level shapes AND shapes nested
+   * one level inside group shapes.
+   *
+   * Load path breakdown:
+   *   items/textFrame/textRange/text        — direct text shapes
+   *   items/group/shapes/items/textFrame/textRange/text — text inside groups
    */
   const extractTextFromShapes = async (context: any, shapes: any): Promise<string[]> => {
-    // Pass 1 — load top-level shape metadata
-    shapes.load("items/hasTextFrame,items/shapeType,items/name");
-    await context.sync();
+    try {
+      // Deep load in one shot — covers flat shapes and first-level group children
+      shapes.load([
+        "items/hasTextFrame",
+        "items/textFrame/hasText",
+        "items/textFrame/textRange/text",
+        "items/shapeType",
+        "items/group/shapes/items/hasTextFrame",
+        "items/group/shapes/items/textFrame/hasText",
+        "items/group/shapes/items/textFrame/textRange/text",
+      ]);
+      await context.sync();
+    } catch {
+      // Fallback: some older Office versions don't support deep group load paths
+      // Just load flat shapes
+      try {
+        shapes.load("items/hasTextFrame,items/textFrame/hasText,items/textFrame/textRange/text,items/shapeType");
+        await context.sync();
+      } catch {
+        return [];
+      }
+    }
 
     const textBlocks: string[] = [];
-    const groupShapes: any[] = [];
 
-    // Load textFrame for shapes that have one
     for (const shape of shapes.items) {
-      if (shape.hasTextFrame) {
-        shape.textFrame.load("hasText,textRange/text");
-      }
-      // shapeType 6 = Group in Office JS enum
-      if (shape.shapeType === 6 || shape.name?.toLowerCase().includes("group")) {
-        try {
-          const inner = shape.group?.shapes;
-          if (inner) {
-            inner.load("items/hasTextFrame,items/name");
-            groupShapes.push(inner);
-          }
-        } catch (_) {}
-      }
-    }
-    await context.sync();
-
-    // Collect top-level text
-    for (const shape of shapes.items) {
-      if (shape.hasTextFrame && shape.textFrame.hasText) {
-        const t = shape.textFrame.textRange.text?.trim();
-        if (t) textBlocks.push(t);
-      }
-    }
-
-    // Pass 2 — collect text from inside groups
-    for (const inner of groupShapes) {
-      for (const s of inner.items) {
-        if (s.hasTextFrame) {
-          s.textFrame.load("hasText,textRange/text");
-        }
-      }
-      await context.sync();
-      for (const s of inner.items) {
-        if (s.hasTextFrame && s.textFrame.hasText) {
-          const t = s.textFrame.textRange.text?.trim();
+      // Top-level text
+      try {
+        if (shape.hasTextFrame && shape.textFrame?.hasText) {
+          const t = shape.textFrame.textRange.text?.trim();
           if (t) textBlocks.push(t);
         }
-      }
+      } catch { /* shape may not have textFrame */ }
+
+      // Group children (shapeType 6 = MsoShapeType.msoCombinedShape / group)
+      try {
+        if (shape.shapeType === 6) {
+          for (const child of shape.group.shapes.items) {
+            if (child.hasTextFrame && child.textFrame?.hasText) {
+              const t = child.textFrame.textRange.text?.trim();
+              if (t) textBlocks.push(t);
+            }
+          }
+        }
+      } catch { /* group may not be loaded or shape is not a group */ }
     }
 
     return textBlocks;

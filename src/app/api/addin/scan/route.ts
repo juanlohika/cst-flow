@@ -67,11 +67,8 @@ TASK:
 
 Keep the tone sharp, warm, and consultant-like. No markdown headers — write like you're talking to a colleague.`;
 
-    const response = await model.generateContent(systemPrompt);
-    const text = response.response.text();
-
-    const response = await model.generateContent(systemPrompt);
-    const text = response.response.text();
+    const aiResult = await model.generateContent(systemPrompt);
+    const text = aiResult.response.text();
 
     return NextResponse.json({ text });
 
