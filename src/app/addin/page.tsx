@@ -226,10 +226,11 @@ export default function AddinPage() {
         shape.load("type");
         await context.sync();
 
-        // ── Table: write by [row, col] coordinate ─────────────────────────────
+        // ── Table: write by [row, col] coordinate, add rows/cols as needed ──────
         if (shape.type === window.PowerPoint.ShapeType.table) {
           const cellSuggestions = suggestions.filter(
-            s => s.row !== undefined && s.col !== undefined && (s.shapeIdx === undefined || s.shapeIdx === tableShapeIdx)
+            s => s.row !== undefined && s.col !== undefined &&
+              (s.shapeIdx === undefined || s.shapeIdx === tableShapeIdx)
           );
 
           if (cellSuggestions.length > 0) {
@@ -237,8 +238,28 @@ export default function AddinPage() {
             table.load("rowCount,columnCount");
             await context.sync();
 
+            // Add any missing rows first (in order, so indices stay valid)
+            const maxRow = Math.max(...cellSuggestions.map((s: any) => s.row));
+            const maxCol = Math.max(...cellSuggestions.map((s: any) => s.col));
+
+            while (table.rowCount <= maxRow) {
+              table.addRows(table.rowCount, 1);
+              await context.sync();
+              table.load("rowCount");
+              await context.sync();
+              console.log(`[Tarkie] Added row, now ${table.rowCount} rows`);
+            }
+
+            while (table.columnCount <= maxCol) {
+              table.addColumns(table.columnCount, 1);
+              await context.sync();
+              table.load("columnCount");
+              await context.sync();
+              console.log(`[Tarkie] Added column, now ${table.columnCount} cols`);
+            }
+
+            // Now write all cell values
             for (const s of cellSuggestions) {
-              if (s.row >= table.rowCount || s.col >= table.columnCount) continue;
               const cell = table.getCellOrNullObject(s.row, s.col);
               cell.load("text");
               await context.sync();

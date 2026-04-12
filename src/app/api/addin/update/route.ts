@@ -81,6 +81,8 @@ Tables are scanned with exact cell coordinates. Format:
 
 - [row,col] is 0-based. Row 0 = header row.
 - To update a cell, output its exact [row,col] and the new value.
+- To ADD a new row, simply use a row index beyond the current rowCount — the add-in will automatically insert the row.
+- To ADD a new column, use a col index beyond current columnCount — it will be added automatically.
 - To update text shapes (non-table), use "original" + "replacement" as before.
 
 EXAMPLE — update slide 4 table (TABLE:0):
