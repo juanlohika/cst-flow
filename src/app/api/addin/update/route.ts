@@ -38,7 +38,12 @@ export async function POST(req: NextRequest) {
     }
 
     // ── 2. AI Model ───────────────────────────────────────────────────────────
-    const model = await getModelForApp("tarkie-ai");
+    const model = await getModelForApp("tarkie-ai").catch(async (e) => {
+      // If tarkie-ai app row doesn't exist in DB, fall back to global primary provider
+      console.warn("[addin/update] getModelForApp failed, using getGeminiModel fallback:", e.message);
+      const { getGeminiModel } = await import("@/lib/ai");
+      return getGeminiModel();
+    });
 
     // ── 3. Build slide context string ─────────────────────────────────────────
     const isBulk = Array.isArray(allSlides) && allSlides.length > 0;
@@ -113,7 +118,19 @@ Your natural response — no JSON needed.`;
       ],
     };
 
-    const response = await model.generateContent(inputPayload);
+    // Retry once on overload errors (Anthropic 529)
+    let response;
+    try {
+      response = await model.generateContent(inputPayload);
+    } catch (aiErr: any) {
+      const isOverloaded = aiErr?.status === 529 || aiErr?.message?.includes("overloaded");
+      if (isOverloaded) {
+        await new Promise(r => setTimeout(r, 3000));
+        response = await model.generateContent(inputPayload);
+      } else {
+        throw aiErr;
+      }
+    }
     const text = response.response.text();
 
     // ── 6. Parse ──────────────────────────────────────────────────────────────
