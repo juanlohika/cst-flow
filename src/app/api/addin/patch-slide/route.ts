@@ -96,7 +96,21 @@ export async function POST(req: NextRequest) {
     // ── 5. Write patched XML back ─────────────────────────────────────────────
     zip.file(`ppt/slides/slide${slideIndex}.xml`, slideXml);
 
-    // ── 6. Rezip and return as base64 ─────────────────────────────────────────
+    // ── 6. Get the slide's id from presentation.xml (needed for sourceSlideIds) ─
+    let slideId: number | null = null;
+    try {
+      const presXml = await zip.file("ppt/presentation.xml")!.async("string");
+      // <p:sldId id="256" r:id="rId2"/> — find the Nth sldId element (1-based)
+      const matches = [...presXml.matchAll(/<p:sldId[^>]+id="(\d+)"/g)];
+      if (matches[slideIndex - 1]) {
+        slideId = parseInt(matches[slideIndex - 1][1], 10);
+        console.log(`[patch-slide] slide ${slideIndex} has sldId: ${slideId}`);
+      }
+    } catch (e) {
+      console.warn("[patch-slide] Could not read slideId from presentation.xml:", e);
+    }
+
+    // ── 7. Rezip and return as base64 ─────────────────────────────────────────
     const patchedBuffer = await zip.generateAsync({
       type: "base64",
       compression: "DEFLATE",
@@ -104,7 +118,7 @@ export async function POST(req: NextRequest) {
     });
 
     console.log(`[patch-slide] Done. ${replaced} replacements.`);
-    return NextResponse.json({ base64: patchedBuffer, replaced });
+    return NextResponse.json({ base64: patchedBuffer, replaced, slideId });
 
   } catch (err: any) {
     console.error("[patch-slide] Error:", err);

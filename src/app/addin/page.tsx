@@ -225,143 +225,74 @@ export default function AddinPage() {
   const applyToSlide = async (slideIdx: number, suggestions: { original: string; replacement: string }[]) => {
     if (!suggestions || suggestions.length === 0) return;
 
-    // ── Step 1: Try Office JS for regular text shapes ─────────────────────────
-    let remaining = [...suggestions];
-
     await window.PowerPoint.run(async (context: any) => {
       const slide = context.presentation.slides.getItemAt(slideIdx);
       slide.shapes.load("items");
       await context.sync();
 
+      const remaining = [...suggestions];
+
       for (const shape of slide.shapes.items) {
+        shape.load("name");
+        await context.sync();
+
+        // ── Try as table ──────────────────────────────────────────────────────
+        let isTable = false;
         try {
-          shape.load("type");
+          const rowCount = shape.table.rowCount;
+          const colCount = shape.table.columnCount;
+          shape.table.load("rowCount,columnCount");
+          await context.sync();
+          isTable = true;
+
+          for (let r = 0; r < shape.table.rowCount; r++) {
+            for (let c = 0; c < shape.table.columnCount; c++) {
+              try {
+                const cell = shape.table.getCellOrNullObject(r, c);
+                cell.load("text");
+                await context.sync();
+                if (cell.isNullObject) continue;
+                const cellText = (cell.text || "").trim();
+                if (!cellText) continue;
+
+                for (let i = remaining.length - 1; i >= 0; i--) {
+                  const s = remaining[i];
+                  if (cellText === s.original || cellText.includes(s.original)) {
+                    cell.text = cellText.split(s.original).join(s.replacement);
+                    await context.sync();
+                    console.log(`[Tarkie] ✓ table cell [${r},${c}] "${s.original}" → "${s.replacement}"`);
+                    remaining.splice(i, 1);
+                  }
+                }
+              } catch { /* skip cell */ }
+            }
+          }
+        } catch { isTable = false; }
+
+        if (isTable) continue;
+
+        // ── Try as text shape ─────────────────────────────────────────────────
+        try {
           shape.textFrame.textRange.load("text");
           await context.sync();
-          if (String(shape.type).toLowerCase().includes("table")) continue;
           const raw: string = shape.textFrame.textRange.text || "";
           if (!raw || isFooterText(raw)) continue;
-          for (const s of remaining) {
+
+          for (let i = remaining.length - 1; i >= 0; i--) {
+            const s = remaining[i];
             if (raw.includes(s.original)) {
               shape.textFrame.textRange.text = raw.split(s.original).join(s.replacement);
               await context.sync();
-              console.log(`[Tarkie] ✓ text shape replaced "${s.original}"`);
-              remaining = remaining.filter(x => x !== s);
+              console.log(`[Tarkie] ✓ text shape "${s.original}" → "${s.replacement}"`);
+              remaining.splice(i, 1);
             }
           }
         } catch { /* not a text shape */ }
       }
-    }).catch(() => {});
 
-    if (remaining.length === 0) return;
-
-    // ── Step 2: OOXML patch via Office.context.document.getFileAsync ─────────
-    // This reads the .pptx bytes directly from Office — no Microsoft sign-in needed.
-    console.log(`[Tarkie] ${remaining.length} suggestions need OOXML patch`);
-    setStatusMsg("Reading file from Office...");
-
-    const fileBase64: string = await new Promise((resolve, reject) => {
-      window.Office.context.document.getFileAsync(
-        window.Office.FileType.Compressed,
-        { sliceSize: 65536 },
-        (result: any) => {
-          if (result.status !== window.Office.AsyncResultStatus.Succeeded) {
-            reject(new Error("getFileAsync failed: " + (result.error?.message || result.status)));
-            return;
-          }
-          const file = result.value;
-          const sliceCount = file.sliceCount;
-          console.log("[Tarkie] getFileAsync sliceCount:", sliceCount);
-
-          // Collect slices in order, then combine all bytes and base64-encode once
-          const sliceArrays: number[][] = new Array(sliceCount);
-          let done = 0;
-
-          const fetchSlice = (index: number) => {
-            file.getSliceAsync(index, (sliceResult: any) => {
-              if (sliceResult.status !== window.Office.AsyncResultStatus.Succeeded) {
-                file.closeAsync();
-                reject(new Error("getSliceAsync failed at " + index + ": " + sliceResult.error?.message));
-                return;
-              }
-              // data is an Array of byte values (0-255)
-              const data = sliceResult.value.data;
-              sliceArrays[index] = Array.from(data);
-              done++;
-              if (done === sliceCount) {
-                file.closeAsync();
-                // Combine all byte arrays and base64-encode the full binary
-                const allBytes = ([] as number[]).concat(...sliceArrays);
-                let binary = "";
-                for (let b = 0; b < allBytes.length; b++) {
-                  binary += String.fromCharCode(allBytes[b]);
-                }
-                const b64 = btoa(binary);
-                console.log("[Tarkie] Combined bytes:", allBytes.length, "base64 length:", b64.length);
-                resolve(b64);
-              }
-            });
-          };
-
-          for (let i = 0; i < sliceCount; i++) fetchSlice(i);
-        }
-      );
-    });
-
-    console.log("[Tarkie] Got file base64, length:", fileBase64.length);
-    setStatusMsg("Patching slide XML...");
-
-    // Send to server for OOXML patching
-    const res = await fetch("/api/addin/patch-slide", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fileBase64,
-        slideIndex: slideIdx + 1,
-        suggestions: remaining,
-      }),
-    });
-
-    const data = await res.json();
-
-    if (!res.ok || !data.base64) {
-      console.error("[Tarkie] patch-slide failed:", data.error);
-      setError(`Table update failed: ${data.error}`);
-      return;
-    }
-
-    console.log(`[Tarkie] Server patched ${data.replaced} replacements. Inserting slide...`);
-    setStatusMsg("Inserting patched slide...");
-
-    // Replace slide using insertSlidesFromBase64
-    await window.PowerPoint.run(async (context: any) => {
-      const slides = context.presentation.slides;
-      slides.load("items");
-      await context.sync();
-
-      const targetSlide = slides.items[slideIdx];
-      targetSlide.load("id");
-      await context.sync();
-      const targetId = targetSlide.id;
-
-      // insertSlidesFromBase64 inserts BEFORE the targetSlideId slide
-      context.presentation.insertSlidesFromBase64(data.base64, {
-        formatting: "UseDestinationTheme",
-        targetSlideId: targetId,
-      });
-      await context.sync();
-
-      // Reload — original is now at slideIdx+1
-      slides.load("items");
-      await context.sync();
-
-      const originalSlide = slides.items[slideIdx + 1];
-      if (originalSlide) {
-        originalSlide.delete();
-        await context.sync();
+      if (remaining.length > 0) {
+        console.warn(`[Tarkie] ${remaining.length} suggestions had no match:`, remaining.map(s => s.original));
       }
-
-      console.log(`[Tarkie] ✓ Slide ${slideIdx + 1} replaced with patched version`);
     });
   };
 
