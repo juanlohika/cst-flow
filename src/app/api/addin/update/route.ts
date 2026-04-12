@@ -19,9 +19,9 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
-    const { prompt, clientId, slideContent, allSlides, history, activeSlideIndex } = body;
+    const { prompt, clientId, slideContent, allSlides, history, activeSlideIndex, images } = body;
 
-    if (!prompt) {
+    if (!prompt && (!images || images.length === 0)) {
       return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
     }
 
@@ -107,9 +107,38 @@ Brief explanation of what you changed and why.
 ]
 
 OUTPUT FORMAT when just answering questions (no edits):
-Your natural response — no JSON needed.`;
+Your natural response — no JSON needed.
 
-    // ── 5. Call AI with proper conversation history ───────────────────────────
+IMAGE / SLIDE BUILDER MODE:
+When the user attaches images and asks to create slides or a guide:
+- Analyze each image carefully — identify what UI/screen/step it shows
+- Return [[SLIDE_PLAN]] with one entry per slide to build
+- Each entry: { "title": "Step 1: ...", "description": "Instructions...", "imageIndex": 0, "annotation": { "x": 45, "y": 60, "label": "①" } }
+- imageIndex refers to which attached image to place (0-based)
+- annotation x/y are percentages (0-100) of image width/height where the callout should appear
+- If no annotation needed, omit the annotation field
+
+OUTPUT FORMAT when building slides from images:
+[[CONVERSATION_RESPONSE]]
+Brief summary of the guide being created.
+[[SLIDE_PLAN]]
+[
+  {"title": "Step 1: Open the app", "description": "Launch the Tarkie app on your device.", "imageIndex": 0, "annotation": {"x": 50, "y": 80, "label": "①"}},
+  {"title": "Step 2: Tap Time In", "description": "Press the Time In button to record your arrival.", "imageIndex": 1, "annotation": {"x": 30, "y": 65, "label": "②"}}
+]`;
+
+    // ── 5. Call AI with proper conversation history + images ──────────────────
+    const hasImages = Array.isArray(images) && images.length > 0;
+
+    // Build user message parts — text + any attached images
+    const userParts: any[] = [];
+    if (prompt) userParts.push({ text: prompt });
+    if (hasImages) {
+      for (const img of images) {
+        userParts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
+      }
+    }
+
     const inputPayload = {
       systemInstruction: { parts: [{ text: systemPromptText }] },
       contents: [
@@ -117,7 +146,7 @@ Your natural response — no JSON needed.`;
           role: h.role === "ai" ? "model" : "user",
           parts: [{ text: h.text }],
         })),
-        { role: "user", parts: [{ text: prompt }] },
+        { role: "user", parts: userParts },
       ],
     };
 
@@ -146,6 +175,7 @@ Your natural response — no JSON needed.`;
     // ── 6. Parse ──────────────────────────────────────────────────────────────
     let aiResponse = text;
     let suggestions: any[] = [];
+    let slidePlan: any[] = [];
 
     if (text.includes("[[UPDATE_SUGGESTIONS]]")) {
       const parts = text.split("[[UPDATE_SUGGESTIONS]]");
@@ -157,12 +187,21 @@ Your natural response — no JSON needed.`;
       } catch (e) {
         console.error("[addin/update] Failed to parse suggestions JSON:", e);
       }
+    } else if (text.includes("[[SLIDE_PLAN]]")) {
+      const parts = text.split("[[SLIDE_PLAN]]");
+      aiResponse = parts[0].replace("[[CONVERSATION_RESPONSE]]", "").trim();
+      const planPart = parts[1]?.trim() || "";
+      try {
+        const jsonMatch = planPart.match(/\[[\s\S]*\]/);
+        slidePlan = JSON.parse(jsonMatch ? jsonMatch[0] : planPart);
+      } catch (e) {
+        console.error("[addin/update] Failed to parse slidePlan JSON:", e);
+      }
     } else {
-      // Always strip the tag even when no update suggestions follow
       aiResponse = aiResponse.replace("[[CONVERSATION_RESPONSE]]", "").trim();
     }
 
-    return NextResponse.json({ text: aiResponse, suggestions });
+    return NextResponse.json({ text: aiResponse, suggestions, slidePlan });
 
   } catch (err: any) {
     console.error("POST /api/addin/update error:", err);

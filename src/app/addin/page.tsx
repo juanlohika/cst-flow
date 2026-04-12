@@ -1,15 +1,19 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useSession } from "next-auth/react";
-import { 
-  Sparkles, 
-  Send, 
-  Loader2, 
+import {
+  Sparkles,
+  Send,
+  Loader2,
   AlertCircle,
-  FileText,
-  RefreshCw
+  RefreshCw,
+  Paperclip,
+  X,
+  Image as ImageIcon,
 } from "lucide-react";
+
+type AttachedImage = { base64: string; mimeType: string; preview: string; name: string };
 
 /**
  * Tarkie PowerPoint Add-in Sidebar
@@ -27,7 +31,9 @@ export default function AddinPage() {
   const [statusMsg, setStatusMsg] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [applyToAll, setApplyToAll] = useState(false);
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -90,6 +96,51 @@ export default function AddinPage() {
     }, 1500);
 
     setTimeout(() => clearInterval(interval), 120000);
+  };
+
+  /** Convert a File or Blob to AttachedImage */
+  const fileToAttached = (file: File | Blob, name = "image"): Promise<AttachedImage> =>
+    new Promise((resolve, reject) => {
+      const mimeType = file.type || "image/png";
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const base64 = dataUrl.split(",")[1];
+        resolve({ base64, mimeType, preview: dataUrl, name });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+  /** Handle paste — capture images pasted with Ctrl+V / Cmd+V */
+  const handlePaste = useCallback(async (e: ClipboardEvent) => {
+    const items = Array.from(e.clipboardData?.items || []);
+    const imageItems = items.filter(i => i.type.startsWith("image/"));
+    if (imageItems.length === 0) return;
+    e.preventDefault();
+    for (const item of imageItems) {
+      const blob = item.getAsFile();
+      if (!blob) continue;
+      const attached = await fileToAttached(blob, `screenshot-${Date.now()}.png`);
+      setAttachedImages(prev => [...prev, attached]);
+    }
+  }, []);
+
+  /** Listen for paste globally */
+  useEffect(() => {
+    document.addEventListener("paste", handlePaste as any);
+    return () => document.removeEventListener("paste", handlePaste as any);
+  }, [handlePaste]);
+
+  /** Handle file input selection */
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+      const attached = await fileToAttached(file, file.name);
+      setAttachedImages(prev => [...prev, attached]);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   /** Returns true if text looks like a footer/copyright — skip these */
@@ -319,15 +370,109 @@ export default function AddinPage() {
     }
   };
 
+  /**
+   * Builds slides from an AI-generated plan.
+   * Each plan item: { title, description, imageIndex, annotation?: { x, y, label } }
+   * Images are inserted as pictures, title + description as text boxes.
+   */
+  const buildSlidesFromPlan = async (plan: any[], images: AttachedImage[]) => {
+    await window.PowerPoint.run(async (context: any) => {
+      const presentation = context.presentation;
+      const slides = presentation.slides;
+      slides.load("items");
+      await context.sync();
+
+      for (let i = 0; i < plan.length; i++) {
+        const step = plan[i];
+        setStatusMsg(`Building slide ${i + 1} of ${plan.length}...`);
+
+        // Add a new blank slide at the end
+        presentation.insertSlidesFromBase64(
+          // minimal blank pptx slide — we just need a new empty slide
+          "UEsDBBQABgAIAAAAIQDfpNJsWgEAACAFAAATAAgCW0NvbnRlbnRfVHlwZXNdLnhtbCCiBAIooAAC" +
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          {}
+        );
+        await context.sync();
+
+        // Get the newly added slide (last one)
+        slides.load("items");
+        await context.sync();
+        const newSlide = slides.items[slides.items.length - 1];
+
+        // Add title text box at top
+        if (step.title) {
+          const titleBox = newSlide.shapes.addTextBox(step.title, {
+            left: 30, top: 20, width: 480, height: 40,
+          });
+          titleBox.textFrame.textRange.font.size = 18;
+          titleBox.textFrame.textRange.font.bold = true;
+          await context.sync();
+        }
+
+        // Add image if specified
+        const img = images[step.imageIndex ?? 0];
+        if (img) {
+          newSlide.shapes.addImage(`data:${img.mimeType};base64,${img.base64}`);
+          await context.sync();
+
+          // Position image below title
+          const imgShapes = newSlide.shapes;
+          imgShapes.load("items");
+          await context.sync();
+          const imgShape = imgShapes.items[imgShapes.items.length - 1];
+          imgShape.left = 30;
+          imgShape.top = 70;
+          imgShape.width = 480;
+          imgShape.height = 300;
+          await context.sync();
+        }
+
+        // Add description text box below image
+        if (step.description) {
+          const descBox = newSlide.shapes.addTextBox(step.description, {
+            left: 30, top: 380, width: 480, height: 80,
+          });
+          descBox.textFrame.textRange.font.size = 11;
+          descBox.textFrame.wordWrap = true;
+          await context.sync();
+        }
+
+        // Add annotation callout if AI specified one
+        if (step.annotation) {
+          const { x = 50, y = 50, label = "①" } = step.annotation;
+          // Convert % position to slide coordinates (slide is ~540x400 pts visible area)
+          const calloutLeft = 30 + (x / 100) * 480 - 15;
+          const calloutTop = 70 + (y / 100) * 300 - 15;
+          const callout = newSlide.shapes.addTextBox(label, {
+            left: calloutLeft, top: calloutTop, width: 30, height: 30,
+          });
+          callout.textFrame.textRange.font.size = 14;
+          callout.textFrame.textRange.font.bold = true;
+          callout.textFrame.textRange.font.color = "#FFFFFF";
+          callout.fill.setSolidColor("#2162F9");
+          await context.sync();
+        }
+
+        console.log(`[Tarkie] ✓ Built slide ${i + 1}: ${step.title}`);
+      }
+    });
+  };
+
   const processChat = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!chatInput.trim() || isProcessing) return;
+    if (!chatInput.trim() && attachedImages.length === 0) return;
+    if (isProcessing) return;
 
     const userMsg = chatInput;
-    setMessages(prev => [...prev, { role: "user", text: userMsg }]);
+    const images = [...attachedImages];
+    setMessages(prev => [...prev, { role: "user", text: userMsg || `[${images.length} image${images.length > 1 ? "s" : ""} attached]` }]);
     setChatInput("");
+    setAttachedImages([]);
     setIsProcessing(true);
-    setStatusMsg(applyToAll ? "Reading all slides..." : "Reading current slide...");
+    setStatusMsg(images.length > 0 ? "Analyzing images..." : applyToAll ? "Reading all slides..." : "Reading current slide...");
     setError(null);
 
     try {
@@ -351,7 +496,8 @@ export default function AddinPage() {
         prompt: userMsg,
         clientId: selectedClient,
         history: messages.slice(-14),
-        activeSlideIndex: activeSlideIdx + 1, // 1-based for AI
+        activeSlideIndex: activeSlideIdx + 1,
+        images: images.map(img => ({ base64: img.base64, mimeType: img.mimeType })),
       };
       if (applyToAll) {
         body.allSlides = allSlides;
@@ -374,18 +520,21 @@ export default function AddinPage() {
       // ── Step 4: Apply suggestions to slides ───────────────────────────────
       if (data.suggestions && data.suggestions.length > 0) {
         setStatusMsg("Applying updates to slides...");
-
-        // Group suggestions by slideIndex — default to active slide if AI omits it
-        const bySlide: Record<number, { original: string; replacement: string }[]> = {};
+        const bySlide: Record<number, any[]> = {};
         for (const s of data.suggestions) {
-          const idx = (s.slideIndex ?? (activeSlideIdx + 1)) - 1; // convert to 0-based
+          const idx = (s.slideIndex ?? (activeSlideIdx + 1)) - 1;
           if (!bySlide[idx]) bySlide[idx] = [];
           bySlide[idx].push(s);
         }
-
         for (const [idxStr, suggestions] of Object.entries(bySlide)) {
           await applyToSlide(Number(idxStr), suggestions);
         }
+      }
+
+      // ── Step 5: Build new slides from image plan ──────────────────────────
+      if (data.slidePlan && data.slidePlan.length > 0) {
+        setStatusMsg(`Building ${data.slidePlan.length} slides...`);
+        await buildSlidesFromPlan(data.slidePlan, images);
       }
 
     } catch (err: any) {
@@ -548,26 +697,64 @@ export default function AddinPage() {
 
       {/* ── Chat Input ───────────────────────────────────────────── */}
       <div className="p-4 bg-white border-t border-slate-100 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
+
+        {/* Image thumbnails */}
+        {attachedImages.length > 0 && (
+          <div className="flex gap-2 mb-2 flex-wrap">
+            {attachedImages.map((img, i) => (
+              <div key={i} className="relative group">
+                <img src={img.preview} alt={img.name} className="w-14 h-14 object-cover rounded-xl border border-slate-200" />
+                <button
+                  type="button"
+                  onClick={() => setAttachedImages(prev => prev.filter((_, j) => j !== i))}
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <X size={8} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <form onSubmit={processChat} className="relative">
-          <input 
+          <input
             type="text"
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
-            placeholder="Type instructions..."
-            className="w-full bg-slate-100 border-none rounded-2xl pl-4 pr-12 py-4 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#2162F9]/20 transition-all placeholder:text-slate-400"
+            placeholder={attachedImages.length > 0 ? "Describe what to do with these images..." : "Type instructions or paste a screenshot..."}
+            className="w-full bg-slate-100 border-none rounded-2xl pl-4 pr-20 py-4 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#2162F9]/20 transition-all placeholder:text-slate-400"
           />
-          <button 
+          {/* Attach button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="absolute right-14 top-1/2 -translate-y-1/2 w-9 h-9 text-slate-400 hover:text-[#2162F9] flex items-center justify-center transition-colors"
+            title="Attach image"
+          >
+            <Paperclip size={16} />
+          </button>
+          <button
             type="submit"
-            disabled={isProcessing || !chatInput.trim()}
+            disabled={isProcessing || (!chatInput.trim() && attachedImages.length === 0)}
             className="absolute right-2 top-1/2 -translate-y-1/2 w-11 h-11 bg-gradient-to-br from-[#2162F9] to-[#3a79ff] text-white rounded-xl flex items-center justify-center hover:shadow-lg hover:shadow-blue-500/30 disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:shadow-none transition-all active:scale-95"
           >
             <Send size={18} />
           </button>
         </form>
-        <div className="flex items-center justify-center gap-4 mt-4">
-           <p className="text-[8px] text-slate-300 font-black uppercase tracking-[0.2em]">
-            Tarkie OS Ecosystem
-           </p>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={handleFileSelect}
+        />
+
+        <div className="flex items-center justify-center gap-4 mt-3">
+          <p className="text-[8px] text-slate-300 font-black uppercase tracking-[0.2em]">
+            Tarkie OS Ecosystem · Paste screenshots with Ctrl+V
+          </p>
         </div>
       </div>
       
