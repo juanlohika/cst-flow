@@ -225,74 +225,117 @@ export default function AddinPage() {
   const applyToSlide = async (slideIdx: number, suggestions: { original: string; replacement: string }[]) => {
     if (!suggestions || suggestions.length === 0) return;
 
+    // ── Step 1: Try Office JS for regular text shapes ─────────────────────────
+    let remaining = [...suggestions];
     await window.PowerPoint.run(async (context: any) => {
       const slide = context.presentation.slides.getItemAt(slideIdx);
       slide.shapes.load("items");
       await context.sync();
-
-      const remaining = [...suggestions];
-
       for (const shape of slide.shapes.items) {
-        shape.load("name");
-        await context.sync();
-
-        // ── Try as table ──────────────────────────────────────────────────────
-        let isTable = false;
-        try {
-          const rowCount = shape.table.rowCount;
-          const colCount = shape.table.columnCount;
-          shape.table.load("rowCount,columnCount");
-          await context.sync();
-          isTable = true;
-
-          for (let r = 0; r < shape.table.rowCount; r++) {
-            for (let c = 0; c < shape.table.columnCount; c++) {
-              try {
-                const cell = shape.table.getCellOrNullObject(r, c);
-                cell.load("text");
-                await context.sync();
-                if (cell.isNullObject) continue;
-                const cellText = (cell.text || "").trim();
-                if (!cellText) continue;
-
-                for (let i = remaining.length - 1; i >= 0; i--) {
-                  const s = remaining[i];
-                  if (cellText === s.original || cellText.includes(s.original)) {
-                    cell.text = cellText.split(s.original).join(s.replacement);
-                    await context.sync();
-                    console.log(`[Tarkie] ✓ table cell [${r},${c}] "${s.original}" → "${s.replacement}"`);
-                    remaining.splice(i, 1);
-                  }
-                }
-              } catch { /* skip cell */ }
-            }
-          }
-        } catch { isTable = false; }
-
-        if (isTable) continue;
-
-        // ── Try as text shape ─────────────────────────────────────────────────
         try {
           shape.textFrame.textRange.load("text");
           await context.sync();
           const raw: string = shape.textFrame.textRange.text || "";
           if (!raw || isFooterText(raw)) continue;
-
           for (let i = remaining.length - 1; i >= 0; i--) {
             const s = remaining[i];
             if (raw.includes(s.original)) {
               shape.textFrame.textRange.text = raw.split(s.original).join(s.replacement);
               await context.sync();
-              console.log(`[Tarkie] ✓ text shape "${s.original}" → "${s.replacement}"`);
+              console.log(`[Tarkie] ✓ text shape "${s.original}"`);
               remaining.splice(i, 1);
             }
           }
         } catch { /* not a text shape */ }
       }
+    }).catch(() => {});
 
-      if (remaining.length > 0) {
-        console.warn(`[Tarkie] ${remaining.length} suggestions had no match:`, remaining.map(s => s.original));
-      }
+    if (remaining.length === 0) return;
+
+    // ── Step 2: OOXML patch for table cells — read file, patch XML, insert ONLY target slide ──
+    console.log(`[Tarkie] ${remaining.length} suggestions need OOXML patch`);
+    setStatusMsg("Reading file...");
+
+    const fileBase64: string = await new Promise((resolve, reject) => {
+      window.Office.context.document.getFileAsync(
+        window.Office.FileType.Compressed,
+        { sliceSize: 4194304 },
+        (result: any) => {
+          if (result.status !== window.Office.AsyncResultStatus.Succeeded) {
+            reject(new Error("getFileAsync failed: " + (result.error?.message || result.status)));
+            return;
+          }
+          const file = result.value;
+          const chunks: Uint8Array[] = [];
+          let totalBytes = 0;
+          const fetchNext = (index: number) => {
+            if (index >= file.sliceCount) {
+              file.closeAsync();
+              const merged = new Uint8Array(totalBytes);
+              let offset = 0;
+              for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.length; }
+              let binary = "";
+              for (let b = 0; b < merged.length; b++) binary += String.fromCharCode(merged[b]);
+              resolve(btoa(binary));
+              return;
+            }
+            file.getSliceAsync(index, (sr: any) => {
+              if (sr.status !== window.Office.AsyncResultStatus.Succeeded) {
+                file.closeAsync();
+                reject(new Error("getSliceAsync failed: " + sr.error?.message));
+                return;
+              }
+              const chunk = new Uint8Array(sr.value.data);
+              chunks.push(chunk);
+              totalBytes += chunk.length;
+              fetchNext(index + 1);
+            });
+          };
+          fetchNext(0);
+        }
+      );
+    });
+
+    setStatusMsg("Patching slide...");
+    const res = await fetch("/api/addin/patch-slide", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fileBase64, slideIndex: slideIdx + 1, suggestions: remaining }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.base64) {
+      setError(`Table update failed: ${data.error}`);
+      return;
+    }
+
+    console.log(`[Tarkie] Patched ${data.replaced} replacements. slideId=${data.slideId}`);
+    setStatusMsg("Updating slide...");
+
+    await window.PowerPoint.run(async (context: any) => {
+      const slides = context.presentation.slides;
+      slides.load("items");
+      await context.sync();
+
+      const targetSlide = slides.items[slideIdx];
+      targetSlide.load("id");
+      await context.sync();
+      const targetId = targetSlide.id;
+
+      // Insert ONLY the patched slide before the target, then delete the original
+      const insertOptions: any = { formatting: "UseDestinationTheme", targetSlideId: targetId };
+      if (data.slideId) insertOptions.sourceSlideIds = [{ slideId: data.slideId }];
+
+      context.presentation.insertSlidesFromBase64(data.base64, insertOptions);
+      await context.sync();
+
+      // After insert: new slide is at slideIdx, original shifted to slideIdx+1 — delete it
+      slides.load("items");
+      await context.sync();
+      slides.items[slideIdx + 1]?.delete();
+      await context.sync();
+
+      console.log(`[Tarkie] ✓ Slide ${slideIdx + 1} updated in place`);
     });
   };
 
