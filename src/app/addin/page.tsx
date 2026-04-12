@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useSession } from "next-auth/react";
-import { PublicClientApplication, InteractionRequiredAuthError } from "@azure/msal-browser";
 import { 
   Sparkles, 
   Send, 
@@ -16,15 +15,12 @@ import {
  * Tarkie PowerPoint Add-in Sidebar
  * This page loads inside the PowerPoint Task Pane.
  */
-const GRAPH_SCOPES = ["Files.ReadWrite", "openid", "profile"];
 
 export default function AddinPage() {
   const { data: session, status } = useSession();
   const [officeInitialized, setOfficeInitialized] = useState(false);
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState("");
-  const [msalConnected, setMsalConnected] = useState(false);
-  const [graphToken, setGraphToken] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [messages, setMessages] = useState<{ role: "user" | "ai"; text: string }[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -32,70 +28,11 @@ export default function AddinPage() {
   const [error, setError] = useState<string | null>(null);
   const [applyToAll, setApplyToAll] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  // MSAL instance stored in ref — initialized eagerly so popup needs no await before it
-  const msalRef = useRef<PublicClientApplication | null>(null);
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isProcessing]);
-
-  // Eagerly initialize MSAL and try silent token on mount
-  useEffect(() => {
-    const init = async () => {
-      try {
-        const msal = new PublicClientApplication({
-          auth: {
-            clientId: "d35494c1-a8b2-4877-b6ba-e7e580768b72",
-            authority: "https://login.microsoftonline.com/common",
-            redirectUri: window.location.origin + "/addin/auth-complete",
-          },
-          cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
-        });
-        await msal.initialize();
-        // Handle any pending redirect result (from redirect fallback flow)
-        await msal.handleRedirectPromise().catch(() => {});
-        msalRef.current = msal;
-
-        // Try silent token — user may already be signed in from a previous session
-        const accounts = msal.getAllAccounts();
-        if (accounts.length > 0) {
-          try {
-            const result = await msal.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: accounts[0] });
-            setGraphToken(result.accessToken);
-            setMsalConnected(true);
-          } catch { /* needs interactive — that's fine */ }
-        }
-      } catch (e) {
-        console.error("[Tarkie] MSAL init failed:", e);
-      }
-    };
-    init();
-  }, []);
-
-  // Connect Microsoft — button click goes DIRECTLY to acquireTokenPopup (no awaits before it)
-  const handleConnectMicrosoft = () => {
-    const msal = msalRef.current;
-    if (!msal) {
-      setError("MSAL not ready yet. Wait a moment and try again.");
-      return;
-    }
-    // acquireTokenPopup MUST be called synchronously from the click handler
-    msal.acquireTokenPopup({ scopes: GRAPH_SCOPES })
-      .then(result => {
-        setGraphToken(result.accessToken);
-        setMsalConnected(true);
-        setError(null);
-      })
-      .catch((e: any) => {
-        if (e.errorCode === "popup_window_error" || e.message?.includes("popup")) {
-          // Popup blocked — fall back to redirect flow
-          msal.acquireTokenRedirect({ scopes: GRAPH_SCOPES }).catch(() => {});
-        } else {
-          setError("Microsoft sign-in failed: " + (e.message || e.errorCode));
-        }
-      });
-  };
 
   // 1. Initialize Office JS
   useEffect(() => {
@@ -280,46 +217,10 @@ export default function AddinPage() {
     return deckData;
   };
 
-  /** Extracts the OneDrive file ID from the Office document URL */
-  const getFileId = (): string | null => {
-    try {
-      // Office JS exposes the document URL — not window.location (which is the task pane URL)
-      const docUrl = window.Office?.context?.document?.url || "";
-      console.log("[Tarkie] Document URL:", docUrl);
-
-      // SharePoint/OneDrive URL patterns:
-      // https://{tenant}.sharepoint.com/.../_layouts/15/...&id=%2F...
-      // https://1drv.ms/... (short link)
-      // https://{tenant}-my.sharepoint.com/...?id=...
-
-      // Try "sourcedoc" param (used by PowerPoint Online embed URLs)
-      const sourcedoc = docUrl.match(/[?&]sourcedoc=([^&]+)/i)?.[1];
-      if (sourcedoc) return decodeURIComponent(sourcedoc);
-
-      // Try "id" param
-      const idParam = docUrl.match(/[?&]id=([^&]+)/i)?.[1];
-      if (idParam) return decodeURIComponent(idParam);
-
-      // Try "docid" param
-      const docidParam = docUrl.match(/[?&]docid=([^&]+)/i)?.[1];
-      if (docidParam) return decodeURIComponent(docidParam);
-
-      // For SharePoint document library paths like /sites/.../Documents/file.pptx
-      // We can use Graph to resolve by path — return full path if it starts with /
-      const spPath = docUrl.match(/https?:\/\/[^/]+(\/[^?]+\.pptx)/i)?.[1];
-      if (spPath) return spPath;
-
-      console.warn("[Tarkie] Could not extract file ID from:", docUrl);
-      return null;
-    } catch {
-      return null;
-    }
-  };
-
   /**
    * Applies all suggestions using:
-   * 1. Office JS for regular text shapes (fast, works on Web + Desktop)
-   * 2. Graph API + OOXML patch via server for table cells (works everywhere)
+   * 1. Office JS for regular text shapes (fast path)
+   * 2. getFileAsync + server OOXML patch for table cells (no sign-in needed)
    */
   const applyToSlide = async (slideIdx: number, suggestions: { original: string; replacement: string }[]) => {
     if (!suggestions || suggestions.length === 0) return;
@@ -354,51 +255,57 @@ export default function AddinPage() {
 
     if (remaining.length === 0) return;
 
-    // ── Step 2: Graph API + server OOXML patch for table cells ────────────────
-    console.log(`[Tarkie] ${remaining.length} suggestions need Graph/OOXML patch`);
+    // ── Step 2: OOXML patch via Office.context.document.getFileAsync ─────────
+    // This reads the .pptx bytes directly from Office — no Microsoft sign-in needed.
+    console.log(`[Tarkie] ${remaining.length} suggestions need OOXML patch`);
+    setStatusMsg("Reading file from Office...");
 
-    // Use stored Graph token — try silent refresh if expired
-    let currentToken = graphToken;
-    console.log("[Tarkie] graphToken state:", currentToken ? "present" : "null");
-    if (!currentToken && msalRef.current) {
-      const accounts = msalRef.current.getAllAccounts();
-      console.log("[Tarkie] MSAL accounts:", accounts.length);
-      if (accounts.length > 0) {
-        try {
-          const r = await msalRef.current.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: accounts[0] });
-          currentToken = r.accessToken;
-          setGraphToken(currentToken);
-          setMsalConnected(true);
-          console.log("[Tarkie] Silent token refresh OK");
-        } catch (silentErr: any) {
-          console.warn("[Tarkie] Silent refresh failed:", silentErr.message || silentErr.errorCode);
+    const fileBase64: string = await new Promise((resolve, reject) => {
+      window.Office.context.document.getFileAsync(
+        window.Office.FileType.Compressed,
+        { sliceSize: 65536 },
+        (result: any) => {
+          if (result.status !== window.Office.AsyncResultStatus.Succeeded) {
+            reject(new Error("getFileAsync failed: " + result.error?.message));
+            return;
+          }
+          const file = result.value;
+          const sliceCount = file.sliceCount;
+          const slices: string[] = new Array(sliceCount);
+          let done = 0;
+          for (let i = 0; i < sliceCount; i++) {
+            file.getSliceAsync(i, (sliceResult: any) => {
+              if (sliceResult.status !== window.Office.AsyncResultStatus.Succeeded) {
+                file.closeAsync();
+                reject(new Error("getSliceAsync failed: " + sliceResult.error?.message));
+                return;
+              }
+              // sliceResult.value.data is a Uint8Array — convert to base64
+              const bytes: Uint8Array = sliceResult.value.data;
+              let binary = "";
+              for (let b = 0; b < bytes.byteLength; b++) binary += String.fromCharCode(bytes[b]);
+              slices[i] = btoa(binary);
+              done++;
+              if (done === sliceCount) {
+                file.closeAsync();
+                resolve(slices.join(""));
+              }
+            });
+          }
         }
-      }
-    }
-    if (!currentToken) {
-      setError("Microsoft not connected. Click 'Connect Microsoft' above to enable table editing.");
-      return;
-    }
-    console.log("[Tarkie] Graph token OK, length:", currentToken.length);
+      );
+    });
 
-    // Extract file ID from document URL
-    const docUrl = window.Office?.context?.document?.url || "";
-    console.log("[Tarkie] Office document URL:", docUrl);
-    const fileId = getFileId();
-    console.log("[Tarkie] Extracted file ID:", fileId);
-    if (!fileId) {
-      setError(`Could not identify the PowerPoint file. Document URL: "${docUrl.slice(0, 80)}..."`);
-      return;
-    }
+    console.log("[Tarkie] Got file base64, length:", fileBase64.length);
+    setStatusMsg("Patching slide XML...");
 
-    // Call server to patch the slide XML
+    // Send to server for OOXML patching
     const res = await fetch("/api/addin/patch-slide", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        graphToken: currentToken,
-        fileId,
-        slideIndex: slideIdx + 1, // convert to 1-based
+        fileBase64,
+        slideIndex: slideIdx + 1,
         suggestions: remaining,
       }),
     });
@@ -412,8 +319,9 @@ export default function AddinPage() {
     }
 
     console.log(`[Tarkie] Server patched ${data.replaced} replacements. Inserting slide...`);
+    setStatusMsg("Inserting patched slide...");
 
-    // Insert the patched slide and replace the original
+    // Replace slide using insertSlidesFromBase64
     await window.PowerPoint.run(async (context: any) => {
       const slides = context.presentation.slides;
       slides.load("items");
@@ -425,18 +333,16 @@ export default function AddinPage() {
       const targetId = targetSlide.id;
 
       // insertSlidesFromBase64 inserts BEFORE the targetSlideId slide
-      // So new patched slide ends up at slideIdx, original shifts to slideIdx+1
       context.presentation.insertSlidesFromBase64(data.base64, {
         formatting: "UseDestinationTheme",
         targetSlideId: targetId,
       });
       await context.sync();
 
-      // Reload slide list — original is now at slideIdx+1
+      // Reload — original is now at slideIdx+1
       slides.load("items");
       await context.sync();
 
-      // Delete the original (shifted to slideIdx+1 after insert)
       const originalSlide = slides.items[slideIdx + 1];
       if (originalSlide) {
         originalSlide.delete();
@@ -643,27 +549,6 @@ export default function AddinPage() {
              </button>
           </div>
 
-          {/* Microsoft Connect Button — required for table editing */}
-          {!msalConnected && (
-            <button
-              onClick={handleConnectMicrosoft}
-              className="w-full flex items-center justify-center gap-2 bg-[#f3f6fc] border border-[#2162F9]/20 rounded-xl px-3 py-2 text-[9px] font-black text-[#2162F9] uppercase tracking-widest hover:bg-[#2162F9]/10 transition-all"
-            >
-              <svg width="12" height="12" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="0" y="0" width="10" height="10" fill="#f25022"/>
-                <rect x="11" y="0" width="10" height="10" fill="#7fba00"/>
-                <rect x="0" y="11" width="10" height="10" fill="#00a4ef"/>
-                <rect x="11" y="11" width="10" height="10" fill="#ffb900"/>
-              </svg>
-              Connect Microsoft to enable table editing
-            </button>
-          )}
-          {msalConnected && (
-            <div className="flex items-center gap-1.5 px-1">
-              <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
-              <p className="text-[9px] font-black text-green-600 uppercase tracking-widest">Microsoft connected — table editing enabled</p>
-            </div>
-          )}
         </div>
       </div>
 
