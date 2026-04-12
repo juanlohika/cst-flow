@@ -30,7 +30,6 @@ export default function AddinPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [applyToAll, setApplyToAll] = useState(false);
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -165,37 +164,34 @@ export default function AddinPage() {
       let shapeIdx = 0;
 
       for (const shape of shapes.items) {
-        shape.load("type");
-        await context.sync();
+        // ── Try as table first (works on both Web and Desktop) ────────────
+        // Use try/catch instead of ShapeType enum — enum value differs across platforms
+        let handledAsTable = false;
+        try {
+          const table = shape.getTable();
+          table.load("rowCount,columnCount");
+          await context.sync();
 
-        // ── Table shape ───────────────────────────────────────────────────
-        if (shape.type === window.PowerPoint.ShapeType.table) {
-          try {
-            const table = shape.getTable();
-            table.load("rowCount,columnCount");
-            await context.sync();
+          const rows = table.rowCount;
+          const cols = table.columnCount;
+          let tableStr = `[TABLE:${shapeIdx} rows:${rows} cols:${cols}]\n`;
 
-            const rows = table.rowCount;
-            const cols = table.columnCount;
-            let tableStr = `[TABLE:${shapeIdx} rows:${rows} cols:${cols}]\n`;
-
-            for (let r = 0; r < rows; r++) {
-              for (let c = 0; c < cols; c++) {
-                const cell = table.getCellOrNullObject(r, c);
-                cell.load("text");
-                await context.sync();
-                const val = cell.isNullObject ? "" : (cell.text || "").trim();
-                tableStr += `[${r},${c}]="${val}" `;
-              }
-              tableStr += "\n";
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              const cell = table.getCellOrNullObject(r, c);
+              cell.load("text");
+              await context.sync();
+              const val = cell.isNullObject ? "" : (cell.text || "").trim();
+              tableStr += `[${r},${c}]="${val}" `;
             }
-            texts.push(tableStr.trim());
-          } catch (e) {
-            console.warn("[Tarkie] table read failed:", e);
+            tableStr += "\n";
           }
-          shapeIdx++;
-          continue;
-        }
+          texts.push(tableStr.trim());
+          handledAsTable = true;
+        } catch { /* not a table */ }
+
+        shapeIdx++;
+        if (handledAsTable) continue;
 
         // ── Text shape ────────────────────────────────────────────────────
         try {
@@ -204,7 +200,6 @@ export default function AddinPage() {
           const t = shape.textFrame.textRange.text?.trim();
           if (t && !isFooterText(t)) texts.push(t);
         } catch { /* not a text shape */ }
-        shapeIdx++;
       }
       return texts;
     });
@@ -273,23 +268,22 @@ export default function AddinPage() {
       const shapes = slide.shapes.items;
       let tableShapeIdx = 0;
 
-      for (const shape of shapes) {
-        shape.load("type");
-        await context.sync();
+      const cellSuggestionsAll = suggestions.filter(s => s.row !== undefined && s.col !== undefined);
+      const textSuggestions = suggestions.filter(s => s.original !== undefined && s.row === undefined);
 
-        // ── Table: write by [row, col] coordinate, add rows/cols as needed ──────
-        if (shape.type === window.PowerPoint.ShapeType.table) {
-          const cellSuggestions = suggestions.filter(
-            s => s.row !== undefined && s.col !== undefined &&
-              (s.shapeIdx === undefined || s.shapeIdx === tableShapeIdx)
+      for (const shape of shapes) {
+        // ── Try as table (no enum check — works on both Desktop and Web) ──────
+        let handledAsTable = false;
+        try {
+          const table = shape.getTable();
+          table.load("rowCount,columnCount");
+          await context.sync();
+
+          const cellSuggestions = cellSuggestionsAll.filter(
+            s => s.shapeIdx === undefined || s.shapeIdx === tableShapeIdx
           );
 
           if (cellSuggestions.length > 0) {
-            const table = shape.getTable();
-            table.load("rowCount,columnCount");
-            await context.sync();
-
-            // Add any missing rows first (in order, so indices stay valid)
             const maxRow = Math.max(...cellSuggestions.map((s: any) => s.row));
             const maxCol = Math.max(...cellSuggestions.map((s: any) => s.col));
 
@@ -300,16 +294,14 @@ export default function AddinPage() {
               await context.sync();
               console.log(`[Tarkie] Added row, now ${table.rowCount} rows`);
             }
-
             while (table.columnCount <= maxCol) {
               table.columns.add(table.columnCount, 1);
               await context.sync();
               table.load("columnCount");
               await context.sync();
-              console.log(`[Tarkie] Added column, now ${table.columnCount} cols`);
+              console.log(`[Tarkie] Added col, now ${table.columnCount} cols`);
             }
 
-            // Now write all cell values
             for (const s of cellSuggestions) {
               const cell = table.getCellOrNullObject(s.row, s.col);
               cell.load("text");
@@ -320,12 +312,13 @@ export default function AddinPage() {
               console.log(`[Tarkie] ✓ table[${s.row},${s.col}] → "${s.replacement}"`);
             }
           }
+          handledAsTable = true;
           tableShapeIdx++;
-          continue;
-        }
+        } catch { /* not a table */ }
+
+        if (handledAsTable) continue;
 
         // ── Text shape: search-and-replace ────────────────────────────────────
-        const textSuggestions = suggestions.filter(s => s.original !== undefined && s.row === undefined);
         if (textSuggestions.length === 0) continue;
         try {
           shape.textFrame.textRange.load("text");
@@ -346,6 +339,59 @@ export default function AddinPage() {
         } catch { /* not a text shape */ }
       }
     });
+  };
+
+  /**
+   * One-click update: reads the current slide and asks AI to update it
+   * with the selected account's intelligence — no user prompt needed.
+   */
+  const handleQuickUpdate = async () => {
+    if (!selectedClient) return;
+    if (isProcessing) return;
+    setIsProcessing(true);
+    setError(null);
+    setStatusMsg("Reading current slide...");
+    try {
+      const activeSlideIdx = await getActiveSlideIndex();
+      const slideContent = await getSlideText(activeSlideIdx);
+      setStatusMsg("Updating with account data...");
+
+      const res = await fetch("/api/addin/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: "Update this slide with the correct account information from the intelligence data. Replace any placeholder or incorrect values with the real data from the account. Only update content that should change based on the account — preserve structure and formatting.",
+          clientId: selectedClient,
+          slideContent,
+          history: [],
+          activeSlideIndex: activeSlideIdx + 1,
+          images: [],
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Update failed");
+
+      setMessages(prev => [...prev, { role: "ai", text: data.text || "(no response)" }]);
+
+      if (data.suggestions && data.suggestions.length > 0) {
+        setStatusMsg("Applying updates...");
+        const bySlide: Record<number, any[]> = {};
+        for (const s of data.suggestions) {
+          const idx = (s.slideIndex ?? (activeSlideIdx + 1)) - 1;
+          if (!bySlide[idx]) bySlide[idx] = [];
+          bySlide[idx].push(s);
+        }
+        for (const [idxStr, suggestions] of Object.entries(bySlide)) {
+          await applyToSlide(Number(idxStr), suggestions);
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || "Quick update failed.");
+    } finally {
+      setIsProcessing(false);
+      setStatusMsg("");
+    }
   };
 
   const handleScanDeck = async () => {
@@ -472,38 +518,25 @@ export default function AddinPage() {
     setChatInput("");
     setAttachedImages([]);
     setIsProcessing(true);
-    setStatusMsg(images.length > 0 ? "Analyzing images..." : applyToAll ? "Reading all slides..." : "Reading current slide...");
+    setStatusMsg(images.length > 0 ? "Analyzing images..." : "Reading current slide...");
     setError(null);
 
     try {
-      // ── Step 1: Read slide content via Office JS ──────────────────────────
-      let slideContent: string[] = [];
-      let allSlides: { slideIndex: number; content: string[] }[] = [];
-      let activeSlideIdx = 0;
+      // ── Step 1: Read current slide content via Office JS ──────────────────
+      const activeSlideIdx = await getActiveSlideIndex();
+      const slideContent = await getSlideText(activeSlideIdx);
 
-      if (applyToAll) {
-        allSlides = await getFullDeckContent();
-        activeSlideIdx = 0;
-      } else {
-        activeSlideIdx = await getActiveSlideIndex();
-        slideContent = await getSlideText(activeSlideIdx);
-      }
-
-      // ── Step 2: Call AI once with all content ─────────────────────────────
+      // ── Step 2: Call AI ───────────────────────────────────────────────────
       setStatusMsg("Thinking...");
 
       const body: any = {
         prompt: userMsg,
         clientId: selectedClient,
+        slideContent,
         history: messages.slice(-14),
         activeSlideIndex: activeSlideIdx + 1,
         images: images.map(img => ({ base64: img.base64, mimeType: img.mimeType })),
       };
-      if (applyToAll) {
-        body.allSlides = allSlides;
-      } else {
-        body.slideContent = slideContent;
-      }
 
       const res = await fetch("/api/addin/update", {
         method: "POST",
@@ -592,16 +625,31 @@ export default function AddinPage() {
         </div>
 
         <div className="space-y-2">
-          <select 
-            value={selectedClient}
-            onChange={(e) => setSelectedClient(e.target.value)}
-            className="w-full bg-slate-100/80 border-none rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#2162F9]/20 transition-all cursor-pointer shadow-inner"
-          >
-            <option value="">General Intelligence (Independent)</option>
-            {clients.map(c => (
-              <option key={c.id} value={c.id}>{c.companyName}</option>
-            ))}
-          </select>
+          {/* Account dropdown + quick update button */}
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedClient}
+              onChange={(e) => setSelectedClient(e.target.value)}
+              className="flex-1 bg-slate-100/80 border-none rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#2162F9]/20 transition-all cursor-pointer shadow-inner"
+            >
+              <option value="">General Intelligence</option>
+              {clients.map(c => (
+                <option key={c.id} value={c.id}>{c.companyName}</option>
+              ))}
+            </select>
+
+            {selectedClient && (
+              <button
+                onClick={handleQuickUpdate}
+                disabled={isProcessing}
+                title="Update current slide with account data"
+                className="shrink-0 h-9 px-3 bg-gradient-to-br from-[#2162F9] to-[#3a79ff] text-white rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 hover:shadow-lg hover:shadow-blue-500/30 disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:shadow-none transition-all active:scale-95"
+              >
+                <Sparkles size={11} />
+                Update
+              </button>
+            )}
+          </div>
 
           {selectedClient && (() => {
             const client = clients.find(c => c.id === selectedClient);
@@ -618,28 +666,15 @@ export default function AddinPage() {
             return null;
           })()}
 
-          <div className="flex items-center justify-between px-1">
-             <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="applyAll"
-                  checked={applyToAll}
-                  onChange={(e) => setApplyToAll(e.target.checked)}
-                  className="w-3.5 h-3.5 rounded-md accent-[#2162F9] cursor-pointer"
-                />
-                <label htmlFor="applyAll" className="text-[9px] font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:text-slate-600 transition-colors">
-                  Apply to all slides
-                </label>
-             </div>
-
-             <button
+          <div className="flex items-center justify-end px-1">
+            <button
               onClick={handleScanDeck}
               disabled={isProcessing}
               className="text-[9px] font-black text-[#2162F9] uppercase tracking-widest flex items-center gap-1 hover:underline disabled:opacity-30 disabled:no-underline"
-             >
-               <RefreshCw size={10} className={isProcessing && statusMsg.includes("Scan") ? "animate-spin" : ""} />
-               Scan Presentation
-             </button>
+            >
+              <RefreshCw size={10} className={isProcessing && statusMsg.includes("Scan") ? "animate-spin" : ""} />
+              Scan Presentation
+            </button>
           </div>
 
         </div>
