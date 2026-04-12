@@ -266,32 +266,44 @@ export default function AddinPage() {
         { sliceSize: 65536 },
         (result: any) => {
           if (result.status !== window.Office.AsyncResultStatus.Succeeded) {
-            reject(new Error("getFileAsync failed: " + result.error?.message));
+            reject(new Error("getFileAsync failed: " + (result.error?.message || result.status)));
             return;
           }
           const file = result.value;
           const sliceCount = file.sliceCount;
-          const slices: string[] = new Array(sliceCount);
+          console.log("[Tarkie] getFileAsync sliceCount:", sliceCount);
+
+          // Collect slices in order, then combine all bytes and base64-encode once
+          const sliceArrays: number[][] = new Array(sliceCount);
           let done = 0;
-          for (let i = 0; i < sliceCount; i++) {
-            file.getSliceAsync(i, (sliceResult: any) => {
+
+          const fetchSlice = (index: number) => {
+            file.getSliceAsync(index, (sliceResult: any) => {
               if (sliceResult.status !== window.Office.AsyncResultStatus.Succeeded) {
                 file.closeAsync();
-                reject(new Error("getSliceAsync failed: " + sliceResult.error?.message));
+                reject(new Error("getSliceAsync failed at " + index + ": " + sliceResult.error?.message));
                 return;
               }
-              // sliceResult.value.data is a Uint8Array — convert to base64
-              const bytes: Uint8Array = sliceResult.value.data;
-              let binary = "";
-              for (let b = 0; b < bytes.byteLength; b++) binary += String.fromCharCode(bytes[b]);
-              slices[i] = btoa(binary);
+              // data is an Array of byte values (0-255)
+              const data = sliceResult.value.data;
+              sliceArrays[index] = Array.from(data);
               done++;
               if (done === sliceCount) {
                 file.closeAsync();
-                resolve(slices.join(""));
+                // Combine all byte arrays and base64-encode the full binary
+                const allBytes = ([] as number[]).concat(...sliceArrays);
+                let binary = "";
+                for (let b = 0; b < allBytes.length; b++) {
+                  binary += String.fromCharCode(allBytes[b]);
+                }
+                const b64 = btoa(binary);
+                console.log("[Tarkie] Combined bytes:", allBytes.length, "base64 length:", b64.length);
+                resolve(b64);
               }
             });
-          }
+          };
+
+          for (let i = 0; i < sliceCount; i++) fetchSlice(i);
         }
       );
     });
