@@ -243,7 +243,7 @@ export default function AddinPage() {
             const maxCol = Math.max(...cellSuggestions.map((s: any) => s.col));
 
             while (table.rowCount <= maxRow) {
-              table.addRows(table.rowCount, 1);
+              table.rows.add(table.rowCount, 1);
               await context.sync();
               table.load("rowCount");
               await context.sync();
@@ -251,7 +251,7 @@ export default function AddinPage() {
             }
 
             while (table.columnCount <= maxCol) {
-              table.addColumns(table.columnCount, 1);
+              table.columns.add(table.columnCount, 1);
               await context.sync();
               table.load("columnCount");
               await context.sync();
