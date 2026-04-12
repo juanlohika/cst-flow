@@ -67,40 +67,41 @@ ${isBulk
 }
 
 RULES:
-1. When the user asks to update/change/edit slides — ALWAYS return [[UPDATE_SUGGESTIONS]] with exact text replacements.
-2. The "original" field MUST be copied EXACTLY from the slide content — a single cell value, word, or short phrase. The add-in does string.includes() matching — shorter and more exact = better match.
-3. One suggestion per individual cell or phrase. Never combine multiple cells/lines into one "original".
-4. NEVER touch footer/copyright text (lines with ©, "All rights reserved", long legal text). Only edit main content.
-5. NEVER invent data — only use values from Account Intelligence or existing slide content.
-6. NEVER say you cannot edit slides — you can, via JSON output.
+1. When the user asks to update/change/edit slides — ALWAYS return [[UPDATE_SUGGESTIONS]].
+2. NEVER touch footer/copyright text (©, "All rights reserved"). Only edit main content.
+3. NEVER invent data — only use values from Account Intelligence or existing slide content.
+4. NEVER say you cannot edit slides — you can, via JSON output.
 
-TABLE RULES (critical):
-- Tables are shown as: [TABLE - N columns: ColHeader1, ColHeader2, ColHeader3]
-  Row 1 (header): ColHeader1 | ColHeader2 | ColHeader3
-  Row 2: value1 | value2 | value3
-- The column headers tell you what TYPE of data each cell contains.
-- To update a cell, use its EXACT current value as "original" and provide the replacement.
-- Only update DATA rows (Row 2+). Never change header row values unless explicitly asked.
-- If a cell in a row needs updating, create one suggestion per cell — do NOT combine the whole row.
+TABLE FORMAT (how tables appear in slide content):
+Tables are scanned with exact cell coordinates. Format:
+[TABLE:0 rows:3 cols:3]
+[0,0]="ROLE" [0,1]="NAME" [0,2]="CONTACT DETAILS"
+[1,0]="Decision Maker" [1,1]="Mr. Hanz Chan" [1,2]="hanzjordanchan@gmail.com"
+[2,0]="HR Officer" [2,1]="Ms. Sonia Briton" [2,2]="hraccutechsteel01@gmail.com"
 
-EXAMPLE — table on slide 4:
-[TABLE - 3 columns: ROLE, NAME, CONTACT DETAILS]
-Row 1 (header): ROLE | NAME | CONTACT DETAILS
-Row 2: Decision Maker | Mr. Hanz Chan | hanzjordanchan@gmail.com
-Row 3: HR Officer | Ms. Sonia Briton | hraccutechsteel01@gmail.com
+- [row,col] is 0-based. Row 0 = header row.
+- To update a cell, output its exact [row,col] and the new value.
+- To update text shapes (non-table), use "original" + "replacement" as before.
 
-To replace the NAME and CONTACT of Row 2:
-{"slideIndex": 4, "original": "Mr. Hanz Chan", "replacement": "Sir Brian"}
-{"slideIndex": 4, "original": "hanzjordanchan@gmail.com", "replacement": "brian@solmanpower.com"}
-To replace Row 3 NAME only:
-{"slideIndex": 4, "original": "Ms. Sonia Briton", "replacement": "Ma'am Mariel"}
+EXAMPLE — update slide 4 table (TABLE:0):
+Replace NAME and CONTACT in row 1, add new row 3:
+{"slideIndex": 4, "row": 1, "col": 1, "replacement": "Sir Brian"}
+{"slideIndex": 4, "row": 1, "col": 2, "replacement": "brian@solmanpower.com"}
+{"slideIndex": 4, "row": 2, "col": 1, "replacement": "Ma'am Mariel"}
+{"slideIndex": 4, "row": 3, "col": 0, "replacement": "Accounting Officer"}
+{"slideIndex": 4, "row": 3, "col": 1, "replacement": "Ma'am Hazel"}
+{"slideIndex": 4, "row": 3, "col": 2, "replacement": "hazel@solmanpower.com"}
+
+For text shapes (no table):
+{"slideIndex": 4, "original": "Sol Manpower Project Team", "replacement": "New Title"}
 
 OUTPUT FORMAT when making edits:
 [[CONVERSATION_RESPONSE]]
 Brief explanation of what you changed and why.
 [[UPDATE_SUGGESTIONS]]
 [
-  {"slideIndex": 7, "original": "single line or phrase from slide", "replacement": "new text"}
+  {"slideIndex": 4, "row": 1, "col": 1, "replacement": "Sir Brian"},
+  {"slideIndex": 4, "row": 1, "col": 2, "replacement": "brian@solmanpower.com"}
 ]
 
 OUTPUT FORMAT when just answering questions (no edits):
@@ -118,20 +119,27 @@ Your natural response — no JSON needed.`;
       ],
     };
 
-    // Retry once on overload errors (Anthropic 529)
+    // Retry up to 3 times on overload (Anthropic 529), with backoff
     let response;
-    try {
-      response = await model.generateContent(inputPayload);
-    } catch (aiErr: any) {
-      const isOverloaded = aiErr?.status === 529 || aiErr?.message?.includes("overloaded");
-      if (isOverloaded) {
-        await new Promise(r => setTimeout(r, 3000));
+    const delays = [4000, 8000, 15000];
+    for (let attempt = 0; ; attempt++) {
+      try {
         response = await model.generateContent(inputPayload);
-      } else {
+        break;
+      } catch (aiErr: any) {
+        const isOverloaded =
+          aiErr?.status === 529 ||
+          aiErr?.message?.toLowerCase().includes("overload") ||
+          aiErr?.error?.type === "overloaded_error";
+        if (isOverloaded && attempt < delays.length) {
+          console.warn(`[addin/update] Claude overloaded, retrying in ${delays[attempt]}ms (attempt ${attempt + 1})`);
+          await new Promise(r => setTimeout(r, delays[attempt]));
+          continue;
+        }
         throw aiErr;
       }
     }
-    const text = response.response.text();
+    const text = response!.response.text();
 
     // ── 6. Parse ──────────────────────────────────────────────────────────────
     let aiResponse = text;
@@ -156,6 +164,13 @@ Your natural response — no JSON needed.`;
 
   } catch (err: any) {
     console.error("POST /api/addin/update error:", err);
-    return NextResponse.json({ error: err.message || "AI Processing Error" }, { status: 500 });
+    const isOverloaded =
+      err?.status === 529 ||
+      err?.message?.toLowerCase().includes("overload") ||
+      err?.error?.type === "overloaded_error";
+    const userMessage = isOverloaded
+      ? "The AI is temporarily overloaded. Please wait a moment and try again."
+      : err.message || "AI Processing Error";
+    return NextResponse.json({ error: userMessage }, { status: isOverloaded ? 503 : 500 });
   }
 }
