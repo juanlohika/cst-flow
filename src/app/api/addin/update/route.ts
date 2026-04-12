@@ -8,10 +8,23 @@ import { getModelForApp } from "@/lib/ai";
 /**
  * POST /api/addin/update
  *
- * Single-slide mode:  { prompt, clientId, slideContent: string[], history }
- * All-slides mode:    { prompt, clientId, allSlides: {slideIndex:number, content:string[]}[], history }
+ * Receives a slide schema (from scan-schema) + user prompt + account intelligence.
+ * Returns AI response + update suggestions targeting shapes by shapeIdx.
  *
- * Returns: { text: string, suggestions: {slideIndex?:number, original:string, replacement:string}[] }
+ * Body: {
+ *   prompt: string,
+ *   clientId?: string,
+ *   slideSchema: SlideSchema,      ← preferred: schema from scan-schema
+ *   slideContent?: string[],       ← legacy fallback (raw text array)
+ *   history?: { role: string, text: string }[],
+ *   activeSlideIndex?: number,
+ * }
+ *
+ * Returns: { text: string, suggestions: UpdateSuggestion[] }
+ *
+ * UpdateSuggestion (table cell):  { slideIndex, shapeIdx, row, col, replacement }
+ * UpdateSuggestion (text shape):  { slideIndex, shapeIdx, replacement }
+ * UpdateSuggestion (legacy):      { slideIndex, original, replacement }
  */
 export async function POST(req: NextRequest) {
   try {
@@ -19,126 +32,84 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
-    const { prompt, clientId, slideContent, allSlides, history, activeSlideIndex, images } = body;
+    const { prompt, clientId, slideSchema, slideContent, history, activeSlideIndex } = body;
 
-    if (!prompt && (!images || images.length === 0)) {
-      return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
-    }
+    if (!prompt) return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
 
-    // ── 1. Account Intelligence ───────────────────────────────────────────────
+    // ── Account Intelligence ───────────────────────────────────────────────
     let intelligence = "";
     let companyName = "General Context";
     if (clientId && typeof clientId === "string" && clientId.trim() !== "") {
       const results = await db.select().from(clientProfiles).where(eq(clientProfiles.id, clientId)).limit(1);
       const client = results[0];
-      if (client) {
-        intelligence = client.intelligenceContent || "";
-        companyName = client.companyName;
-      }
+      if (client) { intelligence = client.intelligenceContent || ""; companyName = client.companyName; }
     }
 
-    // ── 2. AI Model ───────────────────────────────────────────────────────────
+    // ── AI Model ───────────────────────────────────────────────────────────
     const model = await getModelForApp("tarkie-ai").catch(async (e) => {
-      // If tarkie-ai app row doesn't exist in DB, fall back to global primary provider
-      console.warn("[addin/update] getModelForApp failed, using getGeminiModel fallback:", e.message);
+      console.warn("[addin/update] getModelForApp failed, fallback:", e.message);
       const { getGeminiModel } = await import("@/lib/ai");
       return getGeminiModel();
     });
 
-    // ── 3. Build slide context string ─────────────────────────────────────────
-    const isBulk = Array.isArray(allSlides) && allSlides.length > 0;
+    // ── Build slide context string from schema or legacy ───────────────────
+    let slideContextStr = "";
     const currentSlideNum = activeSlideIndex || 1;
-    const slideContext = isBulk
-      ? allSlides.map((s: any) => `[Slide ${s.slideIndex}]\n${(s.content || []).join("\n")}`).join("\n\n")
-      : (slideContent || []).join("\n");
 
-    // ── 4. System Prompt ──────────────────────────────────────────────────────
-    const systemPromptText = `You are Tarkie AI — an expert Presentation Strategist embedded directly inside PowerPoint via the Tarkie Team OS add-in.
+    if (slideSchema) {
+      // Schema-based context — rich format
+      slideContextStr = buildSchemaContext(slideSchema);
+    } else if (Array.isArray(slideContent) && slideContent.length > 0) {
+      // Legacy fallback — raw text array
+      slideContextStr = slideContent.join("\n");
+    }
 
-CRITICAL: You DO have the ability to edit PowerPoint slides. The add-in reads slide content, sends it to you, and then applies your JSON suggestions directly to the file in real-time. When you return [[UPDATE_SUGGESTIONS]] JSON, the add-in immediately writes those changes to the slide. You are the brain — the add-in is the hands. Always provide JSON suggestions when the user asks for edits.
+    // ── System Prompt ──────────────────────────────────────────────────────
+    const systemPromptText = `You are Tarkie AI — an expert Presentation Strategist embedded inside PowerPoint via the Tarkie Team OS add-in.
+
+CRITICAL: You CAN edit PowerPoint slides. When you return [[UPDATE_SUGGESTIONS]] JSON, the add-in immediately writes those changes to the slide. Always provide JSON suggestions when the user asks for edits.
 
 ACCOUNT: ${companyName}
 INTELLIGENCE:
 ${intelligence || "No specific intelligence on file. Rely on the slide content and your general expertise."}
 
-${isBulk
-  ? `FULL DECK CONTENT (${allSlides.length} slides):\n${slideContext}`
-  : `CURRENT SLIDE: Slide ${currentSlideNum}\nCONTENT:\n${slideContext || "(no text content on this slide)"}`
-}
+CURRENT SLIDE: Slide ${currentSlideNum}
+${slideContextStr || "(no content on this slide)"}
+
+SHAPE TARGETING (use shapeIdx when available — more reliable than text search):
+- Text shape:  { "slideIndex": N, "shapeIdx": 2, "replacement": "New text" }
+- Table cell:  { "slideIndex": N, "shapeIdx": 0, "row": 1, "col": 2, "replacement": "Value" }
+- Legacy text search (only if shapeIdx unknown): { "slideIndex": N, "original": "old text", "replacement": "new text" }
+
+TABLE FORMAT (when schema shows table content):
+Tables use [row,col] 0-based coordinates. Row 0 = header.
+To ADD a new row, use a row index beyond current rowCount — add-in inserts it automatically.
+To ADD a new column, use a col index beyond current columnCount.
+
+PLACEHOLDER SHAPES:
+Shapes with role "placeholder" are templates waiting to be filled in.
+When updating, replace placeholder content with real data from Account Intelligence.
 
 RULES:
-1. When the user asks to update/change/edit slides — ALWAYS return [[UPDATE_SUGGESTIONS]].
+1. When user asks to update/change/edit slides — ALWAYS return [[UPDATE_SUGGESTIONS]].
 2. NEVER touch footer/copyright text (©, "All rights reserved"). Only edit main content.
 3. NEVER invent data — only use values from Account Intelligence or existing slide content.
-4. NEVER say you cannot edit slides — you can, via JSON output.
-
-TABLE FORMAT (how tables appear in slide content):
-Tables are scanned with exact cell coordinates. Format:
-[TABLE:0 rows:3 cols:3]
-[0,0]="ROLE" [0,1]="NAME" [0,2]="CONTACT DETAILS"
-[1,0]="Decision Maker" [1,1]="Mr. Hanz Chan" [1,2]="hanzjordanchan@gmail.com"
-[2,0]="HR Officer" [2,1]="Ms. Sonia Briton" [2,2]="hraccutechsteel01@gmail.com"
-
-- [row,col] is 0-based. Row 0 = header row.
-- To update a cell, output its exact [row,col] and the new value.
-- To ADD a new row, simply use a row index beyond the current rowCount — the add-in will automatically insert the row.
-- To ADD a new column, use a col index beyond current columnCount — it will be added automatically.
-- To update text shapes (non-table), use "original" + "replacement" as before.
-
-EXAMPLE — update slide 4 table (TABLE:0):
-Replace NAME and CONTACT in row 1, add new row 3:
-{"slideIndex": 4, "row": 1, "col": 1, "replacement": "Sir Brian"}
-{"slideIndex": 4, "row": 1, "col": 2, "replacement": "brian@solmanpower.com"}
-{"slideIndex": 4, "row": 2, "col": 1, "replacement": "Ma'am Mariel"}
-{"slideIndex": 4, "row": 3, "col": 0, "replacement": "Accounting Officer"}
-{"slideIndex": 4, "row": 3, "col": 1, "replacement": "Ma'am Hazel"}
-{"slideIndex": 4, "row": 3, "col": 2, "replacement": "hazel@solmanpower.com"}
-
-For text shapes (no table):
-{"slideIndex": 4, "original": "Sol Manpower Project Team", "replacement": "New Title"}
+4. NEVER say you cannot edit slides.
+5. Target shapes by shapeIdx whenever the schema provides it — do NOT use "original" text search for shapes that have a known shapeIdx.
 
 OUTPUT FORMAT when making edits:
 [[CONVERSATION_RESPONSE]]
 Brief explanation of what you changed and why.
 [[UPDATE_SUGGESTIONS]]
 [
-  {"slideIndex": 4, "row": 1, "col": 1, "replacement": "Sir Brian"},
-  {"slideIndex": 4, "row": 1, "col": 2, "replacement": "brian@solmanpower.com"}
+  { "slideIndex": 3, "shapeIdx": 1, "replacement": "Step 1: Tap the Add button on the home screen" },
+  { "slideIndex": 3, "shapeIdx": 0, "row": 1, "col": 1, "replacement": "Sir Brian" }
 ]
 
 OUTPUT FORMAT when just answering questions (no edits):
-Your natural response — no JSON needed.
+Your natural response — no JSON needed.`;
 
-IMAGE / SLIDE BUILDER MODE:
-When the user attaches images and asks to create slides or a guide:
-- Analyze each image carefully — identify what UI/screen/step it shows
-- Return [[SLIDE_PLAN]] with one entry per slide to build
-- Each entry: { "title": "Step 1: ...", "description": "Instructions...", "imageIndex": 0, "annotation": { "x": 45, "y": 60, "label": "①" } }
-- imageIndex refers to which attached image to place (0-based)
-- annotation x/y are percentages (0-100) of image width/height where the callout should appear
-- If no annotation needed, omit the annotation field
-
-OUTPUT FORMAT when building slides from images:
-[[CONVERSATION_RESPONSE]]
-Brief summary of the guide being created.
-[[SLIDE_PLAN]]
-[
-  {"title": "Step 1: Open the app", "description": "Launch the Tarkie app on your device.", "imageIndex": 0, "annotation": {"x": 50, "y": 80, "label": "①"}},
-  {"title": "Step 2: Tap Time In", "description": "Press the Time In button to record your arrival.", "imageIndex": 1, "annotation": {"x": 30, "y": 65, "label": "②"}}
-]`;
-
-    // ── 5. Call AI with proper conversation history + images ──────────────────
-    const hasImages = Array.isArray(images) && images.length > 0;
-
-    // Build user message parts — text + any attached images
-    const userParts: any[] = [];
-    if (prompt) userParts.push({ text: prompt });
-    if (hasImages) {
-      for (const img of images) {
-        userParts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
-      }
-    }
-
+    // ── Call AI ────────────────────────────────────────────────────────────
     const inputPayload = {
       systemInstruction: { parts: [{ text: systemPromptText }] },
       contents: [
@@ -146,11 +117,11 @@ Brief summary of the guide being created.
           role: h.role === "ai" ? "model" : "user",
           parts: [{ text: h.text }],
         })),
-        { role: "user", parts: userParts },
+        { role: "user", parts: [{ text: prompt }] },
       ],
     };
 
-    // Retry up to 3 times on overload (Anthropic 529), with backoff
+    // Retry up to 3 times on overload
     let response;
     const delays = [4000, 8000, 15000];
     for (let attempt = 0; ; attempt++) {
@@ -163,19 +134,19 @@ Brief summary of the guide being created.
           aiErr?.message?.toLowerCase().includes("overload") ||
           aiErr?.error?.type === "overloaded_error";
         if (isOverloaded && attempt < delays.length) {
-          console.warn(`[addin/update] Claude overloaded, retrying in ${delays[attempt]}ms (attempt ${attempt + 1})`);
+          console.warn(`[addin/update] Overloaded, retrying in ${delays[attempt]}ms`);
           await new Promise(r => setTimeout(r, delays[attempt]));
           continue;
         }
         throw aiErr;
       }
     }
+
     const text = response!.response.text();
 
-    // ── 6. Parse ──────────────────────────────────────────────────────────────
+    // ── Parse response ─────────────────────────────────────────────────────
     let aiResponse = text;
     let suggestions: any[] = [];
-    let slidePlan: any[] = [];
 
     if (text.includes("[[UPDATE_SUGGESTIONS]]")) {
       const parts = text.split("[[UPDATE_SUGGESTIONS]]");
@@ -187,21 +158,11 @@ Brief summary of the guide being created.
       } catch (e) {
         console.error("[addin/update] Failed to parse suggestions JSON:", e);
       }
-    } else if (text.includes("[[SLIDE_PLAN]]")) {
-      const parts = text.split("[[SLIDE_PLAN]]");
-      aiResponse = parts[0].replace("[[CONVERSATION_RESPONSE]]", "").trim();
-      const planPart = parts[1]?.trim() || "";
-      try {
-        const jsonMatch = planPart.match(/\[[\s\S]*\]/);
-        slidePlan = JSON.parse(jsonMatch ? jsonMatch[0] : planPart);
-      } catch (e) {
-        console.error("[addin/update] Failed to parse slidePlan JSON:", e);
-      }
     } else {
       aiResponse = aiResponse.replace("[[CONVERSATION_RESPONSE]]", "").trim();
     }
 
-    return NextResponse.json({ text: aiResponse, suggestions, slidePlan });
+    return NextResponse.json({ text: aiResponse, suggestions });
 
   } catch (err: any) {
     console.error("POST /api/addin/update error:", err);
@@ -214,4 +175,28 @@ Brief summary of the guide being created.
       : err.message || "AI Processing Error";
     return NextResponse.json({ error: userMessage }, { status: isOverloaded ? 503 : 500 });
   }
+}
+
+// ── Build a readable context string from a SlideSchema ────────────────────────
+function buildSchemaContext(slideSchema: any): string {
+  if (!slideSchema) return "";
+  const lines: string[] = [];
+
+  if (slideSchema.topic) lines.push(`Topic: ${slideSchema.topic}`);
+  if (slideSchema.slideRole) lines.push(`Slide type: ${slideSchema.slideRole}`);
+  if (slideSchema.completeness) lines.push(`Status: ${slideSchema.completeness}`);
+  if (slideSchema.issues?.length > 0) lines.push(`Issues: ${slideSchema.issues.join("; ")}`);
+
+  lines.push("");
+  lines.push("SHAPES:");
+
+  for (const shape of (slideSchema.shapes || [])) {
+    let line = `[Shape ${shape.shapeIdx}] type:${shape.type} role:${shape.role} location:${shape.location}`;
+    if (shape.context) line += `\n  context: "${shape.context}"`;
+    if (shape.content) line += `\n  content: ${shape.content}`;
+    if (shape.linkedTo?.length > 0) line += `\n  linkedTo: shapes [${shape.linkedTo.join(", ")}]`;
+    lines.push(line);
+  }
+
+  return lines.join("\n");
 }
