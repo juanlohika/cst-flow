@@ -88,14 +88,41 @@ function ArchitectContent() {
   }, [searchParams, session]);
 
   // ── Image handling ──────────────────────────────────────────────────────────
+  /** Resize image to fit within maxDim x maxDim using canvas, returns base64 PNG */
+  const resizeImage = (dataUrl: string, maxDim = 1568): Promise<string> =>
+    new Promise((resolve) => {
+      const img = new window.Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width <= maxDim && height <= maxDim) {
+          // Already within limits — return as-is
+          resolve(dataUrl);
+          return;
+        }
+        const scale = Math.min(maxDim / width, maxDim / height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = dataUrl;
+    });
+
   const fileToAttached = (file: File | Blob, name = "image"): Promise<AttachedImage> =>
     new Promise((resolve, reject) => {
       const mimeType = file.type || "image/png";
       const reader = new FileReader();
-      reader.onload = (e) => {
-        const dataUrl = e.target?.result as string;
-        const base64 = dataUrl.split(",")[1];
-        resolve({ base64, mimeType, preview: dataUrl, name });
+      reader.onload = async (e) => {
+        const originalDataUrl = e.target?.result as string;
+        // Resize to max 1568px (safe for Claude) and convert to JPEG to reduce payload
+        const resizedDataUrl = await resizeImage(originalDataUrl);
+        const base64 = resizedDataUrl.split(",")[1];
+        const finalMime = resizedDataUrl.startsWith("data:image/jpeg") ? "image/jpeg" : mimeType;
+        resolve({ base64, mimeType: finalMime, preview: resizedDataUrl, name });
       };
       reader.onerror = reject;
       reader.readAsDataURL(file);
