@@ -324,17 +324,37 @@ export default function AddinPage() {
             table.load("rowCount,columnCount");
             await context.sync();
 
-            while (table.rowCount <= s.row) {
-              table.rows.add(table.rowCount, 1);
-              await context.sync();
-              table.load("rowCount");
-              await context.sync();
+            // Add rows if needed — table.rows.add requires PowerPointApi 1.9
+            // (Desktop build 2508+). On older Desktop it throws — catch and warn.
+            if (table.rowCount <= s.row) {
+              try {
+                while (table.rowCount <= s.row) {
+                  table.rows.add(table.rowCount, 1);
+                  await context.sync();
+                  table.load("rowCount");
+                  await context.sync();
+                }
+              } catch (addErr: any) {
+                console.warn(`[Tarkie] table.rows.add not supported on this Desktop version. Row ${s.row} cannot be added. Skipping.`, addErr);
+                setError(`Cannot add new rows on this version of PowerPoint Desktop. Please update PowerPoint or use PowerPoint Web.`);
+                continue;
+              }
             }
-            while (table.columnCount <= s.col) {
-              table.columns.add(table.columnCount, 1);
-              await context.sync();
-              table.load("columnCount");
-              await context.sync();
+
+            // Add columns if needed
+            if (table.columnCount <= s.col) {
+              try {
+                while (table.columnCount <= s.col) {
+                  table.columns.add(table.columnCount, 1);
+                  await context.sync();
+                  table.load("columnCount");
+                  await context.sync();
+                }
+              } catch (addErr: any) {
+                console.warn(`[Tarkie] table.columns.add not supported on this Desktop version. Col ${s.col} cannot be added. Skipping.`, addErr);
+                setError(`Cannot add new columns on this version of PowerPoint Desktop. Please update PowerPoint or use PowerPoint Web.`);
+                continue;
+              }
             }
 
             const cell = table.getCellOrNullObject(s.row, s.col);
