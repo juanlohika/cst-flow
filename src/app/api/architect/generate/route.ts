@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getModelForApp } from "@/lib/ai";
+import { getModelForApp, getClaudeModel, getGeminiModel } from "@/lib/ai";
+// getGroqModel is not exported — Groq-specific selection falls through to getModelForApp
 
 const TAGLISH_RULE = `
 SUPPORTED LANGUAGE (TAGLISH): The input source text/description may contain a mix of English and Filipino (Taglish). You must comprehend the meaning in both languages and ensure the final flowchart labels and text are written in formal, professional English.
@@ -61,29 +62,72 @@ RULES:
 
 export async function POST(req: Request) {
   try {
-    const { prompt, messages, diagramType, systemInstruction } = await req.json();
-    const headerKey = req.headers.get("x-gemini-key") || "";
-    const model = await getModelForApp("architect");
-    
+    const { prompt, messages, diagramType, systemInstruction, provider, images } = await req.json();
+    const hasImages = Array.isArray(images) && images.length > 0;
+
+    // ── Resolve AI model ──────────────────────────────────────────────────────
+    // If images are attached, always use Claude (Groq/Gemini free tier can't read images reliably).
+    // If provider override is set, use that. Otherwise fall back to app default.
+    let model: any;
+    const resolvedProvider = hasImages ? "claude" : (provider || "auto");
+
+    if (resolvedProvider === "claude") {
+      model = await getClaudeModel();
+    } else if (resolvedProvider === "gemini") {
+      model = await getGeminiModel();
+    } else if (resolvedProvider === "groq") {
+      // Groq doesn't have its own exported getter — use getModelForApp with groq as primary
+      // getModelForApp will pick up the app's setting; user must configure app to groq in admin
+      model = await getModelForApp("architect");
+    } else {
+      // "auto" — use the app's configured provider
+      model = await getModelForApp("architect");
+    }
+
     // Choose prompting strategy based on dropdown
     const isMermaid = diagramType.startsWith("mermaid");
     let finalInstruction = REACT_FLOW_PROMPT;
     if (diagramType === "mermaid") finalInstruction = MERMAID_PROMPT;
     if (diagramType === "mermaid-sequence") finalInstruction = MERMAID_SEQUENCE_PROMPT;
-    
+
+    if (hasImages) {
+      finalInstruction += `\n\nIMAGE ANALYSIS: The user has attached ${images.length} screenshot(s). Analyze each image carefully to understand the process, UI flow, or system shown, then extract that into the diagram format.`;
+    }
+
     if (systemInstruction) {
       const isMermaidInstruction = systemInstruction.toLowerCase().includes("mermaid");
       if (!isMermaid && isMermaidInstruction) {
-        // Skip explicitly Mermaid-themed overrides if we are using the JSON React Flow engine
         console.log("Skipping Mermaid overrides for JSON engine to prevent AI hallucination.");
       } else {
         finalInstruction += `\n\nADDITIONAL INSTRUCTIONS:\n${systemInstruction}`;
       }
     }
 
-    const requestContents = messages && messages.length > 0
-      ? messages.map((m: any) => ({ role: m.role, parts: [{ text: m.content }] }))
-      : [{ role: "user", parts: [{ text: prompt }] }];
+    // ── Build contents with images in the last user message ──────────────────
+    let requestContents: any[];
+
+    if (hasImages) {
+      // Build history as text-only, then append images to the final user turn
+      const history = (messages || []).slice(0, -1).map((m: any) => ({
+        role: m.role,
+        parts: [{ text: m.content }],
+      }));
+
+      const lastParts: any[] = [];
+      if (prompt) lastParts.push({ text: prompt });
+      for (const img of images) {
+        lastParts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
+      }
+
+      requestContents = [
+        ...history,
+        { role: "user", parts: lastParts },
+      ];
+    } else {
+      requestContents = messages && messages.length > 0
+        ? messages.map((m: any) => ({ role: m.role, parts: [{ text: m.content }] }))
+        : [{ role: "user", parts: [{ text: prompt }] }];
+    }
 
     const result = await model.generateContent({
       contents: requestContents,
