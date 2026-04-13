@@ -129,10 +129,29 @@ export async function POST(req: Request) {
         : [{ role: "user", parts: [{ text: prompt }] }];
     }
 
-    const result = await model.generateContent({
-      contents: requestContents,
-      systemInstruction: { role: "system", parts: [{ text: finalInstruction }] },
-    });
+    // Retry up to 3 times on Claude overload (529)
+    let result: any;
+    const delays = [4000, 8000, 15000];
+    for (let attempt = 0; ; attempt++) {
+      try {
+        result = await model.generateContent({
+          contents: requestContents,
+          systemInstruction: { role: "system", parts: [{ text: finalInstruction }] },
+        });
+        break;
+      } catch (aiErr: any) {
+        const isOverloaded =
+          aiErr?.status === 529 ||
+          aiErr?.message?.toLowerCase().includes("overload") ||
+          aiErr?.error?.type === "overloaded_error";
+        if (isOverloaded && attempt < delays.length) {
+          console.warn(`[architect/generate] Claude overloaded, retrying in ${delays[attempt]}ms (attempt ${attempt + 1})`);
+          await new Promise(r => setTimeout(r, delays[attempt]));
+          continue;
+        }
+        throw aiErr;
+      }
+    }
 
     const text = result.response.text();
 
@@ -161,6 +180,14 @@ export async function POST(req: Request) {
 
   } catch (error: any) {
     let msg = error.message;
+    const isOverloaded =
+      error?.status === 529 ||
+      msg?.toLowerCase().includes("overload") ||
+      error?.error?.type === "overloaded_error";
+    if (isOverloaded) {
+      msg = "Claude is temporarily overloaded. Please wait a moment and try again.";
+      return NextResponse.json({ error: msg }, { status: 503 });
+    }
     if (msg && (msg.includes("429 Too Many Requests") || msg.includes("Quota exceeded"))) {
       msg = "⌛ Google AI Free Tier Limit Reached. Please wait 30 seconds before generating your next flowchart!";
     }
