@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getModelForApp, getClaudeModel } from "@/lib/ai";
+import { getModelForApp, getClaudeModel, generateWithRetry } from "@/lib/ai";
 import mammoth from "mammoth";
 
 interface Attachment {
@@ -172,7 +172,7 @@ export async function POST(req: Request) {
       requestContents = [{ role: "user", parts }];
     }
 
-    const result = await model.generateContent({
+    const result = await generateWithRetry(model, {
       contents: requestContents,
       systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
     });

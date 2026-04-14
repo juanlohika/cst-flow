@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getClaudeModel } from "@/lib/ai";
+import { getClaudeModel, generateWithRetry } from "@/lib/ai";
 import { db } from "@/db";
 import { skills as skillsTable } from "@/db/schema";
 import { eq, and, desc } from "drizzle-orm";
@@ -126,7 +126,7 @@ ADDITIONAL INSTRUCTIONS:
       requestContents = [{ role: "user", parts }];
     }
 
-    const result = await model.generateContent({
+    const result = await generateWithRetry(model, {
       contents: requestContents,
       systemInstruction: { role: "system", parts: [{ text: finalSystemInstruction }] },
     });
@@ -134,6 +134,7 @@ ADDITIONAL INSTRUCTIONS:
     return NextResponse.json({ content: result.response.text() });
   } catch (error: any) {
     console.error("BRD Generation error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const isOverloaded = error?.status === 503 || error?.message?.toLowerCase().includes("overload");
+    return NextResponse.json({ error: error.message }, { status: isOverloaded ? 503 : 500 });
   }
 }

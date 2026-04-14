@@ -20,7 +20,7 @@ You are an expert dictation cleanup assistant.
 RAW TEXT: "${rawText}"
 `;
 
-    const result = await model.generateContent(promptText);
+    const result = await generateWithRetry(model, promptText);
     const responseText = result.response.text();
 
     return NextResponse.json({ text: responseText.trim() });

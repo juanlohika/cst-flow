@@ -3,7 +3,7 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { clientProfiles } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { getModelForApp } from "@/lib/ai";
+import { getModelForApp, generateWithRetry } from "@/lib/ai";
 
 /**
  * POST /api/addin/scan-schema
@@ -154,27 +154,8 @@ OUTPUT: Return ONLY valid JSON in this exact structure, no markdown, no explanat
       contents: [{ role: "user", parts: userParts }],
     };
 
-    // Retry on overload
-    let response;
-    const delays = [4000, 8000, 15000];
-    for (let attempt = 0; ; attempt++) {
-      try {
-        response = await model.generateContent(inputPayload);
-        break;
-      } catch (aiErr: any) {
-        const isOverloaded =
-          aiErr?.status === 529 ||
-          aiErr?.message?.toLowerCase().includes("overload") ||
-          aiErr?.error?.type === "overloaded_error";
-        if (isOverloaded && attempt < delays.length) {
-          await new Promise(r => setTimeout(r, delays[attempt]));
-          continue;
-        }
-        throw aiErr;
-      }
-    }
-
-    const rawText = response!.response.text().trim();
+    const response = await generateWithRetry(model, inputPayload);
+    const rawText = response.response.text().trim();
 
     // Strip markdown code fences if AI wrapped the JSON
     const jsonStr = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { clientProfiles as clientProfilesTable, meetingPrepSessions as meetingPrepSessionsTable, skills as skillsTable } from "@/db/schema";
 import { auth } from "@/auth";
-import { getModelForApp } from "@/lib/ai";
+import { getModelForApp, generateWithRetry } from "@/lib/ai";
 import { eq, and, inArray } from "drizzle-orm";
 
 /**
@@ -54,7 +54,7 @@ export async function POST(req: Request) {
 
     const prompt = buildGenerationPrompt(profile, meetingType, knowledgeBase);
 
-    const result = await model.generateContent(prompt);
+    const result = await generateWithRetry(model, prompt);
     const text = result.response.text();
 
     // Parse the generated content

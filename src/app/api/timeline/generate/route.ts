@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getModelForApp } from "@/lib/ai";
+import { getModelForApp, generateWithRetry } from "@/lib/ai";
 
 export async function POST(req: Request) {
   try {
@@ -51,7 +51,7 @@ TASKS TO SCHEDULE (in chronological order):
 ${JSON.stringify(tasks, null, 2)}
     `;
 
-    const result = await model.generateContent({
+    const result = await generateWithRetry(model, {
       contents: [{ role: "user", parts: [{ text: userPrompt }] }],
       systemInstruction: { role: "system", parts: [{ text: timelineInstruction }] },
       generationConfig: {

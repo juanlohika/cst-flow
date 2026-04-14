@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { timelineItems as timelineItemsTable, projects as projectsTable } from "@/db/schema";
 import { auth } from "@/auth";
-import { getModelForApp } from "@/lib/ai";
+import { getModelForApp, generateWithRetry } from "@/lib/ai";
 import { eq, and, ne, asc } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -100,7 +100,7 @@ ${taskList.map(t => `- [${t.urgency.toUpperCase()}] ${t.taskCode} | ${t.subject}
 Build a realistic day plan. Defer tasks that don't fit in 8h.`;
 
     const model = await getModelForApp("tasks");
-    const result = await model.generateContent(`${systemPrompt}\n\n${userMessage}`);
+    const result = await generateWithRetry(model, `${systemPrompt}\n\n${userMessage}`);
 
     const raw = result.response.text().trim();
     // Strip any accidental markdown fences

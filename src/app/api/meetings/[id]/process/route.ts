@@ -9,7 +9,7 @@ import {
 } from '@/db/schema';
 import { auth } from '@/auth';
 import { eq, and, inArray } from 'drizzle-orm';
-import { getModelForApp, getStoredApiKey } from '@/lib/ai';
+import { getModelForApp, getStoredApiKey, generateWithRetry } from '@/lib/ai';
 
 const TARKIE_INTEGRITY_RULE = `
 IMPORTANT: "Tarkie" is our product name. Never mishear or transcribe it as "Turkey" (the animal or country) or "Starkey". If the transcript contains "Turkey" or "Starkey" where it refers to our product or ecosystem, ALWAYS correct it to "Tarkie". This is a non-negotiable rule.
@@ -114,9 +114,9 @@ The format should be:
 
     // Run AI in parallel
     const [minutesResult, brdResult, tasksResult] = await Promise.all([
-      model.generateContent(minutesPrompt),
-      model.generateContent(brdPrompt),
-      model.generateContent(tasksPrompt),
+      generateWithRetry(model, minutesPrompt),
+      generateWithRetry(model, brdPrompt),
+      generateWithRetry(model, tasksPrompt),
     ]);
 
     const minutesState = safeParseJson(minutesResult.response.text()) ?? {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { getGeminiModel } from "@/lib/ai";
+import { getGeminiModel, generateWithRetry } from "@/lib/ai";
 
 /**
  * POST /api/presentations/generate-block
@@ -68,7 +68,7 @@ ${prompt}`;
       }
     }
 
-    const result = await model.generateContent(promptParts);
+    const result = await generateWithRetry(model, promptParts);
     const responseText = result.response.text();
 
     // Parse the JSON from the response

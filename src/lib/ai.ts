@@ -375,3 +375,35 @@ function buildClaudeAdapter(apiKey: string) {
     },
   };
 }
+
+// ─── Shared retry helper ──────────────────────────────────────────────────────
+/**
+ * Calls model.generateContent(input) with automatic retry on Claude 529 overload.
+ * Retries up to 3 times with 4s / 8s / 15s backoff.
+ * All AI routes should use this instead of calling model.generateContent directly.
+ */
+export async function generateWithRetry(model: any, input: any): Promise<any> {
+  const delays = [4000, 8000, 15000];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await model.generateContent(input);
+    } catch (err: any) {
+      const isOverloaded =
+        err?.status === 529 ||
+        err?.message?.toLowerCase().includes("overload") ||
+        err?.error?.type === "overloaded_error";
+      if (isOverloaded && attempt < delays.length) {
+        console.warn(`[AI] Claude overloaded, retrying in ${delays[attempt]}ms (attempt ${attempt + 1})`);
+        await new Promise(r => setTimeout(r, delays[attempt]));
+        continue;
+      }
+      // Re-throw with a clean message for overload that exhausted retries
+      if (isOverloaded) {
+        const e: any = new Error("Claude is temporarily overloaded. Please wait a moment and try again.");
+        e.status = 503;
+        throw e;
+      }
+      throw err;
+    }
+  }
+}

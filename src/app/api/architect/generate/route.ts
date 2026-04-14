@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getModelForApp, getClaudeModel, getGeminiModel } from "@/lib/ai";
+import { getModelForApp, getClaudeModel, getGeminiModel, generateWithRetry } from "@/lib/ai";
 // getGroqModel is not exported — Groq-specific selection falls through to getModelForApp
 
 const TAGLISH_RULE = `
@@ -129,29 +129,10 @@ export async function POST(req: Request) {
         : [{ role: "user", parts: [{ text: prompt }] }];
     }
 
-    // Retry up to 3 times on Claude overload (529)
-    let result: any;
-    const delays = [4000, 8000, 15000];
-    for (let attempt = 0; ; attempt++) {
-      try {
-        result = await model.generateContent({
-          contents: requestContents,
-          systemInstruction: { role: "system", parts: [{ text: finalInstruction }] },
-        });
-        break;
-      } catch (aiErr: any) {
-        const isOverloaded =
-          aiErr?.status === 529 ||
-          aiErr?.message?.toLowerCase().includes("overload") ||
-          aiErr?.error?.type === "overloaded_error";
-        if (isOverloaded && attempt < delays.length) {
-          console.warn(`[architect/generate] Claude overloaded, retrying in ${delays[attempt]}ms (attempt ${attempt + 1})`);
-          await new Promise(r => setTimeout(r, delays[attempt]));
-          continue;
-        }
-        throw aiErr;
-      }
-    }
+    const result = await generateWithRetry(model, {
+      contents: requestContents,
+      systemInstruction: { role: "system", parts: [{ text: finalInstruction }] },
+    });
 
     const text = result.response.text();
 

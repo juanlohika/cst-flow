@@ -80,7 +80,7 @@ export async function POST(
 
     console.log(`[live-update] Processing ${panel} | Transcript Length: ${newTranscript?.length || 0} | Notes Length: ${notes?.length || 0}`);
 
-    const result = await model.generateContent(prompt);
+    const result = await generateWithRetry(model, prompt);
     const response = await result.response;
     const rawText = response.text().trim();
 

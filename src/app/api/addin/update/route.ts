@@ -3,7 +3,7 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { clientProfiles } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { getModelForApp } from "@/lib/ai";
+import { getModelForApp, generateWithRetry } from "@/lib/ai";
 
 /**
  * POST /api/addin/update
@@ -121,26 +121,7 @@ Your natural response — no JSON needed.`;
       ],
     };
 
-    // Retry up to 3 times on overload
-    let response;
-    const delays = [4000, 8000, 15000];
-    for (let attempt = 0; ; attempt++) {
-      try {
-        response = await model.generateContent(inputPayload);
-        break;
-      } catch (aiErr: any) {
-        const isOverloaded =
-          aiErr?.status === 529 ||
-          aiErr?.message?.toLowerCase().includes("overload") ||
-          aiErr?.error?.type === "overloaded_error";
-        if (isOverloaded && attempt < delays.length) {
-          console.warn(`[addin/update] Overloaded, retrying in ${delays[attempt]}ms`);
-          await new Promise(r => setTimeout(r, delays[attempt]));
-          continue;
-        }
-        throw aiErr;
-      }
-    }
+    const response = await generateWithRetry(model, inputPayload);
 
     const text = response!.response.text();
 
