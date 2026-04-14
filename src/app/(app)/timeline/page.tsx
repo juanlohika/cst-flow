@@ -605,8 +605,9 @@ function TimelineApp() {
       <div className="flex-1 relative flex flex-col bg-surface-muted overflow-hidden">
         {events.length > 0 ? (
           <div className="h-full flex flex-col">
-            <div className="h-12 bg-surface-default border-b border-border-default px-4 flex items-center justify-between shrink-0 shadow-sm z-30">
-               <div className="flex bg-surface-muted p-1 rounded-lg border border-border-default">
+            <div className="bg-surface-default border-b border-border-default px-4 flex items-center justify-between shrink-0 shadow-sm z-30 min-h-12 flex-wrap gap-y-1 py-1">
+               {/* Left: tab switcher */}
+               <div className="flex bg-surface-muted p-1 rounded-lg border border-border-default shrink-0">
                  <button onClick={() => setActiveTab("gantt")} className={`px-3 py-1 text-[10px] font-black uppercase tracking-tight rounded-md transition-all ${activeTab === "gantt" ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}>
                     Gantt
                  </button>
@@ -615,99 +616,100 @@ function TimelineApp() {
                  </button>
                </div>
 
-               {activeTab === "gantt" && (
-                 <div className="flex bg-surface-muted p-1 rounded-lg">
-                   <button onClick={() => setViewMode("interactive")} className={`px-4 py-1.5 text-xs font-medium rounded-md flex items-center gap-2 transition-all ${viewMode === "interactive" ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}>
-                      <Zap className="w-3 h-3" /> Interactive
-                   </button>
-                   <button onClick={() => setViewMode("static")} className={`px-4 py-1.5 text-xs font-medium rounded-md flex items-center gap-2 transition-all ${viewMode === "static" ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}>
-                      <LayoutList className="w-3 h-3" /> Static
-                   </button>
-                 </div>
-               )}
-
-               {activeTab === "gantt" && viewMode === "interactive" && (
-                 <div className="flex items-center gap-2">
-                   <div className="flex bg-surface-muted p-1 rounded-lg">
-                     {(["day", "week", "month"] as const).map((s) => (
-                       <button
-                          key={s}
-                          onClick={() => setScale(s)}
-                          className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all ${scale === s ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}
-                       >
-                         {s}
-                       </button>
-                     ))}
+               {/* Center: view mode + interactive controls (collapsible) */}
+               <div className="flex items-center gap-2 flex-wrap">
+                 {activeTab === "gantt" && (
+                   <div className="flex bg-surface-muted p-1 rounded-lg shrink-0">
+                     <button onClick={() => setViewMode("interactive")} className={`px-3 py-1.5 text-xs font-medium rounded-md flex items-center gap-1.5 transition-all ${viewMode === "interactive" ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}>
+                        <Zap className="w-3 h-3" /> Interactive
+                     </button>
+                     <button onClick={() => setViewMode("static")} className={`px-3 py-1.5 text-xs font-medium rounded-md flex items-center gap-1.5 transition-all ${viewMode === "static" ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}>
+                        <LayoutList className="w-3 h-3" /> Static
+                     </button>
                    </div>
-                    <button
-                      onClick={() => setSmartMode(!smartMode)}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg border transition-all ${
-                        smartMode
-                          ? "bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20"
-                          : "bg-surface-default text-text-secondary border-border-default hover:bg-emerald-50/50 hover:text-emerald-600 hover:border-emerald-200"
-                      }`}
-                      title={smartMode ? "Smart Mode Active: Detecting 8h+ overloads" : "Turn on Smart Mode: 8h Daily Limit"}
-                    >
-                      <Zap className={`w-3.5 h-3.5 ${smartMode ? "animate-pulse" : ""}`} />
-                      {smartMode ? "Smart ON" : "Smart OFF"}
-                    </button>
-                    <button
-                      onClick={() => setSelectedIds(new Set())}
-                      disabled={selectedIds.size === 0}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg border transition-all ${
-                        selectedIds.size > 0
-                          ? "bg-primary text-white border-primary shadow-md shadow-primary/20"
-                          : "bg-surface-default text-text-secondary border-border-default opacity-50"
-                      }`}
-                    >
-                      <Clock className="w-3.5 h-3.5" />
-                      {selectedIds.size > 0 ? `Selected: ${selectedIds.size}` : "No Selection"}
-                    </button>
-                 </div>
-               )}
+                 )}
 
-               <div className="flex items-center gap-3">
-                 <div className="flex bg-surface-muted p-1 rounded-lg border border-border-default h-9 items-center">
+                 {activeTab === "gantt" && viewMode === "interactive" && (
+                   <>
+                     <div className="flex bg-surface-muted p-1 rounded-lg shrink-0">
+                       {(["day", "week", "month"] as const).map((s) => (
+                         <button
+                            key={s}
+                            onClick={() => setScale(s)}
+                            className={`px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all ${scale === s ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}
+                         >
+                           {s}
+                         </button>
+                       ))}
+                     </div>
+                     <button
+                       onClick={() => setSmartMode(!smartMode)}
+                       className={`flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg border transition-all shrink-0 ${
+                         smartMode
+                           ? "bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20"
+                           : "bg-surface-default text-text-secondary border-border-default hover:bg-emerald-50/50 hover:text-emerald-600 hover:border-emerald-200"
+                       }`}
+                       title={smartMode ? "Smart Mode Active" : "Turn on Smart Mode"}
+                     >
+                       <Zap className={`w-3 h-3 ${smartMode ? "animate-pulse" : ""}`} />
+                       <span className="hidden xl:inline">{smartMode ? "Smart ON" : "Smart OFF"}</span>
+                     </button>
+                     <button
+                       onClick={() => setSelectedIds(new Set())}
+                       disabled={selectedIds.size === 0}
+                       className={`flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg border transition-all shrink-0 ${
+                         selectedIds.size > 0
+                           ? "bg-primary text-white border-primary shadow-md shadow-primary/20"
+                           : "bg-surface-default text-text-secondary border-border-default opacity-50"
+                       }`}
+                     >
+                       <Clock className="w-3 h-3" />
+                       <span className="hidden xl:inline">{selectedIds.size > 0 ? `${selectedIds.size}` : "No Sel."}</span>
+                     </button>
+                   </>
+                 )}
+               </div>
+
+               {/* Right: always-visible actions — shrink-0 ensures Save is never hidden */}
+               <div className="flex items-center gap-2 shrink-0">
+                 <div className="flex bg-surface-muted p-1 rounded-lg border border-border-default h-9 items-center shrink-0">
                    <button
                      onClick={() => setFilterMode("my")}
-                      className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-tight rounded-md transition-all flex items-center gap-1.5 ${filterMode === "my" ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}
+                      className={`px-2.5 py-1.5 text-[9px] font-black uppercase tracking-tight rounded-md transition-all flex items-center gap-1 ${filterMode === "my" ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}
                    >
                      <Users className="w-3 h-3" />
-                     My Tasks
+                     <span className="hidden lg:inline">My Tasks</span>
                    </button>
                    <button
                      onClick={() => setFilterMode("team")}
-                      className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-tight rounded-md transition-all flex items-center gap-1.5 ${filterMode === "team" ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}
+                      className={`px-2.5 py-1.5 text-[9px] font-black uppercase tracking-tight rounded-md transition-all flex items-center gap-1 ${filterMode === "team" ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}
                    >
                      <LayoutList className="w-3 h-3" />
-                     Team
+                     <span className="hidden lg:inline">Team</span>
                    </button>
                  </div>
-                 <button onClick={() => setShowWalkthrough(true)} className="p-2 text-text-secondary hover:text-primary transition-colors">
-                    <HelpCircle className="w-5 h-5" />
+                 <button onClick={() => setShowWalkthrough(true)} title="Help" className="p-1.5 text-text-secondary hover:text-primary transition-colors shrink-0">
+                    <HelpCircle className="w-4 h-4" />
                  </button>
-                 <button onClick={viewMode === 'static' ? exportPng : exportInteractivePng} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-surface-muted text-text-muted bg-surface-default border-border-default shadow-sm">
-                   <ImageIcon className="w-3.5 h-3.5" /> PNG
+                 <button onClick={viewMode === 'static' ? exportPng : exportInteractivePng} title="Export PNG" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border rounded-md hover:bg-surface-muted text-text-muted bg-surface-default border-border-default shadow-sm shrink-0">
+                   <ImageIcon className="w-3.5 h-3.5" /> <span className="hidden lg:inline">PNG</span>
                  </button>
-                 <button onClick={exportCsv} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-surface-muted text-text-muted bg-surface-default border-border-default shadow-sm">
-                   <Download className="w-3.5 h-3.5" /> CSV
+                 <button onClick={exportCsv} title="Export CSV" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border rounded-md hover:bg-surface-muted text-text-muted bg-surface-default border-border-default shadow-sm shrink-0">
+                   <Download className="w-3.5 h-3.5" /> <span className="hidden lg:inline">CSV</span>
                  </button>
-                  {shareLink ? (
-                    <button 
-                      onClick={() => {
-                        navigator.clipboard.writeText(shareLink);
-                        showToast("Share link copied to clipboard!", "success");
-                      }}
-                      className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold border rounded-md bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm animate-bounce"
-                    >
-                      <Download className="w-3.5 h-3.5" /> Copy Share Link
-                    </button>
-                  ) : (
-                    <button onClick={saveToDb} disabled={savingToDb} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-primary-bg text-primary bg-primary-bg border-primary shadow-sm disabled:opacity-50">
-                      {savingToDb ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} 
-                      {savingToDb ? "Saving..." : "Save Project"}
-                    </button>
-                  )}
+                 {shareLink ? (
+                   <button
+                     onClick={() => { navigator.clipboard.writeText(shareLink); showToast("Share link copied to clipboard!", "success"); }}
+                     className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold border rounded-md bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm animate-bounce shrink-0"
+                   >
+                     <Download className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Copy Link</span>
+                   </button>
+                 ) : (
+                   <button onClick={saveToDb} disabled={savingToDb} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-primary-bg text-primary bg-primary-bg border-primary shadow-sm disabled:opacity-50 shrink-0">
+                     {savingToDb ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                     <span>Save Project</span>
+                   </button>
+                 )}
                </div>
             </div>
 
