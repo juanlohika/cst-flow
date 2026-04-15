@@ -157,10 +157,15 @@ function BRDContent() {
       if (res.ok && data.content) {
         setBrdContent(data.content);
         setMessages([...newMessages, { role: "model", content: "I have updated the BRD document with your latest feedback!" }]);
-        setComments([]); // Clear comments after refinement
+        setComments([]);
+      } else {
+        const errMsg = data.error || data.message || `Server error ${res.status}`;
+        console.error("[BRD] API error:", errMsg, data);
+        setMessages([...newMessages, { role: "model", content: `❌ Error: ${errMsg}` }]);
       }
-    } catch (err) {
-      alert("Error generating BRD.");
+    } catch (err: any) {
+      console.error("[BRD] Network error:", err);
+      setMessages(prev => [...prev, { role: "model", content: `❌ Network error: ${err.message}` }]);
     } finally {
       setLoading(false);
     }
