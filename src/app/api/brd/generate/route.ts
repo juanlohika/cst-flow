@@ -46,13 +46,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Prompt required" }, { status: 400 });
     }
 
-    // Try Claude first; fall back to app-configured model if no Anthropic key
-    const model = await getClaudeModel().catch(async (e) => {
-      console.warn("[brd/generate] Claude unavailable, falling back to app model:", e.message);
-      return getModelForApp("brd").catch(async () => {
-        const { getGeminiModel } = await import("@/lib/ai");
-        return getGeminiModel();
-      });
+    // Use the app's configured provider (set in Admin → Apps → BRD Maker)
+    // Falls back to global primary provider if no app-specific override
+    const model = await getModelForApp("brd").catch(async (e) => {
+      console.warn("[brd/generate] getModelForApp failed, trying Claude directly:", e.message);
+      return getClaudeModel();
     });
 
     let dbSkill = "";
