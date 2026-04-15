@@ -382,22 +382,43 @@ function buildClaudeAdapter(apiKey: string) {
  * Retries up to 3 times with 4s / 8s / 15s backoff.
  * All AI routes should use this instead of calling model.generateContent directly.
  */
-export async function generateWithRetry(model: any, input: any): Promise<any> {
+export async function generateWithRetry(model: any, input: any, fallbackModel?: any): Promise<any> {
   const delays = [4000, 8000, 15000];
   for (let attempt = 0; ; attempt++) {
     try {
       return await model.generateContent(input);
     } catch (err: any) {
+      const msg = err?.message || "";
+
+      // Billing / credit error — fall back to Gemini immediately, no retry
+      const isBilling =
+        msg.includes("credit balance is too low") ||
+        msg.includes("insufficient_quota") ||
+        msg.includes("billing") ||
+        (err?.status === 400 && msg.includes("credit"));
+      if (isBilling) {
+        console.warn("[AI] Claude billing error — falling back to Gemini:", msg);
+        if (fallbackModel) return await fallbackModel.generateContent(input);
+        // Build a Gemini fallback on the fly
+        const config = await readAIConfig();
+        if (config.geminiApiKey) {
+          const gemini = buildGeminiAdapter(config.geminiApiKey);
+          return await gemini.generateContent(input);
+        }
+        const e: any = new Error("Claude credit balance is too low. Please top up at console.anthropic.com → Plans & Billing. No Gemini fallback key is configured either.");
+        e.status = 402;
+        throw e;
+      }
+
       const isOverloaded =
         err?.status === 529 ||
-        err?.message?.toLowerCase().includes("overload") ||
+        msg.toLowerCase().includes("overload") ||
         err?.error?.type === "overloaded_error";
       if (isOverloaded && attempt < delays.length) {
         console.warn(`[AI] Claude overloaded, retrying in ${delays[attempt]}ms (attempt ${attempt + 1})`);
         await new Promise(r => setTimeout(r, delays[attempt]));
         continue;
       }
-      // Re-throw with a clean message for overload that exhausted retries
       if (isOverloaded) {
         const e: any = new Error("Claude is temporarily overloaded. Please wait a moment and try again.");
         e.status = 503;
