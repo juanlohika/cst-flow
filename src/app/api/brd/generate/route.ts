@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getClaudeModel, generateWithRetry } from "@/lib/ai";
+import { getClaudeModel, getModelForApp, generateWithRetry } from "@/lib/ai";
 import { db } from "@/db";
 import { skills as skillsTable } from "@/db/schema";
 import { eq, and, desc } from "drizzle-orm";
@@ -46,7 +46,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Prompt required" }, { status: 400 });
     }
 
-    const model = await getClaudeModel();
+    // Try Claude first; fall back to app-configured model if no Anthropic key
+    const model = await getClaudeModel().catch(async (e) => {
+      console.warn("[brd/generate] Claude unavailable, falling back to app model:", e.message);
+      return getModelForApp("brd").catch(async () => {
+        const { getGeminiModel } = await import("@/lib/ai");
+        return getGeminiModel();
+      });
+    });
 
     let dbSkill = "";
     try {

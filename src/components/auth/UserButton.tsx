@@ -8,6 +8,8 @@ export default function UserButton() {
   const { data: session, status } = useSession();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0 });
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -16,6 +18,18 @@ export default function UserButton() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
+
+  // Calculate fixed position when opening so dropdown is never clipped
+  const handleOpen = () => {
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + 8,
+        right: window.innerWidth - rect.right,
+      });
+    }
+    setOpen(o => !o);
+  };
 
   if (status === "loading") {
     return <div className="h-8 w-8 bg-surface-muted animate-pulse rounded-full" />;
@@ -40,7 +54,8 @@ export default function UserButton() {
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen(o => !o)}
+        ref={buttonRef}
+        onClick={handleOpen}
         className="flex items-center gap-2 h-8 px-2 rounded-xl hover:bg-surface-muted transition-colors"
       >
         <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-white text-[11px] font-black shrink-0">
@@ -52,7 +67,10 @@ export default function UserButton() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-10 w-64 bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-100 z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div
+          className="fixed w-64 bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-100 z-[9999] overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+          style={{ top: dropdownPos.top, right: dropdownPos.right }}
+        >
           {/* User info */}
           <div className="px-4 py-4 border-b border-slate-100">
             <div className="flex items-center gap-3">
