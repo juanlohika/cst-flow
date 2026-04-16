@@ -47,6 +47,7 @@ import BufferModal from "@/components/timeline/BufferModal";
 
 interface Task {
   id: string;
+  projectId?: string;
   taskCode: string;
   subject: string;
   plannedStart: string;
@@ -64,6 +65,7 @@ interface Task {
   kanbanLaneId?: string | null;
   paddingDays?: number;
   externalPlannedEnd?: string;
+  assignments?: { userId: string; user: { id: string; name: string; email: string; image?: string } }[];
 }
 
 interface TaskDashboardProps {
@@ -1050,7 +1052,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
 
                     {/* Col 3: Assignee */}
                       if (col.id === "assignee") return (
-                        <td key="assignee" className="px-3 py-2 align-middle w-[110px] relative">
+                        <td key="assignee" className="px-3 py-2 align-middle w-[130px] relative">
                       {isEditingOwner ? (
                         <div className="absolute top-0 left-0 z-[150]" onClick={e => e.stopPropagation()}>
                           <UserSelect
@@ -1062,14 +1064,44 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                           />
                         </div>
                       ) : (
-                        <div className="flex items-center gap-0.5 min-w-0">
-                          <span 
-                            onClick={e => { e.stopPropagation(); setEditingCell({ taskId: task.id, field: "owner" }); setEditValue(task.owner || ""); }}
-                            className={`text-[9px] font-bold tracking-wide cursor-pointer transition-all px-2 py-0.5 rounded-full border shadow-sm truncate max-w-full ${getOwnerPillClass(task.owner || "UNASSIGNED")}`}
-                            title={task.owner || "Click to edit"}
-                          >
-                            {formatOwner(task.owner)}
-                          </span>
+                        <div className="flex items-center gap-1 min-w-0 flex-wrap">
+                          {/* Show real user assignments if available */}
+                          {task.assignments && task.assignments.length > 0 ? (
+                            <>
+                              {task.assignments.slice(0, 3).map((a) => {
+                                const name = a.user?.name || a.user?.email || "?";
+                                const initials = name.split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2);
+                                return (
+                                  <div
+                                    key={a.userId}
+                                    className="flex items-center gap-1 bg-primary/8 border border-primary/20 rounded-full px-1.5 py-0.5"
+                                    title={name}
+                                  >
+                                    {a.user?.image ? (
+                                      <img src={a.user.image} alt={name} className="w-3.5 h-3.5 rounded-full object-cover shrink-0" />
+                                    ) : (
+                                      <span className="w-3.5 h-3.5 rounded-full bg-primary text-white text-[7px] font-black flex items-center justify-center shrink-0">{initials}</span>
+                                    )}
+                                    <span className="text-[9px] font-bold text-primary truncate max-w-[50px]">
+                                      {name.split(" ")[0]}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                              {task.assignments.length > 3 && (
+                                <span className="text-[9px] font-bold text-slate-400">+{task.assignments.length - 3}</span>
+                              )}
+                            </>
+                          ) : (
+                            /* Fallback to owner role pill */
+                            <span
+                              onClick={e => { e.stopPropagation(); setEditingCell({ taskId: task.id, field: "owner" }); setEditValue(task.owner || ""); }}
+                              className={`text-[9px] font-bold tracking-wide cursor-pointer transition-all px-2 py-0.5 rounded-full border shadow-sm truncate max-w-full ${getOwnerPillClass(task.owner || "UNASSIGNED")}`}
+                              title={task.owner || "Click to edit"}
+                            >
+                              {formatOwner(task.owner)}
+                            </span>
+                          )}
                           {(task as any).ownerOverloadLevel && (task as any).ownerOverloadLevel !== "ok" && (
                             <OverloadBadge level={(task as any).ownerOverloadLevel} />
                           )}
@@ -1396,8 +1428,12 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
       {isAddingTask && (() => {
         const existing = parentForNewSubtask ? flattenTasks(tasks).filter((t: any) => t.parentId === parentForNewSubtask.id) : [];
         const allocated = existing.reduce((s: number, t: any) => s + (t.durationHours || 0), 0);
+        // When viewing "All Projects", use the parent task's own project ID
+        const resolvedProjectId = (projectId === "ALL" && parentForNewSubtask)
+          ? ((parentForNewSubtask as any).projectId || (parentForNewSubtask as any).project?.id || projectId)
+          : projectId;
         return (
-          <AddTaskModal projectId={projectId} parentId={parentForNewSubtask?.id} parentName={parentForNewSubtask?.subject}
+          <AddTaskModal projectId={resolvedProjectId} parentId={parentForNewSubtask?.id} parentName={parentForNewSubtask?.subject}
             parentDates={parentForNewSubtask ? { start: parentForNewSubtask.plannedStart, end: parentForNewSubtask.plannedEnd } : undefined}
             parentDurationHours={parentForNewSubtask?.durationHours} allocatedHours={allocated}
             onClose={() => setIsAddingTask(false)} onSuccess={() => { setRefreshKey(p => p + 1); setIsAddingTask(false); }} />

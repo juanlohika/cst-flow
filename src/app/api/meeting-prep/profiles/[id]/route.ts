@@ -5,6 +5,37 @@ import { auth } from "@/auth";
 import { eq, and } from "drizzle-orm";
 
 /**
+ * GET /api/meeting-prep/profiles/[id]
+ * Fetch a single client profile by ID
+ */
+export async function GET(req: Request, { params }: { params: { id: string } }) {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const rows = await db.select()
+      .from(clientProfilesTable)
+      .where(eq(clientProfilesTable.id, params.id))
+      .limit(1);
+
+    if (rows.length === 0) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const profile = rows[0];
+    return NextResponse.json({
+      ...profile,
+      modulesAvailed: (() => { try { return JSON.parse(profile.modulesAvailed || "[]"); } catch { return []; } })(),
+    });
+  } catch (error: any) {
+    console.error("GET /api/meeting-prep/profiles/[id] error:", error);
+    return NextResponse.json({ error: error.message || "Failed to fetch profile" }, { status: 500 });
+  }
+}
+
+/**
  * PATCH /api/meeting-prep/profiles/[id]
  * Update a client profile (partial update)
  * MIGRATED TO DRIZZLE
