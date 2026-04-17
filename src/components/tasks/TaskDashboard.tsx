@@ -1064,7 +1064,11 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                           />
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1 min-w-0 flex-wrap">
+                        <div
+                          className="flex items-center gap-1 min-w-0 flex-wrap cursor-pointer group/assignee"
+                          onClick={e => { e.stopPropagation(); setEditingCell({ taskId: task.id, field: "owner" }); setEditValue(task.owner || ""); }}
+                          title="Click to edit assignee"
+                        >
                           {/* Show real user assignments if available */}
                           {task.assignments && task.assignments.length > 0 ? (
                             <>
@@ -1074,7 +1078,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                                 return (
                                   <div
                                     key={a.userId}
-                                    className="flex items-center gap-1 bg-primary/8 border border-primary/20 rounded-full px-1.5 py-0.5"
+                                    className="flex items-center gap-1 bg-primary/8 border border-primary/20 rounded-full px-1.5 py-0.5 group-hover/assignee:border-primary/50 transition-colors"
                                     title={name}
                                   >
                                     {a.user?.image ? (
@@ -1095,8 +1099,7 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                           ) : (
                             /* Fallback to owner role pill */
                             <span
-                              onClick={e => { e.stopPropagation(); setEditingCell({ taskId: task.id, field: "owner" }); setEditValue(task.owner || ""); }}
-                              className={`text-[9px] font-bold tracking-wide cursor-pointer transition-all px-2 py-0.5 rounded-full border shadow-sm truncate max-w-full ${getOwnerPillClass(task.owner || "UNASSIGNED")}`}
+                              className={`text-[9px] font-bold tracking-wide transition-all px-2 py-0.5 rounded-full border shadow-sm truncate max-w-full ${getOwnerPillClass(task.owner || "UNASSIGNED")}`}
                               title={task.owner || "Click to edit"}
                             >
                               {formatOwner(task.owner)}
