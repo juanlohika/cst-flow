@@ -22,6 +22,8 @@ import {
   Repeat,
   Zap,
   Loader2,
+  Maximize2,
+  GitMerge,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { toPng } from "html-to-image";
@@ -231,6 +233,10 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
   
   // DEFERRED RESCHEDULING (Batching moves)
   const [pendingReschedules, setPendingReschedules] = useState<Map<string, { start: string, end: string }>>(new Map());
+  // Show all tasks regardless of date filter
+  const [showAllDates, setShowAllDates] = useState(false);
+  // Cascade Shift mode: moving one bar shifts all future pending tasks
+  const [cascadeShiftMode, setCascadeShiftMode] = useState(false);
   
   const ganttRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
@@ -373,13 +379,14 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
       const matchSearch = t.subject.toLowerCase().includes(searchTerm.toLowerCase()) || t.taskCode.toLowerCase().includes(searchTerm.toLowerCase());
       const matchRole = roleFilter === "ALL" || t.owner?.toUpperCase().includes(roleFilter);
       const matchStatus = statusFilter === "ALL" || t.status === statusFilter;
+      if (showAllDates) return matchSearch && matchRole && matchStatus;
       const ts = t.plannedStart ? t.plannedStart.split("T")[0] : null;
       const te = t.plannedEnd ? t.plannedEnd.split("T")[0] : null;
       const matchFrom = !dateFrom || (te && te >= dateFrom);
       const matchTo = !dateTo || (ts && ts <= dateTo);
       return matchSearch && matchRole && matchStatus && matchFrom && matchTo;
     });
-  }, [displayTasks, expandedTasks, searchTerm, roleFilter, statusFilter, dateFrom, dateTo]);
+  }, [displayTasks, expandedTasks, searchTerm, roleFilter, statusFilter, dateFrom, dateTo, showAllDates]);
 
   const toDisplayDate = (iso: string | undefined | null) => {
     if (!iso) return "—";
@@ -586,9 +593,33 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
   const handleRescheduleConfirm = async (comment: string) => {
     if (!rescheduleInfo) return;
     try {
-      const cr = await fetch("/api/tasks", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rescheduleInfo.id, plannedStart: rescheduleInfo.newStart, plannedEnd: rescheduleInfo.newEnd, comment }) });
-      if (cascadeInfo && cascadeConfirmed) await fetch("/api/tasks", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: cascadeInfo.parentId, plannedStart: cascadeInfo.parentNewStart, plannedEnd: cascadeInfo.parentNewEnd, comment: `Auto-expanded — ${comment}` }) });
-      if (cr.ok) { showToast("Timeline updated", "success"); setRefreshKey(p => p + 1); setRescheduleInfo(null); setCascadeInfo(null); setCascadeConfirmed(false); }
+      // Check if this came from a batch commit (Cascade Shift mode)
+      const batch: Map<string, { start: string; end: string }> = (window as any).__pendingReschedulesBatch || new Map();
+      delete (window as any).__pendingReschedulesBatch;
+
+      if (batch.size > 1) {
+        // Batch save: PATCH every affected task with the same remark
+        const patches = Array.from(batch.entries()).map(([id, info]) =>
+          fetch("/api/tasks", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id, plannedStart: info.start, plannedEnd: info.end, comment }),
+          })
+        );
+        await Promise.all(patches);
+        showToast(`${batch.size} tasks updated with cascade shift`, "success");
+      } else {
+        // Single task reschedule (original behaviour)
+        const cr = await fetch("/api/tasks", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rescheduleInfo.id, plannedStart: rescheduleInfo.newStart, plannedEnd: rescheduleInfo.newEnd, comment }) });
+        if (cascadeInfo && cascadeConfirmed) await fetch("/api/tasks", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: cascadeInfo.parentId, plannedStart: cascadeInfo.parentNewStart, plannedEnd: cascadeInfo.parentNewEnd, comment: `Auto-expanded — ${comment}` }) });
+        if (!cr.ok) { showToast("Sync failed", "error"); return; }
+        showToast("Timeline updated", "success");
+      }
+
+      setRefreshKey(p => p + 1);
+      setRescheduleInfo(null);
+      setCascadeInfo(null);
+      setCascadeConfirmed(false);
     } catch { showToast("Sync failed", "error"); }
   };
 
@@ -772,11 +803,19 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
       {/* Filter Bar */}
       <div className="h-10 flex items-center gap-2 px-4 border-b border-slate-100 shrink-0 bg-[#FCFCFC]" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-1.5">
-          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">From</span>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-6 px-2 bg-white border border-slate-100 rounded-md text-[10px] font-semibold text-slate-600 outline-none" />
-          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">To</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-6 px-2 bg-white border border-slate-100 rounded-md text-[10px] font-semibold text-slate-600 outline-none" />
-          {(dateFrom || dateTo) && <button onClick={() => { setDateFrom(""); setDateTo(""); }} className="h-5 w-5 flex items-center justify-center text-slate-300 hover:text-red-400 transition-colors"><X className="w-3 h-3" /></button>}
+          <span className={`text-[9px] font-bold uppercase tracking-widest transition-colors ${showAllDates ? "text-slate-300" : "text-slate-400"}`}>From</span>
+          <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setShowAllDates(false); }} disabled={showAllDates} className={`h-6 px-2 bg-white border border-slate-100 rounded-md text-[10px] font-semibold text-slate-600 outline-none transition-opacity ${showAllDates ? "opacity-30 pointer-events-none" : ""}`} />
+          <span className={`text-[9px] font-bold uppercase tracking-widest transition-colors ${showAllDates ? "text-slate-300" : "text-slate-400"}`}>To</span>
+          <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setShowAllDates(false); }} disabled={showAllDates} className={`h-6 px-2 bg-white border border-slate-100 rounded-md text-[10px] font-semibold text-slate-600 outline-none transition-opacity ${showAllDates ? "opacity-30 pointer-events-none" : ""}`} />
+          {(dateFrom || dateTo) && !showAllDates && <button onClick={() => { setDateFrom(""); setDateTo(""); }} className="h-5 w-5 flex items-center justify-center text-slate-300 hover:text-red-400 transition-colors"><X className="w-3 h-3" /></button>}
+          <button
+            onClick={() => setShowAllDates(v => !v)}
+            className={`flex items-center gap-1 h-6 px-2 rounded-md border text-[10px] font-bold uppercase tracking-widest transition-all ${showAllDates ? "bg-primary text-white border-primary shadow-sm" : "bg-white text-slate-400 border-slate-100 hover:border-primary/30 hover:text-primary"}`}
+            title="Show all tasks regardless of date range"
+          >
+            <Maximize2 className="w-3 h-3" />
+            {showAllDates ? "All Dates" : "Show All"}
+          </button>
         </div>
         <div className="w-px h-4 bg-slate-200 shrink-0" />
         <div className="flex items-center gap-1.5 h-6 px-2 bg-white border border-slate-100 rounded-md focus-within:border-primary/40 transition-all">
@@ -872,10 +911,20 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
           </button>
         ); })()}
         {viewMode === "gantt" && (
-          <div className="ml-auto flex items-center gap-0.5 p-0.5 bg-white border border-slate-100 rounded-md">
-            {(["day", "week", "month"] as const).map(s => (
-              <button key={s} onClick={() => setGanttScale(s)} className={`px-2.5 py-0.5 rounded text-[9px] font-bold uppercase transition-all ${ganttScale === s ? "bg-slate-900 text-white shadow-sm" : "text-slate-400 hover:text-slate-600"}`}>{s}</button>
-            ))}
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setCascadeShiftMode(v => !v)}
+              className={`flex items-center gap-1.5 h-6 px-3 rounded-md border text-[9px] font-black uppercase tracking-widest transition-all ${cascadeShiftMode ? "bg-amber-500 text-white border-amber-500 shadow-sm shadow-amber-500/30 animate-pulse" : "bg-white text-slate-400 border-slate-200 hover:text-amber-600 hover:border-amber-300"}`}
+              title="Cascade Shift: moving a bar shifts all future pending tasks by the same number of days"
+            >
+              <GitMerge className="w-3 h-3" />
+              {cascadeShiftMode ? "Cascade ON" : "Cascade"}
+            </button>
+            <div className="flex items-center gap-0.5 p-0.5 bg-white border border-slate-100 rounded-md">
+              {(["day", "week", "month"] as const).map(s => (
+                <button key={s} onClick={() => setGanttScale(s)} className={`px-2.5 py-0.5 rounded text-[9px] font-bold uppercase transition-all ${ganttScale === s ? "bg-slate-900 text-white shadow-sm" : "text-slate-400 hover:text-slate-600"}`}>{s}</button>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -1284,15 +1333,44 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                 onUpdateEvents={(evs) => {
                   const updatedMap = new Map(pendingReschedules);
                   let tempTasks = [...tasks];
-                  
+                  const allFlat = flattenTasks(tasks);
+
                   evs.forEach(ev => {
-                    const original = flattenTasks(tasks).find(t => t.id === ev.id);
-                    if (original && (original.plannedStart.split('T')[0] !== ev.startDate || original.plannedEnd.split('T')[0] !== ev.endDate)) {
-                      updatedMap.set(ev.id, { start: ev.startDate, end: ev.endDate });
-                      tempTasks = updateRecursiveTaskDates(tempTasks, ev.id, ev.startDate, ev.endDate);
+                    const original = allFlat.find(t => t.id === ev.id);
+                    if (!original) return;
+                    const origStart = original.plannedStart.split('T')[0];
+                    const origEnd = original.plannedEnd.split('T')[0];
+                    if (origStart === ev.startDate && origEnd === ev.endDate) return;
+
+                    // Compute how many days the dragged task moved
+                    const deltaDays = Math.round(
+                      (new Date(ev.startDate).getTime() - new Date(origStart).getTime()) / 86400000
+                    );
+
+                    updatedMap.set(ev.id, { start: ev.startDate, end: ev.endDate });
+                    tempTasks = updateRecursiveTaskDates(tempTasks, ev.id, ev.startDate, ev.endDate);
+
+                    // Cascade Shift: shift all future pending/in-progress tasks by same delta
+                    if (cascadeShiftMode && deltaDays !== 0) {
+                      const addDays = (dateStr: string, d: number) => {
+                        const dt = new Date(dateStr);
+                        dt.setUTCDate(dt.getUTCDate() + d);
+                        return dt.toISOString().split('T')[0];
+                      };
+                      allFlat.forEach(t => {
+                        if (t.id === ev.id) return;
+                        if (t.status === 'completed') return;
+                        // Only shift tasks that START on or after the ORIGINAL start of moved task
+                        const tStart = t.plannedStart.split('T')[0];
+                        if (tStart < origStart) return;
+                        const newStart = addDays(tStart, deltaDays);
+                        const newEnd = addDays(t.plannedEnd.split('T')[0], deltaDays);
+                        updatedMap.set(t.id, { start: newStart, end: newEnd });
+                        tempTasks = updateRecursiveTaskDates(tempTasks, t.id, newStart, newEnd);
+                      });
                     }
                   });
-                  
+
                   setPendingReschedules(updatedMap);
                   setTasks(tempTasks);
                   setDisplayTasks(tempTasks);
@@ -1494,21 +1572,26 @@ export default function TaskDashboard({ projectId, projectName, profile }: TaskD
                <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
                <span className="text-sm font-black uppercase tracking-tight text-white">Timeline Changes Pending</span>
             </div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{pendingReschedules.size} task(s) adjusted</span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{pendingReschedules.size} task(s) adjusted{cascadeShiftMode ? " · cascade mode" : ""}</span>
           </div>
           <div className="flex items-center gap-3">
-            <button 
+            <button
               onClick={() => {
-                const firstId = Array.from(pendingReschedules.keys())[0];
-                const info = pendingReschedules.get(firstId)!;
-                handleReschedule(firstId, info.start, info.end);
+                // Collect all pending into rescheduleInfo for the remarks modal
+                // We pass the first one to open the modal; confirm handler will batch-save all
+                const entries = Array.from(pendingReschedules.entries());
+                if (entries.length === 0) return;
+                const [firstId, firstInfo] = entries[0];
+                // Store all pending in a temp ref so confirm can save them all
+                (window as any).__pendingReschedulesBatch = new Map(pendingReschedules);
+                handleReschedule(firstId, firstInfo.start, firstInfo.end);
                 setPendingReschedules(new Map());
               }}
               className="bg-primary hover:bg-primary-dark px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase tracking-wider transition-all shadow-lg shadow-primary/30 flex items-center gap-2 group"
             >
               <CheckCircle2 className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" /> Commit & Add Remarks
             </button>
-            <button 
+            <button
               onClick={() => {
                 setPendingReschedules(new Map());
                 setRefreshKey(prev => prev + 1);
