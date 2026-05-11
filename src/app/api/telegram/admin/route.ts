@@ -27,28 +27,41 @@ function requireAdmin(session: any) {
 }
 
 function getWebhookUrl(req: Request): string {
-  // Firebase App Hosting / most reverse proxies set these headers. We MUST use
-  // them — the raw req.url often points at the internal container (e.g.
-  // http://localhost:8080), which Telegram rejects because it only accepts
-  // public HTTPS on ports 80/88/443/8443.
-  const hdrs = req.headers;
-  const forwardedHost =
-    hdrs.get("x-forwarded-host") ||
-    hdrs.get("x-original-host") ||
-    hdrs.get("host") ||
-    "";
-  // Strip any port — Telegram requires standard ports, and the public host
-  // never carries a port in practice on Firebase App Hosting.
-  const host = forwardedHost.split(":")[0];
-  // Allow an env override for edge cases / local testing
-  const envBase = process.env.PUBLIC_BASE_URL || process.env.NEXT_PUBLIC_BASE_URL || "";
+  // Priority order:
+  //   1. PUBLIC_BASE_URL (or NEXT_PUBLIC_BASE_URL) — explicit override
+  //   2. AUTH_URL — already set in CST OS for NextAuth (most reliable)
+  //   3. x-forwarded-host header from the reverse proxy
+  //   4. host header (only safe if it's a real public hostname)
+  //
+  // The raw req.url often points at the internal container (e.g.
+  // http://0.0.0.0:8080) on Firebase App Hosting, which Telegram rejects
+  // because it requires public HTTPS on ports 80/88/443/8443.
+
+  const envBase = process.env.PUBLIC_BASE_URL || process.env.NEXT_PUBLIC_BASE_URL;
   if (envBase) {
     return `${envBase.replace(/\/$/, "")}/api/telegram/webhook`;
   }
-  if (!host || host === "localhost" || host === "127.0.0.1") {
-    // We can't register a webhook against localhost — caller will get a useful error.
-    throw new Error("Could not determine the public hostname for the webhook. Set PUBLIC_BASE_URL in env or deploy to a public domain.");
+
+  // NextAuth already needs the public URL, so AUTH_URL is usually correct.
+  const authUrl = process.env.AUTH_URL || process.env.NEXTAUTH_URL;
+  if (authUrl && /^https:\/\//i.test(authUrl)) {
+    return `${authUrl.replace(/\/$/, "")}/api/telegram/webhook`;
   }
+
+  const hdrs = req.headers;
+  const forwardedHost = hdrs.get("x-forwarded-host") || hdrs.get("x-original-host") || "";
+  const hostHeader = hdrs.get("host") || "";
+  const candidate = (forwardedHost || hostHeader).split(",")[0].trim();
+  const host = candidate.split(":")[0];
+
+  if (!host || host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0") {
+    throw new Error(
+      "Could not determine the public hostname for the webhook. " +
+        "Add PUBLIC_BASE_URL to your environment (e.g. https://your-domain.app) or set AUTH_URL."
+    );
+  }
+
+  // Force HTTPS — Telegram won't accept HTTP webhooks.
   return `https://${host}/api/telegram/webhook`;
 }
 

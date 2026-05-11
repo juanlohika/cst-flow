@@ -28,6 +28,8 @@ environmentVariables:
     secret: SMTP_FROM
   - variable: AUTH_TRUST_HOST
     value: "true"
+  - variable: PUBLIC_BASE_URL
+    value: "https://cst-flow--cst-flowdesk.asia-east1.hosted.app"
   - variable: AZURE_CLIENT_ID
     secret: AZURE_CLIENT_ID
   - variable: AZURE_CLIENT_SECRET
