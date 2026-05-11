@@ -7,7 +7,7 @@ import {
   accountMemberships as membershipsTable,
 } from "@/db/schema";
 import { auth } from "@/auth";
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, sql } from "drizzle-orm";
 import { ensureUserInDb } from "@/lib/utils/auth-sync";
 import {
   listAccessibleClientIds,
@@ -37,60 +37,75 @@ export async function GET(req: Request) {
       return NextResponse.json([]);
     }
 
-    // Explicit column list to avoid 500s if newer columns (clientCode/accessToken)
-    // somehow aren't yet present on the live DB.
-    const baseProfiles = db.select({
-      id: clientProfilesTable.id,
-      userId: clientProfilesTable.userId,
-      companyName: clientProfilesTable.companyName,
-      industry: clientProfilesTable.industry,
-      companySize: clientProfilesTable.companySize,
-      modulesAvailed: clientProfilesTable.modulesAvailed,
-      engagementStatus: clientProfilesTable.engagementStatus,
-      primaryContact: clientProfilesTable.primaryContact,
-      primaryContactEmail: clientProfilesTable.primaryContactEmail,
-      specialConsiderations: clientProfilesTable.specialConsiderations,
-      intelligenceContent: clientProfilesTable.intelligenceContent,
-      createdAt: clientProfilesTable.createdAt,
-      updatedAt: clientProfilesTable.updatedAt,
-    })
-      .from(clientProfilesTable)
-      .orderBy(desc(clientProfilesTable.createdAt));
+    // Build the SELECT as a fresh Drizzle query each attempt — Drizzle builders
+    // are NOT reusable after await, so we factor this into a function.
+    async function fetchProfiles(includeNewColumns: boolean): Promise<any[]> {
+      const base = includeNewColumns
+        ? db.select({
+            id: clientProfilesTable.id,
+            userId: clientProfilesTable.userId,
+            companyName: clientProfilesTable.companyName,
+            industry: clientProfilesTable.industry,
+            companySize: clientProfilesTable.companySize,
+            modulesAvailed: clientProfilesTable.modulesAvailed,
+            engagementStatus: clientProfilesTable.engagementStatus,
+            primaryContact: clientProfilesTable.primaryContact,
+            primaryContactEmail: clientProfilesTable.primaryContactEmail,
+            specialConsiderations: clientProfilesTable.specialConsiderations,
+            intelligenceContent: clientProfilesTable.intelligenceContent,
+            createdAt: clientProfilesTable.createdAt,
+            updatedAt: clientProfilesTable.updatedAt,
+          }).from(clientProfilesTable).orderBy(desc(clientProfilesTable.createdAt))
+        : db.select({
+            id: clientProfilesTable.id,
+            userId: clientProfilesTable.userId,
+            companyName: clientProfilesTable.companyName,
+            industry: clientProfilesTable.industry,
+            modulesAvailed: clientProfilesTable.modulesAvailed,
+            engagementStatus: clientProfilesTable.engagementStatus,
+            createdAt: clientProfilesTable.createdAt,
+            updatedAt: clientProfilesTable.updatedAt,
+          }).from(clientProfilesTable).orderBy(desc(clientProfilesTable.createdAt));
 
-    let profiles: any[];
-    try {
-      profiles = allowedIds === null
-        ? await baseProfiles
-        : await baseProfiles.where(inArray(clientProfilesTable.id, allowedIds));
-    } catch (selErr: any) {
-      // Last-resort fallback: minimal columns only, in case core columns are
-      // also somehow missing. Never 500 the page.
-      console.warn("[meeting-prep/profiles] base select failed, falling back:", selErr?.message);
-      const minimal = db.select({
-        id: clientProfilesTable.id,
-        userId: clientProfilesTable.userId,
-        companyName: clientProfilesTable.companyName,
-        industry: clientProfilesTable.industry,
-        modulesAvailed: clientProfilesTable.modulesAvailed,
-        engagementStatus: clientProfilesTable.engagementStatus,
-        createdAt: clientProfilesTable.createdAt,
-        updatedAt: clientProfilesTable.updatedAt,
-      })
-        .from(clientProfilesTable)
-        .orderBy(desc(clientProfilesTable.createdAt));
-      profiles = allowedIds === null
-        ? await minimal
-        : await minimal.where(inArray(clientProfilesTable.id, allowedIds));
+      return allowedIds === null
+        ? await base
+        : await base.where(inArray(clientProfilesTable.id, allowedIds));
     }
 
-    // Fetch meeting prep sessions separately
+    let profiles: any[] = [];
+    try {
+      profiles = await fetchProfiles(true);
+    } catch (selErr: any) {
+      console.warn("[meeting-prep/profiles] full select failed, trying minimal:", selErr?.message);
+      try {
+        profiles = await fetchProfiles(false);
+      } catch (selErr2: any) {
+        console.error("[meeting-prep/profiles] minimal select ALSO failed:", selErr2?.message);
+        profiles = [];
+      }
+    }
+
+    // Fetch meeting prep sessions separately (tolerant — non-critical, safe to skip)
     const profileIds = profiles.map((p: any) => p.id);
     let sessions: any[] = [];
     if (profileIds.length > 0) {
-      sessions = await db.select()
-        .from(meetingPrepSessionsTable)
-        .where(inArray(meetingPrepSessionsTable.clientProfileId, profileIds))
-        .orderBy(desc(meetingPrepSessionsTable.updatedAt));
+      try {
+        sessions = await db.select({
+          id: meetingPrepSessionsTable.id,
+          userId: meetingPrepSessionsTable.userId,
+          clientProfileId: meetingPrepSessionsTable.clientProfileId,
+          meetingType: meetingPrepSessionsTable.meetingType,
+          status: meetingPrepSessionsTable.status,
+          createdAt: meetingPrepSessionsTable.createdAt,
+          updatedAt: meetingPrepSessionsTable.updatedAt,
+        })
+          .from(meetingPrepSessionsTable)
+          .where(inArray(meetingPrepSessionsTable.clientProfileId, profileIds))
+          .orderBy(desc(meetingPrepSessionsTable.updatedAt));
+      } catch (sessErr: any) {
+        console.warn("[meeting-prep/profiles] sessions fetch failed, skipping:", sessErr?.message);
+        sessions = [];
+      }
     }
 
     // Merge sessions into profiles
@@ -110,8 +125,13 @@ export async function GET(req: Request) {
     return NextResponse.json(formatted);
   } catch (error: any) {
     console.error("Fetch profiles error:", error);
+    // TEMPORARY: include details so we can debug in the browser. Remove after stable.
     return NextResponse.json(
-      { error: error.message || "Failed to fetch profiles" },
+      {
+        error: error.message || "Failed to fetch profiles",
+        detail: String(error?.cause || error?.stack || "").slice(0, 800),
+        code: error?.code,
+      },
       { status: 500 }
     );
   }
