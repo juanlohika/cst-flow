@@ -27,8 +27,29 @@ function requireAdmin(session: any) {
 }
 
 function getWebhookUrl(req: Request): string {
-  const url = new URL(req.url);
-  return `${url.origin}/api/telegram/webhook`;
+  // Firebase App Hosting / most reverse proxies set these headers. We MUST use
+  // them — the raw req.url often points at the internal container (e.g.
+  // http://localhost:8080), which Telegram rejects because it only accepts
+  // public HTTPS on ports 80/88/443/8443.
+  const hdrs = req.headers;
+  const forwardedHost =
+    hdrs.get("x-forwarded-host") ||
+    hdrs.get("x-original-host") ||
+    hdrs.get("host") ||
+    "";
+  // Strip any port — Telegram requires standard ports, and the public host
+  // never carries a port in practice on Firebase App Hosting.
+  const host = forwardedHost.split(":")[0];
+  // Allow an env override for edge cases / local testing
+  const envBase = process.env.PUBLIC_BASE_URL || process.env.NEXT_PUBLIC_BASE_URL || "";
+  if (envBase) {
+    return `${envBase.replace(/\/$/, "")}/api/telegram/webhook`;
+  }
+  if (!host || host === "localhost" || host === "127.0.0.1") {
+    // We can't register a webhook against localhost — caller will get a useful error.
+    throw new Error("Could not determine the public hostname for the webhook. Set PUBLIC_BASE_URL in env or deploy to a public domain.");
+  }
+  return `https://${host}/api/telegram/webhook`;
 }
 
 /**
@@ -45,7 +66,12 @@ export async function GET(req: Request) {
     await ensureAccessSchema();
 
     const config = await getTelegramConfig();
-    const webhookUrl = getWebhookUrl(req);
+    let webhookUrl = "";
+    try {
+      webhookUrl = getWebhookUrl(req);
+    } catch {
+      webhookUrl = "(unresolved — set PUBLIC_BASE_URL in env)";
+    }
 
     // Webhook live status (if token present)
     let webhookInfo: any = null;
@@ -107,7 +133,16 @@ export async function POST(req: Request) {
 
     const body = await req.json();
     const action = body?.action;
-    const webhookUrl = getWebhookUrl(req);
+
+    // Only compute the webhook URL for actions that need it
+    let webhookUrl = "";
+    try {
+      if (action === "save-token" || action === "register-webhook") {
+        webhookUrl = getWebhookUrl(req);
+      }
+    } catch (urlErr: any) {
+      return NextResponse.json({ error: urlErr.message || "Could not determine webhook URL" }, { status: 400 });
+    }
 
     if (action === "save-token") {
       const token = (body.token || "").trim();
