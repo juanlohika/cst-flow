@@ -522,3 +522,25 @@ export const arimaMessages = sqliteTable("ArimaMessage", {
   toolCalls:      text("toolCalls"),                   // JSON array of tool invocations (future)
   createdAt:      text("createdAt").default(sql`(datetime('now'))`).notNull(),
 });
+
+// ARIMA Requests: structured asks captured from conversations.
+// When ARIMA detects the user is making a real request (feature, bug, question, etc.)
+// it emits a [REQUEST]…[/REQUEST] tag in its reply; the generate route parses it and inserts a row here.
+export const arimaRequests = sqliteTable("ArimaRequest", {
+  id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  conversationId:  text("conversationId").references(() => arimaConversations.id, { onDelete: "set null" }),
+  sourceMessageId: text("sourceMessageId").references(() => arimaMessages.id, { onDelete: "set null" }),
+  userId:          text("userId").notNull(),           // who was chatting when ARIMA captured this
+  clientProfileId: text("clientProfileId"),            // optional — the client this is about
+  title:           text("title").notNull(),
+  description:     text("description"),
+  category:        text("category").default("other").notNull(), // feature | bug | question | config | meeting | other
+  priority:        text("priority").default("medium").notNull(), // low | medium | high | urgent
+  status:          text("status").default("new").notNull(),     // new | in-progress | done | archived
+  assignedTo:      text("assignedTo"),                  // userId of CST team member
+  dueDate:         text("dueDate"),
+  resolution:      text("resolution"),                  // notes when marked done
+  resolvedAt:      text("resolvedAt"),
+  createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});

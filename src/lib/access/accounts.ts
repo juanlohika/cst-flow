@@ -37,6 +37,26 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN clientCode TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN accessToken TEXT`); } catch {}
 
+    // Create ArimaRequest table if missing
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaRequest (
+      id TEXT PRIMARY KEY,
+      conversationId TEXT,
+      sourceMessageId TEXT,
+      userId TEXT NOT NULL,
+      clientProfileId TEXT,
+      title TEXT NOT NULL,
+      description TEXT,
+      category TEXT DEFAULT 'other' NOT NULL,
+      priority TEXT DEFAULT 'medium' NOT NULL,
+      status TEXT DEFAULT 'new' NOT NULL,
+      assignedTo TEXT,
+      dueDate TEXT,
+      resolution TEXT,
+      resolvedAt TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+
     _schemaEnsuredAt = Date.now();
   } catch (e) {
     console.warn("[access] ensureAccessSchema warning:", e);

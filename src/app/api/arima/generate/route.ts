@@ -6,10 +6,48 @@ import {
   skills as skillsTable,
   arimaConversations,
   arimaMessages,
+  arimaRequests,
   clientProfiles as clientProfilesTable,
 } from "@/db/schema";
 import { and, eq, desc, sql } from "drizzle-orm";
 import { canAccessClient } from "@/lib/access/accounts";
+
+interface ParsedRequest {
+  title: string;
+  description: string;
+  category: string;
+  priority: string;
+}
+
+const REQUEST_REGEX = /\[REQUEST\]([\s\S]*?)\[\/REQUEST\]/i;
+
+function parseRequestBlock(text: string): { cleanText: string; request: ParsedRequest | null } {
+  const match = text.match(REQUEST_REGEX);
+  if (!match) return { cleanText: text, request: null };
+
+  const inside = match[1];
+  const grab = (key: string) => {
+    const re = new RegExp(`^\\s*${key}\\s*:\\s*(.+?)\\s*$`, "im");
+    const m = inside.match(re);
+    return m ? m[1].trim() : "";
+  };
+
+  const title = grab("title");
+  const description = grab("description");
+  const categoryRaw = (grab("category") || "other").toLowerCase();
+  const priorityRaw = (grab("priority") || "medium").toLowerCase();
+
+  const validCategories = ["feature", "bug", "question", "config", "meeting", "other"];
+  const validPriorities = ["low", "medium", "high", "urgent"];
+  const category = validCategories.includes(categoryRaw) ? categoryRaw : "other";
+  const priority = validPriorities.includes(priorityRaw) ? priorityRaw : "medium";
+
+  // Strip the [REQUEST] block from the visible reply
+  const cleanText = text.replace(REQUEST_REGEX, "").replace(/```\s*```/g, "").trim();
+
+  if (!title) return { cleanText, request: null };
+  return { cleanText, request: { title, description, category, priority } };
+}
 
 function buildClientContext(profile: any): string {
   if (!profile) return "";
@@ -248,18 +286,47 @@ export async function POST(req: Request) {
       contents,
       systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
     });
-    const replyText = result.response.text();
+    const rawReply = result.response.text();
+
+    // ─── Parse out any [REQUEST]…[/REQUEST] block ───────────────────────
+    const { cleanText: replyText, request: parsedRequest } = parseRequestBlock(rawReply);
 
     // ─── Persist the assistant reply + update conversation aggregate ────
     const replyAt = new Date().toISOString();
+    const assistantMsgId = `msg_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
     await db.insert(arimaMessages).values({
-      id: `msg_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+      id: assistantMsgId,
       conversationId,
       role: "assistant",
-      content: replyText,
+      content: replyText, // store the CLEAN reply (without [REQUEST] block) so it shows the same way in transcripts
       provider: providerLabel,
       createdAt: replyAt,
     });
+
+    // ─── If ARIMA captured a request, persist it ────────────────────────
+    let createdRequestId: string | null = null;
+    if (parsedRequest) {
+      try {
+        createdRequestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+        await db.insert(arimaRequests).values({
+          id: createdRequestId,
+          conversationId,
+          sourceMessageId: assistantMsgId,
+          userId,
+          clientProfileId: activeClientProfileId,
+          title: parsedRequest.title.slice(0, 200),
+          description: parsedRequest.description || null,
+          category: parsedRequest.category,
+          priority: parsedRequest.priority,
+          status: "new",
+          createdAt: replyAt,
+          updatedAt: replyAt,
+        });
+      } catch (reqErr) {
+        console.warn("[arima] failed to insert captured request:", reqErr);
+        createdRequestId = null;
+      }
+    }
 
     await db
       .update(arimaConversations)
@@ -270,7 +337,13 @@ export async function POST(req: Request) {
       })
       .where(eq(arimaConversations.id, conversationId));
 
-    return NextResponse.json({ content: replyText, conversationId });
+    return NextResponse.json({
+      content: replyText,
+      conversationId,
+      capturedRequest: createdRequestId
+        ? { id: createdRequestId, title: parsedRequest!.title, category: parsedRequest!.category, priority: parsedRequest!.priority }
+        : null,
+    });
   } catch (error: any) {
     console.error("[arima] generation error:", error);
     const isOverloaded =

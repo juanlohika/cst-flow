@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import {
   Heart, ArrowUp, Loader2, Sparkles, Plus, MessageCircle,
   Trash2, Inbox, MessageSquare, Search, Building2, X, ChevronDown,
+  ClipboardList, AlertCircle, CheckCircle2, Clock, Tag, Filter,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
@@ -50,7 +51,7 @@ function ArimaContent() {
 
   const isAdmin = (session?.user as any)?.role === "admin";
 
-  const [view, setView] = useState<"chat" | "inbox">("chat");
+  const [view, setView] = useState<"chat" | "inbox" | "requests">("chat");
 
   // CHAT view state
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
@@ -76,6 +77,18 @@ function ArimaContent() {
   const [inboxMessages, setInboxMessages] = useState<any[]>([]);
   const [inboxLoading, setInboxLoading] = useState(false);
   const [inboxSearch, setInboxSearch] = useState("");
+
+  // REQUESTS view state
+  const [requests, setRequests] = useState<any[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [requestsSearch, setRequestsSearch] = useState("");
+  const [requestsStatus, setRequestsStatus] = useState<string>("all");
+  const [requestsPriority, setRequestsPriority] = useState<string>("all");
+  const [requestsCategory, setRequestsCategory] = useState<string>("all");
+  const [requestsScope, setRequestsScope] = useState<"mine" | "team">("mine");
+  const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
+  const [selectedRequestDetail, setSelectedRequestDetail] = useState<any | null>(null);
+  const [lastCapturedRequest, setLastCapturedRequest] = useState<any | null>(null);
 
   // ─── Conversation list (mine) ────────────────────────────────────
   const fetchMyConversations = useCallback(async () => {
@@ -192,6 +205,11 @@ function ArimaContent() {
         }
         // Refresh the list so the new title/lastMessageAt is reflected
         fetchMyConversations();
+        // If ARIMA captured a request, surface it
+        if (data.capturedRequest) {
+          setLastCapturedRequest(data.capturedRequest);
+          setTimeout(() => setLastCapturedRequest(null), 6000);
+        }
       }
     } catch (err: any) {
       setMessages([
@@ -244,6 +262,82 @@ function ArimaContent() {
   useEffect(() => {
     if (view === "inbox") fetchInbox();
   }, [view, fetchInbox]);
+
+  // ─── REQUESTS ────────────────────────────────────────────────────
+  const fetchRequests = useCallback(async () => {
+    setRequestsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("scope", requestsScope);
+      if (requestsStatus !== "all") params.set("status", requestsStatus);
+      if (requestsPriority !== "all") params.set("priority", requestsPriority);
+      if (requestsCategory !== "all") params.set("category", requestsCategory);
+      if (requestsSearch.trim()) params.set("search", requestsSearch.trim());
+      const res = await fetch(`/api/arima/requests?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setRequests(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.error("Failed to load requests", err);
+    } finally {
+      setRequestsLoading(false);
+    }
+  }, [requestsScope, requestsStatus, requestsPriority, requestsCategory, requestsSearch]);
+
+  useEffect(() => {
+    if (view === "requests") fetchRequests();
+  }, [view, fetchRequests]);
+
+  const openRequest = async (r: any) => {
+    setSelectedRequest(r);
+    setSelectedRequestDetail(null);
+    try {
+      const res = await fetch(`/api/arima/requests/${r.id}`);
+      if (res.ok) setSelectedRequestDetail(await res.json());
+    } catch (err) {
+      console.error("Failed to load request detail", err);
+    }
+  };
+
+  const updateRequestField = async (id: string, patch: Record<string, any>) => {
+    try {
+      const res = await fetch(`/api/arima/requests/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (res.ok) {
+        // Update local copies so UI reflects change instantly
+        setRequests(prev => prev.map(x => (x.id === id ? { ...x, ...patch } : x)));
+        if (selectedRequest?.id === id) setSelectedRequest((prev: any) => ({ ...prev, ...patch }));
+        if (selectedRequestDetail?.request?.id === id) {
+          setSelectedRequestDetail((prev: any) => ({
+            ...prev,
+            request: { ...prev.request, ...patch },
+          }));
+        }
+      }
+    } catch (err) {
+      console.error("Failed to update request", err);
+    }
+  };
+
+  const deleteRequest = async (id: string) => {
+    if (!confirm("Delete this request? This cannot be undone.")) return;
+    try {
+      const res = await fetch(`/api/arima/requests/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setRequests(prev => prev.filter(x => x.id !== id));
+        if (selectedRequest?.id === id) {
+          setSelectedRequest(null);
+          setSelectedRequestDetail(null);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to delete request", err);
+    }
+  };
 
   const openInboxConv = async (conv: ConversationListItem) => {
     setInboxSelected(conv);
@@ -309,6 +403,15 @@ function ArimaContent() {
             <MessageSquare className="w-3 h-3" />
             Chat
           </button>
+          <button
+            onClick={() => setView("requests")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${
+              view === "requests" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            <ClipboardList className="w-3 h-3" />
+            Requests
+          </button>
           {isAdmin && (
             <button
               onClick={() => setView("inbox")}
@@ -322,6 +425,34 @@ function ArimaContent() {
           )}
         </div>
       </div>
+
+      {/* Captured-request toast */}
+      {lastCapturedRequest && view === "chat" && (
+        <div className="fixed bottom-24 right-6 z-[200] bg-white border border-emerald-200 rounded-2xl shadow-xl px-4 py-3 animate-in fade-in slide-in-from-bottom-3 duration-200 max-w-sm">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-black text-slate-800 uppercase tracking-widest mb-0.5">
+                Request captured
+              </p>
+              <p className="text-[11px] font-bold text-slate-600 truncate" title={lastCapturedRequest.title}>
+                {lastCapturedRequest.title}
+              </p>
+              <button
+                onClick={() => setView("requests")}
+                className="mt-1 text-[10px] font-black text-emerald-700 hover:text-emerald-800 uppercase tracking-widest"
+              >
+                View in Requests →
+              </button>
+            </div>
+            <button onClick={() => setLastCapturedRequest(null)} className="text-slate-300 hover:text-slate-500">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {view === "chat" ? (
         <div className="flex-1 flex overflow-hidden">
@@ -631,7 +762,7 @@ function ArimaContent() {
             </div>
           </div>
         </div>
-      ) : (
+      ) : view === "inbox" ? (
         /* INBOX VIEW (admin) */
         <div className="flex-1 flex overflow-hidden">
           {/* Inbox list */}
@@ -736,6 +867,281 @@ function ArimaContent() {
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* REQUESTS VIEW */
+        <div className="flex-1 flex overflow-hidden">
+          {/* Requests list */}
+          <div className="w-[420px] shrink-0 border-r border-slate-100 bg-white/60 flex flex-col">
+            {/* Filter bar */}
+            <div className="p-3 border-b border-slate-100 space-y-2">
+              <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2">
+                <Search className="w-3.5 h-3.5 text-slate-300" />
+                <input
+                  value={requestsSearch}
+                  onChange={e => setRequestsSearch(e.target.value)}
+                  placeholder="Search title or description..."
+                  className="flex-1 bg-transparent text-[11px] font-semibold text-slate-700 placeholder:text-slate-300 outline-none"
+                />
+                {requestsSearch && (
+                  <button onClick={() => setRequestsSearch("")} className="text-slate-300 hover:text-slate-500">
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-1 flex-wrap">
+                {isAdmin && (
+                  <div className="flex items-center gap-0.5 bg-white border border-slate-200 rounded-lg p-0.5">
+                    <button
+                      onClick={() => setRequestsScope("mine")}
+                      className={`px-2 py-1 text-[9px] font-black uppercase tracking-widest rounded-md transition-all ${
+                        requestsScope === "mine" ? "bg-rose-500 text-white" : "text-slate-500"
+                      }`}
+                    >
+                      Mine
+                    </button>
+                    <button
+                      onClick={() => setRequestsScope("team")}
+                      className={`px-2 py-1 text-[9px] font-black uppercase tracking-widest rounded-md transition-all ${
+                        requestsScope === "team" ? "bg-rose-500 text-white" : "text-slate-500"
+                      }`}
+                    >
+                      Team
+                    </button>
+                  </div>
+                )}
+                <select
+                  value={requestsStatus}
+                  onChange={e => setRequestsStatus(e.target.value)}
+                  className="text-[10px] font-bold text-slate-600 bg-white border border-slate-200 rounded-lg px-2 py-1 uppercase tracking-wider outline-none"
+                >
+                  <option value="all">All status</option>
+                  <option value="new">New</option>
+                  <option value="in-progress">In progress</option>
+                  <option value="done">Done</option>
+                  <option value="archived">Archived</option>
+                </select>
+                <select
+                  value={requestsPriority}
+                  onChange={e => setRequestsPriority(e.target.value)}
+                  className="text-[10px] font-bold text-slate-600 bg-white border border-slate-200 rounded-lg px-2 py-1 uppercase tracking-wider outline-none"
+                >
+                  <option value="all">All priority</option>
+                  <option value="urgent">Urgent</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+                <select
+                  value={requestsCategory}
+                  onChange={e => setRequestsCategory(e.target.value)}
+                  className="text-[10px] font-bold text-slate-600 bg-white border border-slate-200 rounded-lg px-2 py-1 uppercase tracking-wider outline-none"
+                >
+                  <option value="all">All categories</option>
+                  <option value="feature">Feature</option>
+                  <option value="bug">Bug</option>
+                  <option value="question">Question</option>
+                  <option value="config">Config</option>
+                  <option value="meeting">Meeting</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-auto thin-scrollbar px-2 py-2">
+              {requestsLoading && (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-4 h-4 animate-spin text-slate-300" />
+                </div>
+              )}
+              {!requestsLoading && requests.length === 0 && (
+                <div className="text-center py-12 px-4">
+                  <ClipboardList className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                    No requests yet
+                  </p>
+                  <p className="text-[10px] font-semibold text-slate-400">
+                    ARIMA captures requests when you chat about specific asks.
+                  </p>
+                </div>
+              )}
+              <div className="space-y-1">
+                {requests.map((r) => {
+                  const active = r.id === selectedRequest?.id;
+                  const priColor =
+                    r.priority === "urgent" ? "bg-red-100 text-red-700"
+                    : r.priority === "high" ? "bg-amber-100 text-amber-700"
+                    : r.priority === "low" ? "bg-slate-100 text-slate-500"
+                    : "bg-blue-100 text-blue-700";
+                  const statusColor =
+                    r.status === "done" ? "bg-emerald-100 text-emerald-700"
+                    : r.status === "in-progress" ? "bg-amber-100 text-amber-700"
+                    : r.status === "archived" ? "bg-slate-100 text-slate-400"
+                    : "bg-rose-100 text-rose-700";
+                  return (
+                    <button
+                      key={r.id}
+                      onClick={() => openRequest(r)}
+                      className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${
+                        active ? "bg-rose-50" : "hover:bg-slate-50"
+                      }`}
+                    >
+                      <p className={`text-[11px] font-bold truncate mb-1 ${active ? "text-rose-700" : "text-slate-700"}`} title={r.title}>
+                        {r.title}
+                      </p>
+                      <div className="flex items-center gap-1 flex-wrap mb-0.5">
+                        <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${statusColor}`}>
+                          {r.status}
+                        </span>
+                        <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${priColor}`}>
+                          {r.priority}
+                        </span>
+                        <span className="text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
+                          {r.category}
+                        </span>
+                      </div>
+                      <p className="text-[9px] font-semibold text-slate-400 truncate">
+                        {r.clientName ? `${r.clientCode || ""}${r.clientCode ? " · " : ""}${r.clientName}` : "(no client)"} · {formatTime(r.createdAt)}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Request detail */}
+          <div className="flex-1 overflow-auto">
+            {!selectedRequest ? (
+              <div className="h-full flex flex-col items-center justify-center text-center px-8">
+                <ClipboardList className="w-12 h-12 text-slate-200 mb-3" />
+                <p className="text-sm font-bold text-slate-500 mb-1">Select a request</p>
+                <p className="text-[11px] font-semibold text-slate-400 max-w-sm">
+                  ARIMA logs every request automatically when you chat. Track, assign, and close them here.
+                </p>
+              </div>
+            ) : (
+              <div className="px-6 sm:px-8 py-6 max-w-3xl mx-auto">
+                <div className="mb-5">
+                  <h2 className="text-base font-black text-slate-800 tracking-tight mb-1">
+                    {selectedRequest.title}
+                  </h2>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                    Captured by {selectedRequest.capturedByName || selectedRequest.capturedByEmail || "unknown"}
+                    {selectedRequest.clientName ? ` · ${selectedRequest.clientCode || ""}${selectedRequest.clientCode ? " · " : ""}${selectedRequest.clientName}` : ""}
+                    {" · "}
+                    {formatTime(selectedRequest.createdAt)}
+                  </p>
+                </div>
+
+                {/* Quick controls */}
+                <div className="bg-white border border-slate-100 rounded-2xl p-4 mb-5 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div>
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Status</p>
+                    <select
+                      value={selectedRequest.status}
+                      onChange={e => updateRequestField(selectedRequest.id, { status: e.target.value })}
+                      className="w-full text-[11px] font-bold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 outline-none"
+                    >
+                      <option value="new">New</option>
+                      <option value="in-progress">In progress</option>
+                      <option value="done">Done</option>
+                      <option value="archived">Archived</option>
+                    </select>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Priority</p>
+                    <select
+                      value={selectedRequest.priority}
+                      onChange={e => updateRequestField(selectedRequest.id, { priority: e.target.value })}
+                      className="w-full text-[11px] font-bold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 outline-none"
+                    >
+                      <option value="urgent">Urgent</option>
+                      <option value="high">High</option>
+                      <option value="medium">Medium</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Category</p>
+                    <select
+                      value={selectedRequest.category}
+                      onChange={e => updateRequestField(selectedRequest.id, { category: e.target.value })}
+                      className="w-full text-[11px] font-bold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 outline-none"
+                    >
+                      <option value="feature">Feature</option>
+                      <option value="bug">Bug</option>
+                      <option value="question">Question</option>
+                      <option value="config">Config</option>
+                      <option value="meeting">Meeting</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Description */}
+                {selectedRequest.description && (
+                  <div className="bg-white border border-slate-100 rounded-2xl p-4 mb-5">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Description</p>
+                    <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+                      {selectedRequest.description}
+                    </p>
+                  </div>
+                )}
+
+                {/* Source conversation */}
+                {selectedRequestDetail?.sourceMessages && selectedRequestDetail.sourceMessages.length > 0 && (
+                  <div className="bg-white border border-slate-100 rounded-2xl p-4 mb-5">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                      Source Conversation
+                    </p>
+                    <div className="space-y-2 max-h-80 overflow-auto thin-scrollbar">
+                      {selectedRequestDetail.sourceMessages.map((m: any) => (
+                        <div
+                          key={m.id}
+                          className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
+                        >
+                          <div
+                            className={`max-w-[85%] px-3 py-2 rounded-xl text-[11px] leading-relaxed whitespace-pre-wrap break-words ${
+                              m.role === "user"
+                                ? "bg-slate-900 text-white rounded-tr-sm"
+                                : "bg-slate-50 border border-slate-100 text-slate-700 rounded-tl-sm"
+                            }`}
+                          >
+                            {m.content}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Footer actions */}
+                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                  <button
+                    onClick={() => deleteRequest(selectedRequest.id)}
+                    className="flex items-center gap-1.5 text-[10px] font-black text-red-500 hover:text-red-700 uppercase tracking-widest"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    Delete
+                  </button>
+                  {selectedRequest.conversationId && (
+                    <button
+                      onClick={() => {
+                        setView("chat");
+                        loadConversation(selectedRequest.conversationId);
+                      }}
+                      className="flex items-center gap-1.5 text-[10px] font-black text-slate-500 hover:text-rose-700 uppercase tracking-widest"
+                    >
+                      Open Source Chat
+                      <ChevronDown className="w-3 h-3 -rotate-90" />
+                    </button>
+                  )}
                 </div>
               </div>
             )}
