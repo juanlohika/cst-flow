@@ -595,6 +595,32 @@ export const notificationPreferences = sqliteTable("NotificationPreference", {
   updatedAt:         text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+// ArimaGuardrail: structured safety rule that gets injected into every ARIMA
+// system prompt. Admins manage these via /admin/arima-guardrails.
+//
+// Types:
+//   forbidden_topic     → if user mentions, refuse + escalate
+//   forbidden_phrase    → never say (for ARIMA's own output)
+//   escalation_trigger  → keyword triggers notify_internal_team + flagging
+//   off_hours_message   → custom auto-reply outside business hours
+//   rate_limit          → per-user message cap (config in value JSON)
+//   required_disclosure → mandatory text (e.g. "I'm an AI") in certain situations
+//
+// pattern: string the AI sees in the prompt OR runtime checks against user input
+// (depending on type — see /lib/arima/guardrails.ts for execution semantics)
+export const arimaGuardrails = sqliteTable("ArimaGuardrail", {
+  id:          text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  type:        text("type").notNull(), // forbidden_topic | forbidden_phrase | escalation_trigger | off_hours_message | rate_limit | required_disclosure
+  label:       text("label").notNull(),                // short admin-facing name
+  pattern:     text("pattern").notNull(),              // keyword/phrase OR JSON config
+  description: text("description"),                    // why this exists, for the audit trail
+  enabled:     integer("enabled", { mode: "boolean" }).default(true).notNull(),
+  isBuiltIn:   integer("isBuiltIn", { mode: "boolean" }).default(false).notNull(),
+  priority:    integer("priority").default(0).notNull(),
+  createdAt:   text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:   text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
 // ArimaCheckInSchedule: per-client check-in cadence. One row per client.
 // Lazily created on first cadence resolution (using the matching ScheduleRule's defaults).
 export const arimaCheckInSchedules = sqliteTable("ArimaCheckInSchedule", {

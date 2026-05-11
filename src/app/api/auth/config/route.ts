@@ -65,6 +65,7 @@ export async function GET() {
       `CREATE TABLE IF NOT EXISTS ArimaCheckInSchedule (id TEXT PRIMARY KEY, clientProfileId TEXT NOT NULL UNIQUE REFERENCES ClientProfile(id) ON DELETE CASCADE, cadence TEXT DEFAULT 'monthly' NOT NULL, customIntervalDays INTEGER, preferredChannel TEXT DEFAULT 'auto' NOT NULL, nextDueAt TEXT NOT NULL, lastSentAt TEXT, lastResponseAt TEXT, consecutiveNoResponse INTEGER DEFAULT 0 NOT NULL, status TEXT DEFAULT 'active' NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS ArimaCheckIn (id TEXT PRIMARY KEY, scheduleId TEXT, clientProfileId TEXT NOT NULL, contactId TEXT, channel TEXT NOT NULL, messageContent TEXT, conversationId TEXT, status TEXT DEFAULT 'scheduled' NOT NULL, scheduledAt TEXT DEFAULT (datetime('now')) NOT NULL, sentAt TEXT, respondedAt TEXT, escalatedAt TEXT, errorMessage TEXT, triggeredByUserId TEXT, createdAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS ArimaScheduleRule (id TEXT PRIMARY KEY, name TEXT NOT NULL, cadence TEXT DEFAULT 'monthly' NOT NULL, customIntervalDays INTEGER, matchEngagementStatus TEXT, priority INTEGER DEFAULT 0 NOT NULL, enabled INTEGER DEFAULT 1 NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS ArimaGuardrail (id TEXT PRIMARY KEY, type TEXT NOT NULL, label TEXT NOT NULL, pattern TEXT NOT NULL, description TEXT, enabled INTEGER DEFAULT 1 NOT NULL, isBuiltIn INTEGER DEFAULT 0 NOT NULL, priority INTEGER DEFAULT 0 NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
     ];
 
     for (const q of bootstrapQueries) {
@@ -264,6 +265,15 @@ export async function GET() {
       }
     } catch (rulesErr: any) {
       console.warn("[migrator] check-in rule seed warn:", rulesErr?.message);
+    }
+
+    // 7. SEED DEFAULT GUARDRAILS so admins have safety rules out of the box.
+    try {
+      const guardrailsMod = await import("@/lib/arima/guardrails");
+      const { created } = await guardrailsMod.seedDefaultGuardrails();
+      if (created > 0) migrations.push(`Seeded ${created} default ARIMA guardrail(s).`);
+    } catch (guardErr: any) {
+      console.warn("[migrator] guardrails seed warn:", guardErr?.message);
     }
 
     dbStatus = true;

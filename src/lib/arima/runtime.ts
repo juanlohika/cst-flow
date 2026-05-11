@@ -16,6 +16,7 @@ import { getModelForApp, generateWithRetry, readAIConfig } from "@/lib/ai";
 import { dispatchNotification } from "@/lib/notifications/dispatcher";
 import { buildGeminiTools, executeTool, type ToolContext } from "@/lib/arima/tools";
 import { markScheduleResponded } from "@/lib/arima/checkins";
+import { buildGuardrailsPrompt, checkInputAgainstGuardrails } from "@/lib/arima/guardrails";
 
 const FALLBACK_INSTRUCTION = `You are ARIMA, an AI Relationship Manager for the CST team at MobileOptima/Tarkie.
 
@@ -266,17 +267,92 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     toolPreamble = `\n\n---\n\n## AVAILABLE TOOLS\n\nYou have these callable functions. When the user requests an action that matches one of these, CALL IT — do not just talk about doing it. After the tool returns, report what actually happened. If a tool returns ok:false with "awaitingApproval", DO NOT claim the action succeeded — tell the user it's been queued/logged for the team to confirm.\n\n${list}\n\nIf none of these match what the user is asking for an action, call \`create_request\` with an appropriate category so the human team is notified. NEVER claim to have scheduled, booked, sent, or completed anything unless a tool actually returned success.`;
   }
 
+  // Build guardrails block (forbidden phrases, required disclosures, forbidden topics)
+  const guardrailsPrompt = await buildGuardrailsPrompt().catch(() => "");
+
   const systemInstruction = (clientContext
     ? `${baseInstruction}\n\n---\n\n${clientContext}`
-    : baseInstruction) + toolPreamble;
+    : baseInstruction)
+    + (guardrailsPrompt ? `\n\n---\n\n${guardrailsPrompt}` : "")
+    + toolPreamble;
+
+  // Run input-side guardrail checks (forbidden topics, escalation triggers, off-hours)
+  const inputCheck = await checkInputAgainstGuardrails(args.userMessage).catch(() => null);
+
+  // Short-circuit: forbidden topic → refuse + escalate, skip model call entirely
+  if (inputCheck?.forbidden) {
+    const refusal = `I'm not able to help with that one — it's outside what I can handle directly. Let me bring in a human teammate to follow up. ${inputCheck.escalationLabel ? `(Topic flagged: ${inputCheck.escalationLabel})` : ""}`;
+    const assistantMsgId = `msg_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+    await db.insert(arimaMessages).values({
+      id: assistantMsgId,
+      conversationId: args.conversationId,
+      role: "assistant",
+      content: refusal,
+      provider: "guardrail",
+      createdAt: new Date().toISOString(),
+    });
+    // Notify team
+    if (args.clientProfileId) {
+      try {
+        const members = await db.select({ userId: accountMemberships.userId })
+          .from(accountMemberships)
+          .where(eq(accountMemberships.clientProfileId, args.clientProfileId));
+        if (members.length > 0) {
+          await dispatchNotification({
+            userIds: members.map(m => m.userId),
+            type: "mention",
+            title: `⚠️ Guardrail: ${inputCheck.forbiddenTopicLabel} flagged`,
+            body: `Client message blocked by guardrail. Please follow up:\n\n"${args.userMessage.slice(0, 200)}"`,
+            link: `/arima?clientId=${args.clientProfileId}`,
+          });
+        }
+      } catch (e) {
+        console.warn("[guardrails] escalation notification failed:", e);
+      }
+    }
+    return {
+      replyText: refusal,
+      capturedRequestId: null,
+      capturedRequest: null,
+      provider: "guardrail",
+      assistantMessageId: assistantMsgId,
+    };
+  }
+
+  // Off-hours: prepend the message as additional system context so ARIMA leans into "human follows up tomorrow"
+  const offHoursNote = inputCheck?.offHoursReply
+    ? `\n\n---\n\n## OFF-HOURS NOTICE\n\nIt's currently outside business hours. Acknowledge the message and tell the user: "${inputCheck.offHoursReply}" — DO NOT promise immediate action. Capture any request via create_request so the team picks it up first thing.`
+    : "";
+
+  const finalSystemInstruction = systemInstruction + offHoursNote;
 
   const baseInput: any = {
     contents,
-    systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
+    systemInstruction: { role: "system", parts: [{ text: finalSystemInstruction }] },
   };
   if (toolDefs) baseInput.tools = toolDefs;
 
   let result = await generateWithRetry(model, baseInput);
+
+  // Fire-and-forget: if an escalation trigger matched, notify the team about it
+  if (inputCheck?.escalate && !inputCheck?.forbidden && args.clientProfileId) {
+    (async () => {
+      try {
+        const members = await db.select({ userId: accountMemberships.userId })
+          .from(accountMemberships)
+          .where(eq(accountMemberships.clientProfileId, args.clientProfileId!));
+        if (members.length > 0) {
+          await dispatchNotification({
+            userIds: members.map(m => m.userId),
+            type: "mention",
+            title: `⚡ Escalation: ${inputCheck.escalationLabel}`,
+            body: `Client message matched an escalation trigger. ARIMA is replying, but please review:\n\n"${args.userMessage.slice(0, 200)}"`,
+            link: `/arima?clientId=${args.clientProfileId}`,
+          });
+        }
+      } catch {}
+    })();
+  }
 
   // Tool-call loop: if the model wants to call functions, execute and feed back.
   // Capped at 4 iterations to prevent runaway loops.

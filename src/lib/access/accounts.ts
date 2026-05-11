@@ -240,6 +240,20 @@ export async function ensureAccessSchema(): Promise<void> {
       updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
     )`);
 
+    // Guardrails table
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaGuardrail (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      label TEXT NOT NULL,
+      pattern TEXT NOT NULL,
+      description TEXT,
+      enabled INTEGER DEFAULT 1 NOT NULL,
+      isBuiltIn INTEGER DEFAULT 0 NOT NULL,
+      priority INTEGER DEFAULT 0 NOT NULL,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+
     _schemaEnsuredAt = Date.now();
   } catch (e) {
     console.warn("[access] ensureAccessSchema warning:", e);
