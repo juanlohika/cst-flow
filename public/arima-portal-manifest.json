@@ -1,0 +1,19 @@
+{
+  "name": "ARIMA — Client Portal",
+  "short_name": "ARIMA",
+  "description": "Your direct line to your CST account team.",
+  "start_url": "/portal",
+  "scope": "/portal",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#ec4899",
+  "background_color": "#fff1f2",
+  "icons": [
+    {
+      "src": "/tarkie-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

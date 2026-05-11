@@ -7,6 +7,7 @@ import AuthGuard from "@/components/auth/AuthGuard";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import { AccountHub } from "@/app/(app)/meeting-prep/page";
 import AccountAccessControl from "@/components/accounts/AccountAccessControl";
+import ClientContactsCard from "@/components/accounts/ClientContactsCard";
 
 export default function AccountDetailPage() {
   const params = useParams();
@@ -73,8 +74,9 @@ export default function AccountDetailPage() {
           We render the Access Control card directly inline so it shows up at
           the top of the scrollable content area. */}
       <div className="bg-surface-subtle">
-        <div className="px-6 pt-6 pb-2 max-w-5xl mx-auto w-full">
+        <div className="px-6 pt-6 pb-2 max-w-5xl mx-auto w-full space-y-4">
           <AccountAccessControl accountId={accountId} companyName={profile.companyName} />
+          <ClientContactsCard accountId={accountId} companyName={profile.companyName} />
         </div>
         <div className="h-[calc(100vh-160px)] min-h-[600px]">
           <AccountHub

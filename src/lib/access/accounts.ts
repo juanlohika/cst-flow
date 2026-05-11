@@ -128,6 +128,43 @@ export async function ensureAccessSchema(): Promise<void> {
       sentAt TEXT
     )`);
 
+    // Portal (external subscriber) tables
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ClientContact (
+      id TEXT PRIMARY KEY,
+      clientProfileId TEXT NOT NULL,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      role TEXT,
+      phone TEXT,
+      status TEXT DEFAULT 'invited' NOT NULL,
+      invitedAt TEXT,
+      activatedAt TEXT,
+      lastSeenAt TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS SubscriberMagicLink (
+      id TEXT PRIMARY KEY,
+      contactId TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      expiresAt TEXT NOT NULL,
+      usedAt TEXT,
+      sentToEmail TEXT NOT NULL,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      createdByUserId TEXT
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS SubscriberSession (
+      id TEXT PRIMARY KEY,
+      sessionId TEXT NOT NULL UNIQUE,
+      contactId TEXT NOT NULL,
+      userAgent TEXT,
+      ipAddress TEXT,
+      expiresAt TEXT NOT NULL,
+      lastUsedAt TEXT,
+      status TEXT DEFAULT 'active' NOT NULL,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+
     _schemaEnsuredAt = Date.now();
   } catch (e) {
     console.warn("[access] ensureAccessSchema warning:", e);

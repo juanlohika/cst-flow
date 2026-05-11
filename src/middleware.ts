@@ -9,12 +9,14 @@ export default auth((req) => {
                      pathname === "/api/debug-db" ||
                      pathname === "/api/branding" ||
                      pathname === "/api/telegram/webhook" ||
+                     pathname.startsWith("/api/portal/") ||
                      /^\/api\/meetings\/[^/]+\/register$/.test(pathname) ||
                      /^\/api\/share\/[^/]+$/.test(pathname);
   const isPublicPage = pathname === "/" ||
                       pathname.startsWith("/meetings/attend") ||
                       pathname.startsWith("/meetings/scan") ||
                       pathname.startsWith("/share/") ||
+                      pathname.startsWith("/portal") ||
                       pathname.startsWith("/addin");
 
   // Allow auth-related paths to bypass middleware

@@ -595,6 +595,50 @@ export const notificationPreferences = sqliteTable("NotificationPreference", {
   updatedAt:         text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+// ClientContact: external people on the client side (e.g. their CEO, project lead, etc.)
+// who can be invited to chat with ARIMA via the magic-link portal.
+export const clientContacts = sqliteTable("ClientContact", {
+  id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  clientProfileId: text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
+  name:            text("name").notNull(),
+  email:           text("email").notNull(),
+  role:            text("role"),                       // e.g. "CFO", "Operations Lead"
+  phone:           text("phone"),
+  status:          text("status").default("invited").notNull(), // invited | active | revoked
+  invitedAt:       text("invitedAt"),
+  activatedAt:     text("activatedAt"),                 // first time they used the magic link
+  lastSeenAt:      text("lastSeenAt"),
+  createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// SubscriberMagicLink: one-time tokens emailed to client contacts.
+// On first click → activates the contact and starts a SubscriberSession.
+export const subscriberMagicLinks = sqliteTable("SubscriberMagicLink", {
+  id:         text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  contactId:  text("contactId").notNull().references(() => clientContacts.id, { onDelete: "cascade" }),
+  token:      text("token").notNull().unique(),         // 64-char hex, signed externally
+  expiresAt:  text("expiresAt").notNull(),               // ISO, 7 days from creation
+  usedAt:     text("usedAt"),                            // null until first use; can be re-used during the 30-day session period? No — single-use.
+  sentToEmail: text("sentToEmail").notNull(),
+  createdAt:  text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  createdByUserId: text("createdByUserId"),              // which CST OS admin issued this
+});
+
+// SubscriberSession: active portal sessions for external users.
+// One row per (contactId × device). Authentication = sessionId in HTTP-only cookie.
+export const subscriberSessions = sqliteTable("SubscriberSession", {
+  id:         text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  sessionId:  text("sessionId").notNull().unique(),     // 64-char hex; stored in cookie
+  contactId:  text("contactId").notNull().references(() => clientContacts.id, { onDelete: "cascade" }),
+  userAgent:  text("userAgent"),
+  ipAddress:  text("ipAddress"),
+  expiresAt:  text("expiresAt").notNull(),               // ISO, 30 days from creation
+  lastUsedAt: text("lastUsedAt"),
+  status:     text("status").default("active").notNull(), // active | revoked
+  createdAt:  text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
+
 // NotificationLog: every dispatched notification, for analytics + debug + email-digest batching.
 export const notificationLogs = sqliteTable("NotificationLog", {
   id:        text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
