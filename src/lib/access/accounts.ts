@@ -7,6 +7,43 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import crypto from "crypto";
 
 /**
+ * Idempotent self-healing: makes sure the AccountMembership table and the
+ * new ClientProfile columns (clientCode, accessToken) exist in the live DB.
+ * Safe to call on every request — SQLite ignores re-adds of existing columns.
+ *
+ * This is the safety net so the access-control routes don't 500 when a fresh
+ * deploy lands before the admin runs /api/auth/config.
+ */
+// In-memory flag so we only attempt the schema work once per process (per
+// serverless instance). Each invocation does no-op ALTERs if columns exist.
+let _schemaEnsuredAt = 0;
+export async function ensureAccessSchema(): Promise<void> {
+  // Re-attempt at most every 60s in case a previous attempt failed and we want to retry
+  if (Date.now() - _schemaEnsuredAt < 60_000) return;
+  try {
+    // Create AccountMembership table if missing
+    await db.run(sql`CREATE TABLE IF NOT EXISTS AccountMembership (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      clientProfileId TEXT NOT NULL,
+      role TEXT DEFAULT 'member' NOT NULL,
+      grantedBy TEXT,
+      grantedAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      UNIQUE(userId, clientProfileId)
+    )`);
+
+    // Add clientCode + accessToken to ClientProfile if missing.
+    // ALTER ... ADD COLUMN throws if the column already exists, so each is wrapped.
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN clientCode TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN accessToken TEXT`); } catch {}
+
+    _schemaEnsuredAt = Date.now();
+  } catch (e) {
+    console.warn("[access] ensureAccessSchema warning:", e);
+  }
+}
+
+/**
  * Central access-control helpers for client accounts.
  *
  * Rules:
@@ -28,6 +65,9 @@ export interface AccessActor {
  * Non-admins → array of allowed IDs (may be empty).
  */
 export async function listAccessibleClientIds(actor: AccessActor): Promise<string[] | null> {
+  // ALWAYS attempt the schema heal first — even for admins, so downstream
+  // SELECTs against ClientProfile don't 500 because of a missing column.
+  await ensureAccessSchema();
   if (actor.isAdmin) return null;
   try {
     const rows = await db
@@ -47,6 +87,7 @@ export async function listAccessibleClientIds(actor: AccessActor): Promise<strin
  * Admins always pass. Non-admins must have an AccountMembership row.
  */
 export async function canAccessClient(actor: AccessActor, clientProfileId: string): Promise<boolean> {
+  await ensureAccessSchema();
   if (actor.isAdmin) return true;
   try {
     const rows = await db

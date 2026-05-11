@@ -28,19 +28,36 @@ export async function GET(req: Request) {
       return NextResponse.json([]);
     }
 
-    const base = db.select({
-      id: clientProfilesTable.id,
-      companyName: clientProfilesTable.companyName,
-      industry: clientProfilesTable.industry,
-      engagementStatus: clientProfilesTable.engagementStatus,
-      clientCode: clientProfilesTable.clientCode,
-    })
-    .from(clientProfilesTable)
-    .orderBy(asc(clientProfilesTable.companyName));
+    let accounts: any[] = [];
+    try {
+      const base = db.select({
+        id: clientProfilesTable.id,
+        companyName: clientProfilesTable.companyName,
+        industry: clientProfilesTable.industry,
+        engagementStatus: clientProfilesTable.engagementStatus,
+        clientCode: clientProfilesTable.clientCode,
+      })
+      .from(clientProfilesTable)
+      .orderBy(asc(clientProfilesTable.companyName));
 
-    const accounts = allowedIds === null
-      ? await base
-      : await base.where(inArray(clientProfilesTable.id, allowedIds));
+      accounts = allowedIds === null
+        ? await base
+        : await base.where(inArray(clientProfilesTable.id, allowedIds));
+    } catch (selErr: any) {
+      // Fallback if clientCode column is not yet present in this DB
+      console.warn("[/api/accounts] select with clientCode failed, falling back:", selErr?.message);
+      const minimal = db.select({
+        id: clientProfilesTable.id,
+        companyName: clientProfilesTable.companyName,
+        industry: clientProfilesTable.industry,
+        engagementStatus: clientProfilesTable.engagementStatus,
+      })
+      .from(clientProfilesTable)
+      .orderBy(asc(clientProfilesTable.companyName));
+      accounts = allowedIds === null
+        ? await minimal
+        : await minimal.where(inArray(clientProfilesTable.id, allowedIds));
+    }
 
     return NextResponse.json(accounts);
   } catch (error: any) {

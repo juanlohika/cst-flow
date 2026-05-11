@@ -37,13 +37,51 @@ export async function GET(req: Request) {
       return NextResponse.json([]);
     }
 
-    const baseProfiles = db.select()
+    // Explicit column list to avoid 500s if newer columns (clientCode/accessToken)
+    // somehow aren't yet present on the live DB.
+    const baseProfiles = db.select({
+      id: clientProfilesTable.id,
+      userId: clientProfilesTable.userId,
+      companyName: clientProfilesTable.companyName,
+      industry: clientProfilesTable.industry,
+      companySize: clientProfilesTable.companySize,
+      modulesAvailed: clientProfilesTable.modulesAvailed,
+      engagementStatus: clientProfilesTable.engagementStatus,
+      primaryContact: clientProfilesTable.primaryContact,
+      primaryContactEmail: clientProfilesTable.primaryContactEmail,
+      specialConsiderations: clientProfilesTable.specialConsiderations,
+      intelligenceContent: clientProfilesTable.intelligenceContent,
+      createdAt: clientProfilesTable.createdAt,
+      updatedAt: clientProfilesTable.updatedAt,
+    })
       .from(clientProfilesTable)
       .orderBy(desc(clientProfilesTable.createdAt));
 
-    const profiles = allowedIds === null
-      ? await baseProfiles
-      : await baseProfiles.where(inArray(clientProfilesTable.id, allowedIds));
+    let profiles: any[];
+    try {
+      profiles = allowedIds === null
+        ? await baseProfiles
+        : await baseProfiles.where(inArray(clientProfilesTable.id, allowedIds));
+    } catch (selErr: any) {
+      // Last-resort fallback: minimal columns only, in case core columns are
+      // also somehow missing. Never 500 the page.
+      console.warn("[meeting-prep/profiles] base select failed, falling back:", selErr?.message);
+      const minimal = db.select({
+        id: clientProfilesTable.id,
+        userId: clientProfilesTable.userId,
+        companyName: clientProfilesTable.companyName,
+        industry: clientProfilesTable.industry,
+        modulesAvailed: clientProfilesTable.modulesAvailed,
+        engagementStatus: clientProfilesTable.engagementStatus,
+        createdAt: clientProfilesTable.createdAt,
+        updatedAt: clientProfilesTable.updatedAt,
+      })
+        .from(clientProfilesTable)
+        .orderBy(desc(clientProfilesTable.createdAt));
+      profiles = allowedIds === null
+        ? await minimal
+        : await minimal.where(inArray(clientProfilesTable.id, allowedIds));
+    }
 
     // Fetch meeting prep sessions separately
     const profileIds = profiles.map((p: any) => p.id);
