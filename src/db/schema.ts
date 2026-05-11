@@ -523,6 +523,45 @@ export const arimaMessages = sqliteTable("ArimaMessage", {
   createdAt:      text("createdAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+// ArimaChannelBinding: maps an external channel chat (Telegram group, etc.) to ONE client account.
+// A bound chat can never see data for any other client. Binding is admin-only.
+export const arimaChannelBindings = sqliteTable("ArimaChannelBinding", {
+  id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  channel:         text("channel").notNull(),               // telegram | facebook | whatsapp (future)
+  chatId:          text("chatId").notNull(),                // Telegram chat ID as string (can be negative for groups)
+  chatTitle:       text("chatTitle"),                       // cached group title for display
+  clientProfileId: text("clientProfileId").notNull(),       // the bound client account
+  boundByUserId:   text("boundByUserId"),                   // CST OS user who ran /bind
+  status:          text("status").default("active").notNull(), // active | revoked
+  boundAt:         text("boundAt").default(sql`(datetime('now'))`).notNull(),
+  revokedAt:       text("revokedAt"),
+}, (table) => ({
+  uniqueBinding: { columns: [table.channel, table.chatId], name: "ArimaChannelBinding_unique" },
+}));
+
+// TelegramAccountLink: maps a Telegram user ID to a CST OS user ID.
+// Required before an admin can run sensitive commands (/bind, /unbind) in any group.
+export const telegramAccountLinks = sqliteTable("TelegramAccountLink", {
+  id:               text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  telegramUserId:   text("telegramUserId").notNull().unique(),
+  telegramUsername: text("telegramUsername"),                // cached for display
+  telegramName:     text("telegramName"),                    // cached first+last name
+  cstUserId:        text("cstUserId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  status:           text("status").default("active").notNull(), // active | revoked
+  linkedAt:         text("linkedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// TelegramLinkCode: one-time codes a CST OS user generates from the admin UI to link their Telegram account.
+// They DM the bot with /link <code> to complete the link.
+export const telegramLinkCodes = sqliteTable("TelegramLinkCode", {
+  id:        text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  code:      text("code").notNull().unique(),               // e.g. LK-7K2P-A3F2
+  cstUserId: text("cstUserId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  expiresAt: text("expiresAt").notNull(),                   // ISO; codes expire in 30 min
+  usedAt:    text("usedAt"),                                // null until consumed
+  createdAt: text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
+
 // ARIMA Requests: structured asks captured from conversations.
 // When ARIMA detects the user is making a real request (feature, bug, question, etc.)
 // it emits a [REQUEST]…[/REQUEST] tag in its reply; the generate route parses it and inserts a row here.

@@ -1,0 +1,380 @@
+import { NextResponse } from "next/server";
+import { db } from "@/db";
+import {
+  arimaConversations,
+  arimaMessages,
+} from "@/db/schema";
+import { and, asc, eq } from "drizzle-orm";
+import { getTelegramConfig } from "@/lib/telegram/config";
+import {
+  tgSendMessage,
+  tgSendChatAction,
+  isUserGroupAdmin,
+  isGroupChatType,
+  isPrivateChatType,
+  truncateForTelegram,
+} from "@/lib/telegram/api";
+import { resolveCstUserFromTelegram, consumeLinkCode } from "@/lib/telegram/auth";
+import {
+  getActiveBindingForChat,
+  findClientByAccessToken,
+  createBinding,
+  revokeBinding,
+} from "@/lib/telegram/binding";
+import { runArima } from "@/lib/arima/runtime";
+import { ensureAccessSchema } from "@/lib/access/accounts";
+
+export const dynamic = "force-dynamic";
+
+const WELCOME_GROUP_UNBOUND = (
+  "Hi! I'm **ARIMA** — an AI Relationship Manager.\n\n" +
+  "Before I can help, an admin must bind this group to a client account.\n\n" +
+  "A CST OS admin should run `/bind <accessToken>` here (get the token from CST OS → Accounts → Access Control)."
+);
+
+const HELP_TEXT = (
+  "**ARIMA commands**\n\n" +
+  "Group admins (must also be linked to a CST OS admin account):\n" +
+  "• `/bind <accessToken>` — bind this group to a client account\n" +
+  "• `/unbind` — remove the binding\n\n" +
+  "Anyone in a bound group:\n" +
+  "• `/status` — show what client this group is bound to\n" +
+  "• Just chat normally and I'll respond.\n\n" +
+  "Private DM with the bot:\n" +
+  "• `/link LK-XXXX-YYYY` — link your Telegram account to CST OS (generate the code from CST OS → Admin → Channels → Telegram → My Account)."
+);
+
+/** Minimal helper to send a reply, swallowing errors so the webhook never fails. */
+async function safeReply(token: string, chatId: number, text: string, replyToMessageId?: number) {
+  try {
+    await tgSendMessage(token, chatId, truncateForTelegram(text), {
+      parseMode: "Markdown",
+      replyToMessageId,
+    });
+  } catch (e) {
+    console.error("[telegram/webhook] reply failed:", e);
+  }
+}
+
+/**
+ * POST /api/telegram/webhook
+ * Receives every update from Telegram. Validates the secret header, dispatches
+ * commands or chat to the right handler. Always returns 200 quickly — we don't
+ * want Telegram retrying us.
+ */
+export async function POST(req: Request) {
+  try {
+    await ensureAccessSchema();
+
+    const config = await getTelegramConfig();
+    if (!config.botToken) {
+      console.warn("[telegram/webhook] bot token not configured; ignoring update");
+      return NextResponse.json({ ok: true, ignored: "no-token" });
+    }
+
+    // Verify Telegram secret header
+    const incomingSecret = req.headers.get("x-telegram-bot-api-secret-token") || "";
+    if (config.webhookSecret && incomingSecret !== config.webhookSecret) {
+      console.warn("[telegram/webhook] invalid secret header — rejecting");
+      return NextResponse.json({ ok: false, error: "invalid secret" }, { status: 401 });
+    }
+
+    const update = await req.json();
+
+    // We currently only handle message updates and my_chat_member (joined/left a group).
+    const message = update?.message || update?.edited_message;
+    if (!message) {
+      return NextResponse.json({ ok: true, ignored: "non-message" });
+    }
+
+    const chat = message.chat;
+    const from = message.from;
+    const text: string = message.text || "";
+    if (!chat || !from || !text) {
+      return NextResponse.json({ ok: true, ignored: "no-text" });
+    }
+
+    const isGroup = isGroupChatType(chat.type);
+    const isPrivate = isPrivateChatType(chat.type);
+
+    // ─── COMMAND DISPATCH ─────────────────────────────────────────────
+    const cmdMatch = text.match(/^\/(\w+)(?:@\w+)?(?:\s+(.*))?$/s);
+    if (cmdMatch) {
+      const cmd = cmdMatch[1].toLowerCase();
+      const argText = (cmdMatch[2] || "").trim();
+
+      if (cmd === "start" || cmd === "help") {
+        const replyText = isGroup
+          ? "Hi! I'm ARIMA. " + (await getActiveBindingForChat(chat.id))
+              ? "This group is bound and ready. Just chat with me normally."
+              : "This group isn't bound yet. " + HELP_TEXT
+          : HELP_TEXT;
+        await safeReply(config.botToken, chat.id, String(replyText), message.message_id);
+        return NextResponse.json({ ok: true });
+      }
+
+      if (cmd === "link") {
+        if (!isPrivate) {
+          await safeReply(config.botToken, chat.id, "Please run `/link` in a private DM with me, not in a group.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        if (!argText) {
+          await safeReply(config.botToken, chat.id, "Send `/link <code>` where the code comes from CST OS → Admin → Channels → Telegram.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const result = await consumeLinkCode(argText, {
+          id: from.id,
+          username: from.username,
+          first_name: from.first_name,
+          last_name: from.last_name,
+        });
+        if (!result.ok) {
+          await safeReply(config.botToken, chat.id, `❌ ${result.reason}`, message.message_id);
+        } else {
+          await safeReply(
+            config.botToken,
+            chat.id,
+            "✅ Linked! Your Telegram account is now connected to your CST OS account. You can run admin commands (`/bind`, `/unbind`) in groups where you're also a group admin.",
+            message.message_id
+          );
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      if (cmd === "bind") {
+        if (!isGroup) {
+          await safeReply(config.botToken, chat.id, "`/bind` only works in a group.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        if (!argText) {
+          await safeReply(config.botToken, chat.id, "Usage: `/bind <accessToken>`\nGet the token from CST OS → Accounts → [client] → Access Control.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        // 1) Caller must be a Telegram group admin
+        const isGroupAdmin = await isUserGroupAdmin(config.botToken, chat.id, from.id);
+        if (!isGroupAdmin) {
+          await safeReply(config.botToken, chat.id, "❌ You must be a Telegram group admin to run `/bind`.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        // 2) Caller's Telegram account must be linked to a CST OS admin
+        const cst = await resolveCstUserFromTelegram(from.id);
+        if (!cst) {
+          await safeReply(config.botToken, chat.id, "❌ Your Telegram isn't linked to a CST OS account.\nDM me `/link <code>` first (generate the code in CST OS → Admin → Channels → Telegram → My Account).", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        if (cst.role !== "admin") {
+          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can bind groups. Ask an admin to do this for you.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        // 3) Token must match a real client
+        const client = await findClientByAccessToken(argText);
+        if (!client) {
+          await safeReply(config.botToken, chat.id, "❌ That access token doesn't match any client account. Double-check it in CST OS.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        // All checks pass → create binding
+        await createBinding({
+          chatId: chat.id,
+          chatTitle: chat.title || null,
+          clientProfileId: client.id,
+          boundByUserId: cst.cstUserId,
+        });
+        await safeReply(
+          config.botToken,
+          chat.id,
+          `✅ This group is now bound to **${client.companyName}** (${client.clientCode || "no code"}).\nI'll respond as their AI Relationship Manager. Type a message to start.`,
+          message.message_id
+        );
+        return NextResponse.json({ ok: true });
+      }
+
+      if (cmd === "unbind") {
+        if (!isGroup) {
+          await safeReply(config.botToken, chat.id, "`/unbind` only works in a group.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const isGroupAdmin = await isUserGroupAdmin(config.botToken, chat.id, from.id);
+        if (!isGroupAdmin) {
+          await safeReply(config.botToken, chat.id, "❌ You must be a Telegram group admin to run `/unbind`.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const cst = await resolveCstUserFromTelegram(from.id);
+        if (!cst || cst.role !== "admin") {
+          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can unbind groups.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const current = await getActiveBindingForChat(chat.id);
+        if (!current) {
+          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't currently bound to anything.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        await revokeBinding(chat.id);
+        await safeReply(config.botToken, chat.id, `✅ Unbound from **${current.clientName}**. I'll stop responding here until rebound.`, message.message_id);
+        return NextResponse.json({ ok: true });
+      }
+
+      if (cmd === "status") {
+        if (!isGroup) {
+          await safeReply(config.botToken, chat.id, "Run `/status` in a group to see its binding.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const current = await getActiveBindingForChat(chat.id);
+        if (!current) {
+          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound to any client.", message.message_id);
+        } else {
+          await safeReply(
+            config.botToken,
+            chat.id,
+            `📌 This group is bound to **${current.clientName}** (${current.clientCode || "no code"}).\nBound on ${current.boundAt.split("T")[0]}.`,
+            message.message_id
+          );
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      // Unknown command
+      await safeReply(config.botToken, chat.id, "Unknown command. Try `/help`.", message.message_id);
+      return NextResponse.json({ ok: true });
+    }
+
+    // ─── NORMAL CHAT MESSAGE ─────────────────────────────────────────
+    if (isGroup) {
+      const binding = await getActiveBindingForChat(chat.id);
+      if (!binding) {
+        // Only send the welcome on the first un-bound message to avoid spam
+        // (skip — Telegram doesn't penalize silence, and we don't want to nag).
+        return NextResponse.json({ ok: true, ignored: "unbound-group" });
+      }
+      await handleArimaChat({
+        botToken: config.botToken,
+        chatId: chat.id,
+        chatTitle: chat.title || null,
+        userMessage: text,
+        replyToMessageId: message.message_id,
+        clientProfileId: binding.clientProfileId,
+        cstUserId: binding.boundByUserId || "system-telegram", // owner of the conversation row
+        senderName: from.first_name || from.username || "Telegram user",
+        senderTelegramId: String(from.id),
+        channel: "telegram",
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    if (isPrivate) {
+      // DM with the bot — only respond if this Telegram user is linked AND has access to at least one client.
+      const cst = await resolveCstUserFromTelegram(from.id);
+      if (!cst) {
+        await safeReply(
+          config.botToken,
+          chat.id,
+          "I help CST teams manage their clients. To use me in DM, link your Telegram first: `/link <code>` (generate the code in CST OS → Admin → Channels → Telegram).",
+          message.message_id
+        );
+        return NextResponse.json({ ok: true });
+      }
+      // For now, DM chat without a specific client just responds with general guidance.
+      // (Phase 6+ will support a client picker via inline keyboard.)
+      await safeReply(
+        config.botToken,
+        chat.id,
+        "Hi! I work best inside a Telegram group bound to a specific client. For now in DM I can only help with general questions. Type `/help` to see commands.",
+        message.message_id
+      );
+      return NextResponse.json({ ok: true });
+    }
+
+    return NextResponse.json({ ok: true, ignored: "unhandled-chat-type" });
+  } catch (error: any) {
+    console.error("[telegram/webhook] crash:", error);
+    // Always 200 so Telegram doesn't retry-storm
+    return NextResponse.json({ ok: true, error: error.message });
+  }
+}
+
+// ─── ARIMA chat handler (for bound groups) ───────────────────────────
+async function handleArimaChat(args: {
+  botToken: string;
+  chatId: number;
+  chatTitle: string | null;
+  userMessage: string;
+  replyToMessageId: number;
+  clientProfileId: string;
+  cstUserId: string;
+  senderName: string;
+  senderTelegramId: string;
+  channel: string;
+}) {
+  // Show "typing" so the user knows we're working
+  try { await tgSendChatAction(args.botToken, args.chatId, "typing"); } catch {}
+
+  // Find or create a conversation for this Telegram chat.
+  // Strategy: one open ArimaConversation per (channel, chatId) — keep it long-running.
+  const externalKey = `tg:${args.chatId}`;
+
+  let convoId: string;
+  const existing = await db
+    .select({ id: arimaConversations.id })
+    .from(arimaConversations)
+    .where(
+      and(
+        eq(arimaConversations.channel, args.channel),
+        eq(arimaConversations.title, externalKey)
+      )
+    )
+    .limit(1);
+
+  if (existing[0]) {
+    convoId = existing[0].id;
+  } else {
+    convoId = `conv_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+    await db.insert(arimaConversations).values({
+      id: convoId,
+      userId: args.cstUserId,
+      clientProfileId: args.clientProfileId,
+      channel: args.channel,
+      // Use the external key as title so we can find this convo again
+      title: externalKey,
+      status: "active",
+      messageCount: 0,
+      lastMessageAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  // Load prior history for this conversation (most recent 20 turns for context)
+  const history = await db
+    .select({ role: arimaMessages.role, content: arimaMessages.content })
+    .from(arimaMessages)
+    .where(eq(arimaMessages.conversationId, convoId))
+    .orderBy(asc(arimaMessages.createdAt));
+  const trimmedHistory = history.slice(-20);
+
+  const priorContents = trimmedHistory.map(m => ({
+    role: m.role === "assistant" ? "model" as const : "user" as const,
+    parts: [{ text: m.content }],
+  }));
+
+  // Prefix the user's text with their Telegram name so ARIMA knows who's speaking
+  const inlineMessage = `[${args.senderName}]: ${args.userMessage}`;
+
+  try {
+    const result = await runArima({
+      conversationId: convoId,
+      userId: args.cstUserId,
+      clientProfileId: args.clientProfileId,
+      userMessage: inlineMessage,
+      priorContents,
+    });
+    await safeReply(args.botToken, args.chatId, result.replyText, args.replyToMessageId);
+  } catch (e: any) {
+    console.error("[telegram/webhook] ARIMA failed:", e);
+    await safeReply(
+      args.botToken,
+      args.chatId,
+      "Sorry, I hit an error generating a reply. A human teammate will follow up. " + (e?.message ? `\n\n_(${e.message})_` : ""),
+      args.replyToMessageId
+    );
+  }
+}

@@ -888,6 +888,25 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
             )}
             {activeTab === "auth" && (
               <div className="space-y-6 flex-1 animate-in fade-in zoom-in-95 duration-200">
+                {/* Channels callout */}
+                <a
+                  href="/admin/telegram"
+                  className="flex items-center gap-3 p-4 rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 to-blue-50 hover:from-sky-100 hover:to-blue-100 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-sky-400 to-blue-500 flex items-center justify-center shadow-md shadow-blue-500/30 shrink-0">
+                    <span className="text-white text-lg">✈</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-black text-slate-800">ARIMA · Telegram Channel</p>
+                    <p className="text-[11px] font-bold text-slate-500">
+                      Configure the Telegram bot for ARIMA: bot token, webhook, group bindings.
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest shrink-0">
+                    Open →
+                  </span>
+                </a>
+
                 <h3 className="font-bold text-xl flex items-center gap-2 border-b pb-4">
                   🔒 AI Provider Settings
                 </h3>

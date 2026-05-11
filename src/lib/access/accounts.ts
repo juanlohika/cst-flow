@@ -57,6 +57,37 @@ export async function ensureAccessSchema(): Promise<void> {
       updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
     )`);
 
+    // ARIMA channel bindings + Telegram linking
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaChannelBinding (
+      id TEXT PRIMARY KEY,
+      channel TEXT NOT NULL,
+      chatId TEXT NOT NULL,
+      chatTitle TEXT,
+      clientProfileId TEXT NOT NULL,
+      boundByUserId TEXT,
+      status TEXT DEFAULT 'active' NOT NULL,
+      boundAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      revokedAt TEXT,
+      UNIQUE(channel, chatId)
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS TelegramAccountLink (
+      id TEXT PRIMARY KEY,
+      telegramUserId TEXT NOT NULL UNIQUE,
+      telegramUsername TEXT,
+      telegramName TEXT,
+      cstUserId TEXT NOT NULL,
+      status TEXT DEFAULT 'active' NOT NULL,
+      linkedAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS TelegramLinkCode (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      cstUserId TEXT NOT NULL,
+      expiresAt TEXT NOT NULL,
+      usedAt TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+
     _schemaEnsuredAt = Date.now();
   } catch (e) {
     console.warn("[access] ensureAccessSchema warning:", e);

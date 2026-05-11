@@ -8,6 +8,7 @@ export default auth((req) => {
   const isPublicApi = pathname.startsWith("/api/meetings/lookup") ||
                      pathname === "/api/debug-db" ||
                      pathname === "/api/branding" ||
+                     pathname === "/api/telegram/webhook" ||
                      /^\/api\/meetings\/[^/]+\/register$/.test(pathname) ||
                      /^\/api\/share\/[^/]+$/.test(pathname);
   const isPublicPage = pathname === "/" ||
