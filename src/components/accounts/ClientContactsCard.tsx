@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import {
   Users, Plus, Mail, Send, Loader2, Trash2, CheckCircle2,
-  Copy, Check, AlertTriangle, Phone, Briefcase, X,
+  Copy, Check, AlertTriangle, Phone, Briefcase, X, Calendar,
 } from "lucide-react";
 
 interface Contact {
@@ -134,11 +134,36 @@ export default function ClientContactsCard({ accountId, companyName }: Props) {
 
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-      <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+      <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap">
         <Users className="w-4 h-4 text-rose-500" />
         <h3 className="text-[11px] font-black text-slate-800 uppercase tracking-widest flex-1">
           Client Contacts (Portal Access)
         </h3>
+        <button
+          onClick={async () => {
+            if (!confirm("Send a proactive check-in to this client right now? ARIMA will generate the message and deliver via the best channel.")) return;
+            try {
+              const res = await fetch("/api/admin/arima-checkins/send-now", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ clientProfileId: accountId }),
+              });
+              const data = await res.json();
+              if (res.ok && data.ok) {
+                alert(`Sent via ${data.channel}.\n\nMessage:\n${data.text}`);
+              } else {
+                alert(`Failed: ${data.error || "Unknown error"}`);
+              }
+            } catch (err: any) {
+              alert(`Error: ${err.message}`);
+            }
+          }}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-50 text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-colors"
+          title="Send a proactive check-in message right now"
+        >
+          <Calendar className="w-3 h-3" />
+          Send check-in
+        </button>
         <button
           onClick={() => { setShowAdd(true); setError(null); }}
           className="flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-50 text-rose-700 text-[10px] font-black uppercase tracking-widest hover:bg-rose-100 transition-colors"

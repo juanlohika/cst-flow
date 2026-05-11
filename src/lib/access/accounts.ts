@@ -196,6 +196,50 @@ export async function ensureAccessSchema(): Promise<void> {
       executedAt TEXT
     )`);
 
+    // Check-in scheduler tables
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaCheckInSchedule (
+      id TEXT PRIMARY KEY,
+      clientProfileId TEXT NOT NULL UNIQUE,
+      cadence TEXT DEFAULT 'monthly' NOT NULL,
+      customIntervalDays INTEGER,
+      preferredChannel TEXT DEFAULT 'auto' NOT NULL,
+      nextDueAt TEXT NOT NULL,
+      lastSentAt TEXT,
+      lastResponseAt TEXT,
+      consecutiveNoResponse INTEGER DEFAULT 0 NOT NULL,
+      status TEXT DEFAULT 'active' NOT NULL,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaCheckIn (
+      id TEXT PRIMARY KEY,
+      scheduleId TEXT,
+      clientProfileId TEXT NOT NULL,
+      contactId TEXT,
+      channel TEXT NOT NULL,
+      messageContent TEXT,
+      conversationId TEXT,
+      status TEXT DEFAULT 'scheduled' NOT NULL,
+      scheduledAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      sentAt TEXT,
+      respondedAt TEXT,
+      escalatedAt TEXT,
+      errorMessage TEXT,
+      triggeredByUserId TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaScheduleRule (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      cadence TEXT DEFAULT 'monthly' NOT NULL,
+      customIntervalDays INTEGER,
+      matchEngagementStatus TEXT,
+      priority INTEGER DEFAULT 0 NOT NULL,
+      enabled INTEGER DEFAULT 1 NOT NULL,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+
     _schemaEnsuredAt = Date.now();
   } catch (e) {
     console.warn("[access] ensureAccessSchema warning:", e);

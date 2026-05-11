@@ -595,6 +595,55 @@ export const notificationPreferences = sqliteTable("NotificationPreference", {
   updatedAt:         text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+// ArimaCheckInSchedule: per-client check-in cadence. One row per client.
+// Lazily created on first cadence resolution (using the matching ScheduleRule's defaults).
+export const arimaCheckInSchedules = sqliteTable("ArimaCheckInSchedule", {
+  id:                     text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  clientProfileId:        text("clientProfileId").notNull().unique().references(() => clientProfiles.id, { onDelete: "cascade" }),
+  cadence:                text("cadence").default("monthly").notNull(), // weekly | biweekly | monthly | quarterly | custom
+  customIntervalDays:     integer("customIntervalDays"),
+  preferredChannel:       text("preferredChannel").default("auto").notNull(), // auto | portal | telegram | email
+  nextDueAt:              text("nextDueAt").notNull(),
+  lastSentAt:             text("lastSentAt"),
+  lastResponseAt:         text("lastResponseAt"),
+  consecutiveNoResponse:  integer("consecutiveNoResponse").default(0).notNull(),
+  status:                 text("status").default("active").notNull(), // active | paused | stopped
+  createdAt:              text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:              text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// ArimaCheckIn: one row per check-in sent.
+export const arimaCheckIns = sqliteTable("ArimaCheckIn", {
+  id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  scheduleId:      text("scheduleId").references(() => arimaCheckInSchedules.id, { onDelete: "set null" }),
+  clientProfileId: text("clientProfileId").notNull(),
+  contactId:       text("contactId"),                          // ClientContact targeted (portal/email)
+  channel:         text("channel").notNull(),                  // portal | telegram | email | internal
+  messageContent:  text("messageContent"),                     // what ARIMA wrote
+  conversationId:  text("conversationId"),                     // ArimaConversation linked
+  status:          text("status").default("scheduled").notNull(), // scheduled | sent | responded | no_response | failed | escalated
+  scheduledAt:     text("scheduledAt").default(sql`(datetime('now'))`).notNull(),
+  sentAt:          text("sentAt"),
+  respondedAt:     text("respondedAt"),
+  escalatedAt:     text("escalatedAt"),
+  errorMessage:    text("errorMessage"),
+  triggeredByUserId: text("triggeredByUserId"),                // when manually fired
+  createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// ArimaScheduleRule: cadence templates that auto-apply to matching clients.
+export const arimaScheduleRules = sqliteTable("ArimaScheduleRule", {
+  id:                    text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  name:                  text("name").notNull(),
+  cadence:               text("cadence").default("monthly").notNull(),
+  customIntervalDays:    integer("customIntervalDays"),
+  matchEngagementStatus: text("matchEngagementStatus"),         // "confirmed" | "pilot" | "exploratory" | null (any)
+  priority:              integer("priority").default(0).notNull(), // higher wins when multiple match
+  enabled:               integer("enabled", { mode: "boolean" }).default(true).notNull(),
+  createdAt:             text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:             text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
 // ArimaTool: registered callable function ARIMA can invoke during a conversation.
 // Tools are seeded from code (built-ins) but their enabled flag + autonomy can be
 // edited by admins via the /admin/arima-tools UI.

@@ -62,6 +62,9 @@ export async function GET() {
       `CREATE TABLE IF NOT EXISTS SubscriberSession (id TEXT PRIMARY KEY, sessionId TEXT NOT NULL UNIQUE, contactId TEXT NOT NULL REFERENCES ClientContact(id) ON DELETE CASCADE, userAgent TEXT, ipAddress TEXT, expiresAt TEXT NOT NULL, lastUsedAt TEXT, status TEXT DEFAULT 'active' NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS ArimaTool (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, category TEXT DEFAULT 'read' NOT NULL, description TEXT NOT NULL, inputSchema TEXT NOT NULL, enabled INTEGER DEFAULT 1 NOT NULL, autonomy TEXT DEFAULT 'auto' NOT NULL, isBuiltIn INTEGER DEFAULT 1 NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS ArimaToolInvocation (id TEXT PRIMARY KEY, toolName TEXT NOT NULL, conversationId TEXT, userId TEXT, clientProfileId TEXT, input TEXT, output TEXT, status TEXT DEFAULT 'pending' NOT NULL, approvalNeeded INTEGER DEFAULT 0 NOT NULL, approvedByUserId TEXT, approvedAt TEXT, errorMessage TEXT, durationMs INTEGER, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, executedAt TEXT)`,
+      `CREATE TABLE IF NOT EXISTS ArimaCheckInSchedule (id TEXT PRIMARY KEY, clientProfileId TEXT NOT NULL UNIQUE REFERENCES ClientProfile(id) ON DELETE CASCADE, cadence TEXT DEFAULT 'monthly' NOT NULL, customIntervalDays INTEGER, preferredChannel TEXT DEFAULT 'auto' NOT NULL, nextDueAt TEXT NOT NULL, lastSentAt TEXT, lastResponseAt TEXT, consecutiveNoResponse INTEGER DEFAULT 0 NOT NULL, status TEXT DEFAULT 'active' NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS ArimaCheckIn (id TEXT PRIMARY KEY, scheduleId TEXT, clientProfileId TEXT NOT NULL, contactId TEXT, channel TEXT NOT NULL, messageContent TEXT, conversationId TEXT, status TEXT DEFAULT 'scheduled' NOT NULL, scheduledAt TEXT DEFAULT (datetime('now')) NOT NULL, sentAt TEXT, respondedAt TEXT, escalatedAt TEXT, errorMessage TEXT, triggeredByUserId TEXT, createdAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS ArimaScheduleRule (id TEXT PRIMARY KEY, name TEXT NOT NULL, cadence TEXT DEFAULT 'monthly' NOT NULL, customIntervalDays INTEGER, matchEngagementStatus TEXT, priority INTEGER DEFAULT 0 NOT NULL, enabled INTEGER DEFAULT 1 NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
     ];
 
     for (const q of bootstrapQueries) {
@@ -236,6 +239,31 @@ export async function GET() {
       if (updated > 0) migrations.push(`Refreshed ${updated} ARIMA tool definition(s).`);
     } catch (toolsErr: any) {
       console.warn("[migrator] ARIMA tools seed warn:", toolsErr?.message);
+    }
+
+    // 6. SEED A DEFAULT CHECK-IN CADENCE RULE so brand-new deployments have a
+    //    sensible baseline. Admins can edit or disable it after deploy.
+    try {
+      const { arimaScheduleRules } = await import("@/db/schema");
+      const existing = await db.select({ id: arimaScheduleRules.id }).from(arimaScheduleRules).limit(1);
+      if (existing.length === 0) {
+        const id = `rule_default_monthly`;
+        const now = new Date().toISOString();
+        await db.insert(arimaScheduleRules).values({
+          id,
+          name: "Default — Monthly check-ins for confirmed clients",
+          cadence: "monthly",
+          customIntervalDays: null,
+          matchEngagementStatus: "confirmed",
+          priority: 0,
+          enabled: true,
+          createdAt: now,
+          updatedAt: now,
+        }).onConflictDoNothing();
+        migrations.push(`Seeded default check-in rule (monthly for confirmed clients).`);
+      }
+    } catch (rulesErr: any) {
+      console.warn("[migrator] check-in rule seed warn:", rulesErr?.message);
     }
 
     dbStatus = true;

@@ -15,6 +15,7 @@ import { and, eq, desc, sql } from "drizzle-orm";
 import { getModelForApp, generateWithRetry, readAIConfig } from "@/lib/ai";
 import { dispatchNotification } from "@/lib/notifications/dispatcher";
 import { buildGeminiTools, executeTool, type ToolContext } from "@/lib/arima/tools";
+import { markScheduleResponded } from "@/lib/arima/checkins";
 
 const FALLBACK_INSTRUCTION = `You are ARIMA, an AI Relationship Manager for the CST team at MobileOptima/Tarkie.
 
@@ -191,6 +192,11 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     content: args.userMessage,
     createdAt: now,
   });
+
+  // Inbound message → reset the check-in no-response counter (if a schedule exists)
+  if (args.clientProfileId) {
+    markScheduleResponded(args.clientProfileId).catch(() => {});
+  }
 
   // 2) Load skill text (concat all active arima skills)
   let arimaSkill = "";
