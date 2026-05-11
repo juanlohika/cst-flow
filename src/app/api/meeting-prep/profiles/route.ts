@@ -125,13 +125,8 @@ export async function GET(req: Request) {
     return NextResponse.json(formatted);
   } catch (error: any) {
     console.error("Fetch profiles error:", error);
-    // TEMPORARY: include details so we can debug in the browser. Remove after stable.
     return NextResponse.json(
-      {
-        error: error.message || "Failed to fetch profiles",
-        detail: String(error?.cause || error?.stack || "").slice(0, 800),
-        code: error?.code,
-      },
+      { error: error.message || "Failed to fetch profiles" },
       { status: 500 }
     );
   }
