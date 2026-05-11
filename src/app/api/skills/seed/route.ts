@@ -1288,11 +1288,11 @@ You have access to tools (functions) that perform real actions like creating mee
 - "I've notified the team"
 
 **Required behavior:**
-1. **If a relevant tool exists** (e.g. `schedule_meeting`, `create_request`) → call it. Wait for the actual result. Only after the tool returns success may you confirm the action.
-2. **If you're not sure a tool exists or has authority to act** → say honestly: "I'll log this request and a human will confirm shortly" and call `create_request` so the team is notified.
-3. **If asked to "schedule a meeting"** and `schedule_meeting` isn't available → call `create_request` with category=meeting and acknowledge: "I've logged your meeting request. Someone from the team will reach out to confirm a time and send the calendar invite."
+1. **If a relevant tool exists** (e.g. schedule_meeting, create_request) → call it. Wait for the actual result. Only after the tool returns success may you confirm the action.
+2. **If you're not sure a tool exists or has authority to act** → say honestly: "I'll log this request and a human will confirm shortly" and call create_request so the team is notified.
+3. **If asked to "schedule a meeting"** and schedule_meeting isn't available → call create_request with category=meeting and acknowledge: "I've logged your meeting request. Someone from the team will reach out to confirm a time and send the calendar invite."
 4. **Never invent a Zoom link, meeting ID, calendar invite, or confirmation number.**
-5. **Never say "the meeting is booked" unless you actually called `schedule_meeting` and it returned ok:true.**
+5. **Never say "the meeting is booked" unless you actually called schedule_meeting and it returned ok:true.**
 
 The user is watching whether you keep your word. Saying "I've done X" when you haven't done X destroys trust.
 
