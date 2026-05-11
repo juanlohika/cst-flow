@@ -595,6 +595,42 @@ export const notificationPreferences = sqliteTable("NotificationPreference", {
   updatedAt:         text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+// ArimaTool: registered callable function ARIMA can invoke during a conversation.
+// Tools are seeded from code (built-ins) but their enabled flag + autonomy can be
+// edited by admins via the /admin/arima-tools UI.
+export const arimaTools = sqliteTable("ArimaTool", {
+  id:           text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  name:         text("name").notNull().unique(),       // function name passed to the AI provider
+  category:     text("category").default("read").notNull(), // read | write | external
+  description:  text("description").notNull(),          // shown to the AI to decide when to call
+  inputSchema:  text("inputSchema").notNull(),          // JSON schema for the params
+  enabled:      integer("enabled", { mode: "boolean" }).default(true).notNull(),
+  autonomy:     text("autonomy").default("auto").notNull(), // auto | approval | disabled
+  isBuiltIn:    integer("isBuiltIn", { mode: "boolean" }).default(true).notNull(),
+  createdAt:    text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:    text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// ArimaToolInvocation: log of every tool call ARIMA made (or attempted to make).
+// Used for the admin invocations list, the approval queue, and analytics.
+export const arimaToolInvocations = sqliteTable("ArimaToolInvocation", {
+  id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  toolName:        text("toolName").notNull(),
+  conversationId:  text("conversationId"),
+  userId:          text("userId"),                       // CST OS user OR ClientContact id (for portal)
+  clientProfileId: text("clientProfileId"),
+  input:           text("input"),                        // JSON input from the AI
+  output:          text("output"),                       // JSON result or error
+  status:          text("status").default("pending").notNull(), // pending | approved | executed | denied | failed
+  approvalNeeded:  integer("approvalNeeded", { mode: "boolean" }).default(false).notNull(),
+  approvedByUserId: text("approvedByUserId"),
+  approvedAt:      text("approvedAt"),
+  errorMessage:    text("errorMessage"),
+  durationMs:      integer("durationMs"),
+  createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  executedAt:      text("executedAt"),
+});
+
 // ClientContact: external people on the client side (e.g. their CEO, project lead, etc.)
 // who can be invited to chat with ARIMA via the magic-link portal.
 export const clientContacts = sqliteTable("ClientContact", {

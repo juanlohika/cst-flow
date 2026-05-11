@@ -14,6 +14,7 @@ import {
 import { and, eq, desc, sql } from "drizzle-orm";
 import { getModelForApp, generateWithRetry, readAIConfig } from "@/lib/ai";
 import { dispatchNotification } from "@/lib/notifications/dispatcher";
+import { buildGeminiTools, executeTool, type ToolContext } from "@/lib/arima/tools";
 
 const FALLBACK_INSTRUCTION = `You are ARIMA, an AI Relationship Manager for the CST team at MobileOptima/Tarkie.
 
@@ -59,6 +60,47 @@ export interface ArimaRunResult {
   capturedRequest: ParsedRequest | null;
   provider: string;
   assistantMessageId: string;
+}
+
+/**
+ * Pull out function-call structures from a Gemini response (or any adapter that
+ * passes them through). Returns [] for non-tool responses (e.g. Claude, plain text).
+ */
+function extractFunctionCalls(modelResult: any): Array<{ name: string; args: any }> {
+  try {
+    const candidates = modelResult?.response?.candidates;
+    if (!candidates?.length) return [];
+    const parts = candidates[0]?.content?.parts || [];
+    const calls: Array<{ name: string; args: any }> = [];
+    for (const p of parts) {
+      if (p?.functionCall?.name) {
+        calls.push({ name: p.functionCall.name, args: p.functionCall.args || {} });
+      }
+    }
+    return calls;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Always get text out of a model result, even if the adapter throws on
+ * text() when the response is a function-call message.
+ */
+function safeExtractText(modelResult: any): string {
+  try {
+    if (typeof modelResult?.response?.text === "function") {
+      return modelResult.response.text() || "";
+    }
+  } catch {
+    // Gemini throws if there's no text part — fall through to manual extraction
+  }
+  try {
+    const parts = modelResult?.response?.candidates?.[0]?.content?.parts || [];
+    return parts.map((p: any) => p?.text || "").join("").trim();
+  } catch {
+    return "";
+  }
 }
 
 function parseRequestBlock(text: string): { cleanText: string; request: ParsedRequest | null } {
@@ -195,12 +237,70 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
   const aiConfig = await readAIConfig();
   const providerLabel = (model as any)?.__provider || aiConfig.primaryProvider || "unknown";
 
-  // 6) Call the model with retry
-  const result = await generateWithRetry(model, {
+  // 6) Call the model with retry + tool-calling loop
+  const toolDefs = await buildGeminiTools().catch(() => undefined);
+  const toolCtx: ToolContext = {
+    conversationId: args.conversationId,
+    userId: args.userId,
+    clientProfileId: args.clientProfileId || null,
+    channel: "web", // overridden by Telegram/portal callers if needed in future
+  };
+
+  const baseInput: any = {
     contents,
     systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
-  });
-  const rawReply = result.response.text();
+  };
+  if (toolDefs) baseInput.tools = toolDefs;
+
+  let result = await generateWithRetry(model, baseInput);
+
+  // Tool-call loop: if the model wants to call functions, execute and feed back.
+  // Capped at 4 iterations to prevent runaway loops.
+  let rawReply = "";
+  for (let iter = 0; iter < 4; iter++) {
+    const fnCalls = extractFunctionCalls(result);
+    if (fnCalls.length === 0) {
+      rawReply = safeExtractText(result);
+      break;
+    }
+
+    // Execute each function call
+    const fnResponses: Array<{ name: string; response: any }> = [];
+    for (const call of fnCalls) {
+      try {
+        const exec = await executeTool({
+          name: call.name,
+          input: call.args || {},
+          context: toolCtx,
+        });
+        fnResponses.push({
+          name: call.name,
+          response: exec.ok ? exec.data || { ok: true, summary: exec.summary } : { ok: false, error: exec.error },
+        });
+      } catch (e: any) {
+        fnResponses.push({ name: call.name, response: { ok: false, error: e?.message || "Tool error" } });
+      }
+    }
+
+    // Build the next request: include the model's function-call message + our responses
+    contents.push({
+      role: "model",
+      parts: fnCalls.map(c => ({ functionCall: { name: c.name, args: c.args || {} } })),
+    });
+    contents.push({
+      role: "user",
+      parts: fnResponses.map(r => ({ functionResponse: { name: r.name, response: r.response } })),
+    });
+
+    result = await generateWithRetry(model, {
+      contents,
+      systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
+      ...(toolDefs ? { tools: toolDefs } : {}),
+    });
+  }
+
+  if (!rawReply) rawReply = safeExtractText(result);
+
   let { cleanText: replyText, request: parsedRequest } = parseRequestBlock(rawReply);
 
   // SAFETY NET: never let an empty reply slip through. If the AI returned

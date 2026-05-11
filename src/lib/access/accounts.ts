@@ -165,6 +165,37 @@ export async function ensureAccessSchema(): Promise<void> {
       createdAt TEXT DEFAULT (datetime('now')) NOT NULL
     )`);
 
+    // ARIMA tools registry
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaTool (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      category TEXT DEFAULT 'read' NOT NULL,
+      description TEXT NOT NULL,
+      inputSchema TEXT NOT NULL,
+      enabled INTEGER DEFAULT 1 NOT NULL,
+      autonomy TEXT DEFAULT 'auto' NOT NULL,
+      isBuiltIn INTEGER DEFAULT 1 NOT NULL,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaToolInvocation (
+      id TEXT PRIMARY KEY,
+      toolName TEXT NOT NULL,
+      conversationId TEXT,
+      userId TEXT,
+      clientProfileId TEXT,
+      input TEXT,
+      output TEXT,
+      status TEXT DEFAULT 'pending' NOT NULL,
+      approvalNeeded INTEGER DEFAULT 0 NOT NULL,
+      approvedByUserId TEXT,
+      approvedAt TEXT,
+      errorMessage TEXT,
+      durationMs INTEGER,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      executedAt TEXT
+    )`);
+
     _schemaEnsuredAt = Date.now();
   } catch (e) {
     console.warn("[access] ensureAccessSchema warning:", e);

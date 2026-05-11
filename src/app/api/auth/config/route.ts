@@ -60,6 +60,8 @@ export async function GET() {
       `CREATE TABLE IF NOT EXISTS ClientContact (id TEXT PRIMARY KEY, clientProfileId TEXT NOT NULL REFERENCES ClientProfile(id) ON DELETE CASCADE, name TEXT NOT NULL, email TEXT NOT NULL, role TEXT, phone TEXT, status TEXT DEFAULT 'invited' NOT NULL, invitedAt TEXT, activatedAt TEXT, lastSeenAt TEXT, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS SubscriberMagicLink (id TEXT PRIMARY KEY, contactId TEXT NOT NULL REFERENCES ClientContact(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, expiresAt TEXT NOT NULL, usedAt TEXT, sentToEmail TEXT NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, createdByUserId TEXT)`,
       `CREATE TABLE IF NOT EXISTS SubscriberSession (id TEXT PRIMARY KEY, sessionId TEXT NOT NULL UNIQUE, contactId TEXT NOT NULL REFERENCES ClientContact(id) ON DELETE CASCADE, userAgent TEXT, ipAddress TEXT, expiresAt TEXT NOT NULL, lastUsedAt TEXT, status TEXT DEFAULT 'active' NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS ArimaTool (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, category TEXT DEFAULT 'read' NOT NULL, description TEXT NOT NULL, inputSchema TEXT NOT NULL, enabled INTEGER DEFAULT 1 NOT NULL, autonomy TEXT DEFAULT 'auto' NOT NULL, isBuiltIn INTEGER DEFAULT 1 NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS ArimaToolInvocation (id TEXT PRIMARY KEY, toolName TEXT NOT NULL, conversationId TEXT, userId TEXT, clientProfileId TEXT, input TEXT, output TEXT, status TEXT DEFAULT 'pending' NOT NULL, approvalNeeded INTEGER DEFAULT 0 NOT NULL, approvedByUserId TEXT, approvedAt TEXT, errorMessage TEXT, durationMs INTEGER, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, executedAt TEXT)`,
     ];
 
     for (const q of bootstrapQueries) {
@@ -223,6 +225,17 @@ export async function GET() {
       if (memberFills > 0) migrations.push(`Auto-granted creator memberships for ${memberFills} accounts.`);
     } catch (backfillErr: any) {
       console.warn("[migrator] backfill warn:", backfillErr?.message);
+    }
+
+    // 5. SEED ARIMA TOOLS — register every built-in tool in the DB so admins
+    //    can manage enabled/autonomy via /admin/arima-tools.
+    try {
+      const toolsModule = await import("@/lib/arima/tools");
+      const { created, updated } = await toolsModule.seedToolRegistry();
+      if (created > 0) migrations.push(`Registered ${created} new ARIMA tool(s).`);
+      if (updated > 0) migrations.push(`Refreshed ${updated} ARIMA tool definition(s).`);
+    } catch (toolsErr: any) {
+      console.warn("[migrator] ARIMA tools seed warn:", toolsErr?.message);
     }
 
     dbStatus = true;
