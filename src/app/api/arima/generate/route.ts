@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { getModelForApp, generateWithRetry } from "@/lib/ai";
+import { getModelForApp, generateWithRetry, readAIConfig } from "@/lib/ai";
 import { db } from "@/db";
-import { skills as skillsTable } from "@/db/schema";
-import { and, eq, desc } from "drizzle-orm";
+import {
+  skills as skillsTable,
+  arimaConversations,
+  arimaMessages,
+} from "@/db/schema";
+import { and, eq, desc, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -12,22 +16,101 @@ Be warm, concise, professional. Always identify yourself as an AI on the first m
 Never invent contract terms, commit to deadlines, or share info about other clients.
 Escalate sensitive topics (legal, billing, scope changes, complaints) to a human teammate.`;
 
+function titleFromText(text: string): string {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= 60) return oneLine;
+  return oneLine.slice(0, 57) + "…";
+}
+
+async function ensureTables() {
+  try {
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaConversation (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      clientProfileId TEXT,
+      channel TEXT DEFAULT 'web' NOT NULL,
+      title TEXT,
+      summary TEXT,
+      status TEXT DEFAULT 'active' NOT NULL,
+      lastMessageAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      messageCount INTEGER DEFAULT 0 NOT NULL,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaMessage (
+      id TEXT PRIMARY KEY,
+      conversationId TEXT NOT NULL REFERENCES ArimaConversation(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      provider TEXT,
+      model TEXT,
+      tokensIn INTEGER,
+      tokensOut INTEGER,
+      toolCalls TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+  } catch (e) {
+    console.warn("[arima] ensureTables warn:", e);
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const userId = session.user.id;
 
-    const { prompt, messages } = await req.json();
+    await ensureTables();
+
+    const body = await req.json();
+    const { prompt, messages, conversationId: incomingConvId, clientProfileId } = body;
+
     if (!prompt && (!messages || messages.length === 0)) {
       return NextResponse.json({ error: "Prompt required" }, { status: 400 });
     }
 
-    // Resolve the model for ARIMA (provider configured in App Builder; defaults to global primary)
-    const model = await getModelForApp("arima");
+    // ─── Resolve or create conversation ─────────────────────────────────
+    let conversationId = incomingConvId as string | undefined;
+    const now = new Date().toISOString();
+    const lastUserMessage =
+      (Array.isArray(messages) && messages.length > 0
+        ? messages[messages.length - 1]?.content
+        : prompt) || "";
 
-    // Pull active skills for category "arima" and concatenate them
+    if (!conversationId) {
+      conversationId = `conv_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+      await db.insert(arimaConversations).values({
+        id: conversationId,
+        userId,
+        clientProfileId: clientProfileId || null,
+        channel: "web",
+        title: titleFromText(lastUserMessage) || "New conversation",
+        status: "active",
+        messageCount: 0,
+        lastMessageAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } else {
+      // Verify ownership; if not the owner, deny
+      const existing = await db
+        .select({ id: arimaConversations.id, userId: arimaConversations.userId })
+        .from(arimaConversations)
+        .where(eq(arimaConversations.id, conversationId))
+        .limit(1);
+      const isAdmin = (session.user as any).role === "admin";
+      if (!existing[0] || (existing[0].userId !== userId && !isAdmin)) {
+        return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+      }
+    }
+
+    // ─── Resolve model + skill ──────────────────────────────────────────
+    const model = await getModelForApp("arima");
+    const aiConfig = await readAIConfig();
+    const providerLabel = (model as any)?.__provider || aiConfig.primaryProvider || "unknown";
+
     let arimaSkill = "";
     try {
       const skills = await db
@@ -41,10 +124,9 @@ export async function POST(req: Request) {
     } catch (err) {
       console.error("[arima] skill fetch failed:", err);
     }
-
     const systemInstruction = arimaSkill || FALLBACK_INSTRUCTION;
 
-    // Build conversation content in Gemini-compatible format (Claude adapter also handles this)
+    // ─── Build content for the model ────────────────────────────────────
     let contents: any[] = [];
     if (Array.isArray(messages) && messages.length > 0) {
       contents = messages.map((m: any) => ({
@@ -55,12 +137,43 @@ export async function POST(req: Request) {
       contents = [{ role: "user", parts: [{ text: prompt }] }];
     }
 
+    // ─── Persist the user message before calling the model ──────────────
+    await db.insert(arimaMessages).values({
+      id: `msg_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+      conversationId,
+      role: "user",
+      content: lastUserMessage,
+      createdAt: now,
+    });
+
+    // ─── Call the model ─────────────────────────────────────────────────
     const result = await generateWithRetry(model, {
       contents,
       systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
     });
+    const replyText = result.response.text();
 
-    return NextResponse.json({ content: result.response.text() });
+    // ─── Persist the assistant reply + update conversation aggregate ────
+    const replyAt = new Date().toISOString();
+    await db.insert(arimaMessages).values({
+      id: `msg_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+      conversationId,
+      role: "assistant",
+      content: replyText,
+      provider: providerLabel,
+      createdAt: replyAt,
+    });
+
+    await db
+      .update(arimaConversations)
+      .set({
+        messageCount: sql`COALESCE(${arimaConversations.messageCount}, 0) + 2`,
+        lastMessageAt: replyAt,
+        updatedAt: replyAt,
+      })
+      .where(eq(arimaConversations.id, conversationId));
+
+    return NextResponse.json({ content: replyText, conversationId });
   } catch (error: any) {
     console.error("[arima] generation error:", error);
     const isOverloaded =

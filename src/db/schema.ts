@@ -477,3 +477,32 @@ export const presentationBlocks = sqliteTable("PresentationBlock", {
   createdAt:           text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:           text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
+
+// ─── ARIMA (AI Relationship Manager) ─────────────────────────────
+
+export const arimaConversations = sqliteTable("ArimaConversation", {
+  id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId:          text("userId").notNull(),           // FK to User (the human owning this convo)
+  clientProfileId: text("clientProfileId"),            // Optional FK to ClientProfile (the account context)
+  channel:         text("channel").default("web").notNull(), // web | telegram | facebook | whatsapp | email (future)
+  title:           text("title"),                      // Auto-generated from first user message
+  summary:         text("summary"),                    // AI-generated rolling summary (filled when long)
+  status:          text("status").default("active").notNull(), // active | archived | closed
+  lastMessageAt:   text("lastMessageAt").default(sql`(datetime('now'))`).notNull(),
+  messageCount:    integer("messageCount").default(0).notNull(),
+  createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+export const arimaMessages = sqliteTable("ArimaMessage", {
+  id:             text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  conversationId: text("conversationId").notNull().references(() => arimaConversations.id, { onDelete: "cascade" }),
+  role:           text("role").notNull(),              // user | assistant | system
+  content:        text("content").notNull(),
+  provider:       text("provider"),                    // gemini | claude | groq | ollama (which AI replied)
+  model:          text("model"),                       // gemini-2.5-flash etc.
+  tokensIn:       integer("tokensIn"),
+  tokensOut:      integer("tokensOut"),
+  toolCalls:      text("toolCalls"),                   // JSON array of tool invocations (future)
+  createdAt:      text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
