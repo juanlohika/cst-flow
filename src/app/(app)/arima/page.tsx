@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import {
   Heart, ArrowUp, Loader2, Sparkles, Plus, MessageCircle,
   Trash2, Inbox, MessageSquare, Search, Building2, X, ChevronDown,
-  ClipboardList, AlertCircle, CheckCircle2, Clock, Tag, Filter,
+  ClipboardList, AlertCircle, CheckCircle2, Clock, Tag, Filter, Settings,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
@@ -425,10 +425,11 @@ function ArimaContent() {
           )}
           <a
             href="/arima/notifications"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest text-slate-500 hover:text-slate-700 transition-all"
-            title="Manage notification preferences"
+            className="flex items-center justify-center w-8 h-8 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100/60 transition-all"
+            title="Notification settings"
+            aria-label="Notification settings"
           >
-            🔔
+            <Settings className="w-3.5 h-3.5" />
           </a>
         </div>
       </div>
