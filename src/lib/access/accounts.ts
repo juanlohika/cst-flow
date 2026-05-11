@@ -88,6 +88,46 @@ export async function ensureAccessSchema(): Promise<void> {
       createdAt TEXT DEFAULT (datetime('now')) NOT NULL
     )`);
 
+    // Notification tables
+    await db.run(sql`CREATE TABLE IF NOT EXISTS NotificationSubscription (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      authSecret TEXT NOT NULL,
+      userAgent TEXT,
+      status TEXT DEFAULT 'active' NOT NULL,
+      lastUsedAt TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS NotificationPreference (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL UNIQUE,
+      webPushEnabled INTEGER DEFAULT 1 NOT NULL,
+      emailEnabled INTEGER DEFAULT 1 NOT NULL,
+      notifyOnRequest INTEGER DEFAULT 1 NOT NULL,
+      notifyOnTelegram INTEGER DEFAULT 0 NOT NULL,
+      notifyOnMention INTEGER DEFAULT 1 NOT NULL,
+      quietStart TEXT,
+      quietEnd TEXT,
+      emailCadence TEXT DEFAULT 'instant' NOT NULL,
+      updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS NotificationLog (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      type TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT,
+      link TEXT,
+      payload TEXT,
+      status TEXT DEFAULT 'pending' NOT NULL,
+      errorMessage TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      sentAt TEXT
+    )`);
+
     _schemaEnsuredAt = Date.now();
   } catch (e) {
     console.warn("[access] ensureAccessSchema warning:", e);

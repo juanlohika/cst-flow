@@ -423,6 +423,13 @@ function ArimaContent() {
               Inbox
             </button>
           )}
+          <a
+            href="/arima/notifications"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest text-slate-500 hover:text-slate-700 transition-all"
+            title="Manage notification preferences"
+          >
+            🔔
+          </a>
         </div>
       </div>
 

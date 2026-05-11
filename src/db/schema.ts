@@ -562,6 +562,55 @@ export const telegramLinkCodes = sqliteTable("TelegramLinkCode", {
   createdAt: text("createdAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+// NotificationSubscription: browser-side Web Push subscription registered by each user/device.
+// One row per browser the user has subscribed on (each device has a unique endpoint).
+export const notificationSubscriptions = sqliteTable("NotificationSubscription", {
+  id:        text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId:    text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  endpoint:  text("endpoint").notNull().unique(),  // The unique URL the browser provided
+  p256dh:    text("p256dh").notNull(),              // Public key for the user agent
+  authSecret: text("authSecret").notNull(),         // Auth secret for encryption
+  userAgent: text("userAgent"),                     // For display in the admin UI
+  status:    text("status").default("active").notNull(), // active | failed | revoked
+  lastUsedAt: text("lastUsedAt"),
+  createdAt: text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// NotificationPreference: per-user opt-in/out settings for notifications.
+// One row per user (lazy-created on first read).
+export const notificationPreferences = sqliteTable("NotificationPreference", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId:            text("userId").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
+  webPushEnabled:    integer("webPushEnabled", { mode: "boolean" }).default(true).notNull(),
+  emailEnabled:      integer("emailEnabled", { mode: "boolean" }).default(true).notNull(),
+  // Which events trigger a notification
+  notifyOnRequest:   integer("notifyOnRequest", { mode: "boolean" }).default(true).notNull(),
+  notifyOnTelegram:  integer("notifyOnTelegram", { mode: "boolean" }).default(false).notNull(),
+  notifyOnMention:   integer("notifyOnMention", { mode: "boolean" }).default(true).notNull(),
+  // Quiet hours (no push during this window; 24h format, e.g. "22:00"-"07:00")
+  quietStart:        text("quietStart"),
+  quietEnd:          text("quietEnd"),
+  // Email digest cadence: "instant" | "hourly" | "daily" | "off"
+  emailCadence:      text("emailCadence").default("instant").notNull(),
+  updatedAt:         text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// NotificationLog: every dispatched notification, for analytics + debug + email-digest batching.
+export const notificationLogs = sqliteTable("NotificationLog", {
+  id:        text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId:    text("userId").notNull(),
+  type:      text("type").notNull(),               // request_captured | telegram_message | mention
+  channel:   text("channel").notNull(),            // web_push | email
+  title:     text("title").notNull(),
+  body:      text("body"),
+  link:      text("link"),                         // optional URL to open
+  payload:   text("payload"),                       // JSON details
+  status:    text("status").default("pending").notNull(), // pending | sent | failed
+  errorMessage: text("errorMessage"),
+  createdAt: text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  sentAt:    text("sentAt"),
+});
+
 // ARIMA Requests: structured asks captured from conversations.
 // When ARIMA detects the user is making a real request (feature, bug, question, etc.)
 // it emits a [REQUEST]…[/REQUEST] tag in its reply; the generate route parses it and inserts a row here.

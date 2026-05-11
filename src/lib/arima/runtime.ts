@@ -9,9 +9,11 @@ import {
   arimaMessages,
   arimaRequests,
   clientProfiles as clientProfilesTable,
+  accountMemberships,
 } from "@/db/schema";
 import { and, eq, desc, sql } from "drizzle-orm";
 import { getModelForApp, generateWithRetry, readAIConfig } from "@/lib/ai";
+import { dispatchNotification } from "@/lib/notifications/dispatcher";
 
 const FALLBACK_INSTRUCTION = `You are ARIMA, an AI Relationship Manager for the CST team at MobileOptima/Tarkie.
 
@@ -222,7 +224,7 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     createdAt: replyAt,
   });
 
-  // 8) Persist captured request (if any)
+  // 8) Persist captured request (if any) + notify team
   let capturedRequestId: string | null = null;
   if (parsedRequest) {
     try {
@@ -240,6 +242,16 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
         status: "new",
         createdAt: replyAt,
         updatedAt: replyAt,
+      });
+
+      // Notify everyone who has membership on this client account
+      void notifyRequestCaptured({
+        requestId: capturedRequestId,
+        clientProfileId: args.clientProfileId || null,
+        title: parsedRequest.title,
+        category: parsedRequest.category,
+        priority: parsedRequest.priority,
+        capturedByUserId: args.userId,
       });
     } catch (reqErr) {
       console.warn("[arima/runtime] failed to insert captured request:", reqErr);
@@ -264,4 +276,60 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     provider: providerLabel,
     assistantMessageId: assistantMsgId,
   };
+}
+
+/**
+ * Notify everyone who has access to a client when ARIMA captures a request.
+ * Fire-and-forget — never blocks the chat reply.
+ */
+async function notifyRequestCaptured(args: {
+  requestId: string;
+  clientProfileId: string | null;
+  title: string;
+  category: string;
+  priority: string;
+  capturedByUserId: string;
+}): Promise<void> {
+  try {
+    let recipientIds: string[] = [];
+    let clientName = "(no client)";
+
+    if (args.clientProfileId) {
+      // Pull every CST OS user who is a member of this client account
+      const members = await db
+        .select({ userId: accountMemberships.userId })
+        .from(accountMemberships)
+        .where(eq(accountMemberships.clientProfileId, args.clientProfileId));
+      recipientIds = members.map(m => m.userId);
+
+      // Get client name for the notification body
+      const clientRows = await db
+        .select({ companyName: clientProfilesTable.companyName })
+        .from(clientProfilesTable)
+        .where(eq(clientProfilesTable.id, args.clientProfileId))
+        .limit(1);
+      if (clientRows[0]?.companyName) clientName = clientRows[0].companyName;
+    } else {
+      // No client linked → just notify the capturer
+      recipientIds = [args.capturedByUserId];
+    }
+
+    if (recipientIds.length === 0) return;
+
+    const priorityEmoji =
+      args.priority === "urgent" ? "🚨" :
+      args.priority === "high" ? "⚡" :
+      args.priority === "low" ? "📌" : "📬";
+
+    await dispatchNotification({
+      userIds: recipientIds,
+      type: "request_captured",
+      title: `${priorityEmoji} New ${args.category} request from ${clientName}`,
+      body: args.title,
+      link: `/arima?view=requests&id=${args.requestId}`,
+      payload: { requestId: args.requestId, priority: args.priority },
+    });
+  } catch (e) {
+    console.warn("[arima/runtime] notifyRequestCaptured failed:", e);
+  }
 }
