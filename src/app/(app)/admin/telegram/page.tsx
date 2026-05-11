@@ -469,7 +469,7 @@ function Content() {
           <li>In Telegram, create a new group (or open an existing one).</li>
           <li>Add the bot (<strong>@{config?.botUsername || "your_bot"}</strong>) to the group.</li>
           <li>Make sure you're a Telegram <strong>group admin</strong> (creator counts).</li>
-          <li>In CST OS → <strong>Accounts</strong> → click the client → <strong>Access Control</strong> card → <strong>Show</strong> + copy the <em>accessToken</em>.</li>
+          <li>In CST OS → <a href="/admin/access-codes" className="text-blue-600 font-bold underline">Admin → Access Codes</a> → find the client → click <strong>Show</strong> + copy the <em>accessToken</em>.</li>
           <li>Back in the Telegram group, type <code>/bind &lt;paste-the-token&gt;</code>.</li>
           <li>The bot will confirm and start responding. Done!</li>
         </ol>

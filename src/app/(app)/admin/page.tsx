@@ -888,6 +888,25 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
             )}
             {activeTab === "auth" && (
               <div className="space-y-6 flex-1 animate-in fade-in zoom-in-95 duration-200">
+                {/* Access Codes callout */}
+                <a
+                  href="/admin/access-codes"
+                  className="flex items-center gap-3 p-4 rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50 to-pink-50 hover:from-rose-100 hover:to-pink-100 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-rose-400 to-pink-500 flex items-center justify-center shadow-md shadow-rose-500/30 shrink-0">
+                    <span className="text-white text-lg">🔑</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-black text-slate-800">Account Access Codes</p>
+                    <p className="text-[11px] font-bold text-slate-500">
+                      Manage Client Codes + Access Tokens for every account in one place.
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest shrink-0">
+                    Open →
+                  </span>
+                </a>
+
                 {/* Channels callout */}
                 <a
                   href="/admin/telegram"
