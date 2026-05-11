@@ -33,6 +33,7 @@ interface Account {
   companyName: string;
   industry: string;
   engagementStatus: string;
+  clientCode?: string | null;
 }
 
 export default function ArimaPage() {
@@ -491,10 +492,13 @@ function ArimaContent() {
                       title="Select the client this conversation is about"
                     >
                       <Building2 className="w-3 h-3" />
-                      <span className="max-w-[200px] truncate">
-                        {selectedClientId
-                          ? accounts.find(a => a.id === selectedClientId)?.companyName || "Unknown"
-                          : "No client linked"}
+                      <span className="max-w-[240px] truncate">
+                        {(() => {
+                          if (!selectedClientId) return "No client linked";
+                          const a = accounts.find(a => a.id === selectedClientId);
+                          if (!a) return "Unknown";
+                          return a.clientCode ? `${a.clientCode} · ${a.companyName}` : a.companyName;
+                        })()}
                       </span>
                       {selectedClientId && (
                         <span
@@ -540,7 +544,8 @@ function ArimaContent() {
                               if (!q) return true;
                               return (
                                 a.companyName.toLowerCase().includes(q) ||
-                                a.industry?.toLowerCase().includes(q)
+                                a.industry?.toLowerCase().includes(q) ||
+                                (a.clientCode || "").toLowerCase().includes(q)
                               );
                             })
                             .map(a => (
@@ -557,13 +562,20 @@ function ArimaContent() {
                                     : "hover:bg-slate-50"
                                 }`}
                               >
-                                <p
-                                  className={`text-[11px] font-bold truncate ${
-                                    a.id === selectedClientId ? "text-rose-700" : "text-slate-700"
-                                  }`}
-                                >
-                                  {a.companyName}
-                                </p>
+                                <div className="flex items-center justify-between gap-2">
+                                  <p
+                                    className={`text-[11px] font-bold truncate ${
+                                      a.id === selectedClientId ? "text-rose-700" : "text-slate-700"
+                                    }`}
+                                  >
+                                    {a.companyName}
+                                  </p>
+                                  {a.clientCode && (
+                                    <span className="text-[9px] font-black tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0">
+                                      {a.clientCode}
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-widest">
                                   {a.industry} · {a.engagementStatus}
                                 </p>
@@ -571,8 +583,11 @@ function ArimaContent() {
                             ))}
                           {accounts.length === 0 && (
                             <div className="px-3 py-6 text-center">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                                No accounts found. Create one in the Accounts module.
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                                No accounts available
+                              </p>
+                              <p className="text-[10px] font-semibold text-slate-400 normal-case tracking-normal">
+                                Ask an admin to grant you access to a client account, or create one yourself.
                               </p>
                             </div>
                           )}

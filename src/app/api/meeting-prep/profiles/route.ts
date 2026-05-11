@@ -1,9 +1,20 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { clientProfiles as clientProfilesTable, meetingPrepSessions as meetingPrepSessionsTable, users as usersTable } from "@/db/schema";
+import {
+  clientProfiles as clientProfilesTable,
+  meetingPrepSessions as meetingPrepSessionsTable,
+  users as usersTable,
+  accountMemberships as membershipsTable,
+} from "@/db/schema";
 import { auth } from "@/auth";
 import { eq, desc, inArray } from "drizzle-orm";
 import { ensureUserInDb } from "@/lib/utils/auth-sync";
+import {
+  listAccessibleClientIds,
+  ensureClientCodeAndToken,
+  uniqueClientCode,
+  generateAccessToken,
+} from "@/lib/access/accounts";
 
 export const dynamic = "force-dynamic";
 
@@ -19,11 +30,20 @@ export async function GET(req: Request) {
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const isAdmin = (session.user as any)?.role === "admin";
 
-    // Drizzle: Get all profiles
-    const profiles = await db.select()
+    const allowedIds = await listAccessibleClientIds({ userId, isAdmin });
+    if (allowedIds !== null && allowedIds.length === 0) {
+      return NextResponse.json([]);
+    }
+
+    const baseProfiles = db.select()
       .from(clientProfilesTable)
       .orderBy(desc(clientProfilesTable.createdAt));
+
+    const profiles = allowedIds === null
+      ? await baseProfiles
+      : await baseProfiles.where(inArray(clientProfilesTable.id, allowedIds));
 
     // Fetch meeting prep sessions separately
     const profileIds = profiles.map((p: any) => p.id);
@@ -95,6 +115,8 @@ export async function POST(req: Request) {
 
     const id = `cp_${Date.now()}`;
     const now = new Date().toISOString();
+    const clientCode = await uniqueClientCode(companyName.trim());
+    const accessToken = generateAccessToken();
 
     // Drizzle: Direct insert with all fields
     await db.insert(clientProfilesTable).values({
@@ -107,9 +129,25 @@ export async function POST(req: Request) {
       primaryContact: primaryContact || "",
       primaryContactEmail: primaryContactEmail || "",
       specialConsiderations: specialConsiderations || "",
+      clientCode,
+      accessToken,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
     });
+
+    // Auto-grant the creator a "lead" membership so they don't lock themselves out
+    try {
+      await db.insert(membershipsTable).values({
+        id: `mem_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+        userId,
+        clientProfileId: id,
+        role: "lead",
+        grantedBy: userId,
+        grantedAt: now,
+      });
+    } catch (e) {
+      console.warn("[accounts POST] could not auto-grant creator membership:", e);
+    }
 
     // Read back
     const created = await db.select()

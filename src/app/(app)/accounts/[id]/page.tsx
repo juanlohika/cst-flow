@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import { AccountHub } from "@/app/(app)/meeting-prep/page";
+import AccountAccessControl from "@/components/accounts/AccountAccessControl";
 
 export default function AccountDetailPage() {
   const params = useParams();
@@ -69,12 +70,15 @@ export default function AccountDetailPage() {
   return (
     <AuthGuard>
       <div className="flex flex-col h-screen bg-surface-subtle">
-        <div className="flex-1 overflow-hidden">
-          <AccountHub 
-            profile={profile} 
-            onEdit={() => router.push(`/accounts`)} 
-            onBack={() => router.push("/accounts")} 
+        <div className="flex-1 overflow-auto">
+          <AccountHub
+            profile={profile}
+            onEdit={() => router.push(`/accounts`)}
+            onBack={() => router.push("/accounts")}
           />
+          <div className="px-6 pb-6 max-w-4xl mx-auto -mt-2">
+            <AccountAccessControl accountId={accountId} companyName={profile.companyName} />
+          </div>
         </div>
       </div>
     </AuthGuard>

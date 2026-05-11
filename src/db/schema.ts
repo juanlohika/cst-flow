@@ -263,9 +263,25 @@ export const clientProfiles = sqliteTable("ClientProfile", {
   primaryContactEmail:   text("primaryContactEmail"),
   specialConsiderations: text("specialConsiderations"),
   intelligenceContent:   text("intelligenceContent"), // Markdown intelligence file
+  clientCode:            text("clientCode").unique(),  // Human-readable: e.g. MOPT-A3F2
+  accessToken:           text("accessToken").unique(), // Secret: 64-char hex, used for channel binding
   createdAt:             text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:             text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
+
+// AccountMembership: which CST OS users can access which client accounts
+// Membership is required for non-admin users to see/use a client in any app.
+// Admins bypass this check (they see everything).
+export const accountMemberships = sqliteTable("AccountMembership", {
+  id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId:          text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  clientProfileId: text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
+  role:            text("role").default("member").notNull(), // member | lead | viewer
+  grantedBy:       text("grantedBy"),  // userId of admin who granted access
+  grantedAt:       text("grantedAt").default(sql`(datetime('now'))`).notNull(),
+}, (table) => ({
+  uniqueMembership: { columns: [table.userId, table.clientProfileId], name: "AccountMembership_unique" },
+}));
 
 export const meetingPrepSessions = sqliteTable("MeetingPrepSession", {
   id:                       text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),

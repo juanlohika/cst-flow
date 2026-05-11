@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { apps as appsTable, users as usersTable } from "@/db/schema";
-import { sql, eq } from "drizzle-orm";
+import {
+  apps as appsTable,
+  users as usersTable,
+  clientProfiles as clientProfilesTable,
+  accountMemberships as membershipsTable,
+} from "@/db/schema";
+import { sql, eq, isNull, or } from "drizzle-orm";
+import { uniqueClientCode, generateAccessToken } from "@/lib/access/accounts";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +49,7 @@ export async function GET() {
       `CREATE TABLE IF NOT EXISTS MaintenanceTemplate (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, frequency TEXT NOT NULL, duration REAL DEFAULT 1 NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS ArimaConversation (id TEXT PRIMARY KEY, userId TEXT NOT NULL, clientProfileId TEXT, channel TEXT DEFAULT 'web' NOT NULL, title TEXT, summary TEXT, status TEXT DEFAULT 'active' NOT NULL, lastMessageAt TEXT DEFAULT (datetime('now')) NOT NULL, messageCount INTEGER DEFAULT 0 NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS ArimaMessage (id TEXT PRIMARY KEY, conversationId TEXT NOT NULL REFERENCES ArimaConversation(id) ON DELETE CASCADE, role TEXT NOT NULL, content TEXT NOT NULL, provider TEXT, model TEXT, tokensIn INTEGER, tokensOut INTEGER, toolCalls TEXT, createdAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS AccountMembership (id TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES User(id) ON DELETE CASCADE, clientProfileId TEXT NOT NULL REFERENCES ClientProfile(id) ON DELETE CASCADE, role TEXT DEFAULT 'member' NOT NULL, grantedBy TEXT, grantedAt TEXT DEFAULT (datetime('now')) NOT NULL, UNIQUE(userId, clientProfileId))`,
     ];
 
     for (const q of bootstrapQueries) {
@@ -76,6 +83,8 @@ export async function GET() {
       { table: "Skill", column: "isSystem", type: "INTEGER DEFAULT 0" },
       { table: "Skill", column: "sortOrder", type: "INTEGER DEFAULT 0" },
       { table: "Role", column: "createdAt", type: "TEXT DEFAULT (datetime('now'))" },
+      { table: "ClientProfile", column: "clientCode", type: "TEXT" },
+      { table: "ClientProfile", column: "accessToken", type: "TEXT" },
     ];
 
     for (const r of repairs) {
@@ -143,6 +152,69 @@ export async function GET() {
         });
     }
     migrations.push("Admin accounts bootstrapped.");
+
+    // 4. BACKFILL: ensure every existing ClientProfile has clientCode + accessToken
+    //    AND that its creator has an AccountMembership (lead role).
+    try {
+      const profilesNeedingBackfill = await db
+        .select({
+          id: clientProfilesTable.id,
+          userId: clientProfilesTable.userId,
+          companyName: clientProfilesTable.companyName,
+          clientCode: clientProfilesTable.clientCode,
+          accessToken: clientProfilesTable.accessToken,
+        })
+        .from(clientProfilesTable);
+
+      let codeFills = 0;
+      let memberFills = 0;
+      for (const p of profilesNeedingBackfill) {
+        const updates: Record<string, string> = {};
+        if (!p.clientCode) {
+          updates.clientCode = await uniqueClientCode(p.companyName);
+          codeFills++;
+        }
+        if (!p.accessToken) {
+          updates.accessToken = generateAccessToken();
+        }
+        if (Object.keys(updates).length > 0) {
+          await db
+            .update(clientProfilesTable)
+            .set({ ...updates, updatedAt: new Date().toISOString() })
+            .where(eq(clientProfilesTable.id, p.id));
+        }
+        // Ensure creator has a membership
+        if (p.userId) {
+          try {
+            const existing = await db
+              .select({ id: membershipsTable.id })
+              .from(membershipsTable)
+              .where(
+                sql`${membershipsTable.userId} = ${p.userId} AND ${membershipsTable.clientProfileId} = ${p.id}`
+              )
+              .limit(1);
+            if (existing.length === 0) {
+              await db.insert(membershipsTable).values({
+                id: `mem_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+                userId: p.userId,
+                clientProfileId: p.id,
+                role: "lead",
+                grantedBy: p.userId,
+                grantedAt: new Date().toISOString(),
+              });
+              memberFills++;
+            }
+          } catch (memErr) {
+            // ignore individual failures so the migrator keeps moving
+          }
+        }
+      }
+      if (codeFills > 0) migrations.push(`Backfilled clientCode for ${codeFills} accounts.`);
+      if (memberFills > 0) migrations.push(`Auto-granted creator memberships for ${memberFills} accounts.`);
+    } catch (backfillErr: any) {
+      console.warn("[migrator] backfill warn:", backfillErr?.message);
+    }
+
     dbStatus = true;
 
   } catch (err: any) {

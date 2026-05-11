@@ -2,14 +2,15 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { clientProfiles as clientProfilesTable } from "@/db/schema";
 import { auth } from "@/auth";
-import { eq, asc } from "drizzle-orm";
+import { asc, inArray } from "drizzle-orm";
+import { listAccessibleClientIds } from "@/lib/access/accounts";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/accounts
- * Lightweight account list for dropdowns and selectors
- * MIGRATED TO DRIZZLE
+ * Lightweight account list, filtered by AccountMembership for non-admins.
+ * Admins see every account; non-admins see only accounts they have membership for.
  */
 export async function GET(req: Request) {
   try {
@@ -18,18 +19,28 @@ export async function GET(req: Request) {
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const isAdmin = (session.user as any)?.role === "admin";
 
-    const { searchParams } = new URL(req.url);
-    const filter = searchParams.get('filter');
+    const allowedIds = await listAccessibleClientIds({ userId, isAdmin });
 
-    const accounts = await db.select({
+    // Non-admin with no memberships → return empty list (no leak)
+    if (allowedIds !== null && allowedIds.length === 0) {
+      return NextResponse.json([]);
+    }
+
+    const base = db.select({
       id: clientProfilesTable.id,
       companyName: clientProfilesTable.companyName,
       industry: clientProfilesTable.industry,
-      engagementStatus: clientProfilesTable.engagementStatus
+      engagementStatus: clientProfilesTable.engagementStatus,
+      clientCode: clientProfilesTable.clientCode,
     })
     .from(clientProfilesTable)
     .orderBy(asc(clientProfilesTable.companyName));
+
+    const accounts = allowedIds === null
+      ? await base
+      : await base.where(inArray(clientProfilesTable.id, allowedIds));
 
     return NextResponse.json(accounts);
   } catch (error: any) {

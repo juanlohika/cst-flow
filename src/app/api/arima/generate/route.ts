@@ -9,6 +9,7 @@ import {
   clientProfiles as clientProfilesTable,
 } from "@/db/schema";
 import { and, eq, desc, sql } from "drizzle-orm";
+import { canAccessClient } from "@/lib/access/accounts";
 
 function buildClientContext(profile: any): string {
   if (!profile) return "";
@@ -110,6 +111,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Prompt required" }, { status: 400 });
     }
 
+    const isAdmin = (session.user as any).role === "admin";
+
+    // ─── ACCESS GATE: if a clientProfileId was passed, the caller must have access ──
+    if (clientProfileId) {
+      const allowed = await canAccessClient({ userId, isAdmin }, clientProfileId);
+      if (!allowed) {
+        return NextResponse.json(
+          { error: "You do not have access to this account. Ask an admin to grant you access." },
+          { status: 403 }
+        );
+      }
+    }
+
     // ─── Resolve or create conversation ─────────────────────────────────
     let conversationId = incomingConvId as string | undefined;
     let activeClientProfileId: string | null = clientProfileId || null;
@@ -144,9 +158,19 @@ export async function POST(req: Request) {
         .from(arimaConversations)
         .where(eq(arimaConversations.id, conversationId))
         .limit(1);
-      const isAdmin = (session.user as any).role === "admin";
       if (!existing[0] || (existing[0].userId !== userId && !isAdmin)) {
         return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+      }
+      // If the conversation has a clientProfileId, the user must STILL have access
+      // (otherwise their access may have been revoked since the chat started).
+      if (existing[0].clientProfileId) {
+        const stillAllowed = await canAccessClient({ userId, isAdmin }, existing[0].clientProfileId);
+        if (!stillAllowed) {
+          return NextResponse.json(
+            { error: "Your access to this account has been revoked." },
+            { status: 403 }
+          );
+        }
       }
       // If the user picked a new client mid-conversation, update it; otherwise keep existing
       if (clientProfileId !== undefined && clientProfileId !== existing[0].clientProfileId) {
