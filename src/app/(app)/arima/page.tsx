@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import {
   Heart, ArrowUp, Loader2, Sparkles, Plus, MessageCircle,
-  Trash2, Inbox, MessageSquare, Search,
+  Trash2, Inbox, MessageSquare, Search, Building2, X, ChevronDown,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
@@ -22,9 +22,17 @@ interface ConversationListItem {
   lastMessageAt: string;
   createdAt: string;
   channel: string;
+  clientProfileId?: string | null;
   ownerName?: string | null;
   ownerEmail?: string | null;
   clientName?: string | null;
+}
+
+interface Account {
+  id: string;
+  companyName: string;
+  industry: string;
+  engagementStatus: string;
 }
 
 export default function ArimaPage() {
@@ -54,6 +62,13 @@ function ArimaContent() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Account picker
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [accountPickerOpen, setAccountPickerOpen] = useState(false);
+  const [accountSearch, setAccountSearch] = useState("");
+  const accountPickerRef = useRef<HTMLDivElement>(null);
+
   // INBOX view state
   const [inboxConvs, setInboxConvs] = useState<ConversationListItem[]>([]);
   const [inboxSelected, setInboxSelected] = useState<ConversationListItem | null>(null);
@@ -81,6 +96,26 @@ function ArimaContent() {
     fetchMyConversations();
   }, [fetchMyConversations]);
 
+  // Load accounts list once
+  useEffect(() => {
+    fetch("/api/accounts")
+      .then(r => (r.ok ? r.json() : []))
+      .then((data) => setAccounts(Array.isArray(data) ? data : []))
+      .catch(() => setAccounts([]));
+  }, []);
+
+  // Close account picker on outside click
+  useEffect(() => {
+    if (!accountPickerOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (accountPickerRef.current && !accountPickerRef.current.contains(e.target as Node)) {
+        setAccountPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [accountPickerOpen]);
+
   // ─── Load a specific conversation's messages ─────────────────────
   const loadConversation = async (id: string) => {
     setLoadingConv(true);
@@ -94,6 +129,7 @@ function ArimaContent() {
           content: m.content,
         }));
         setMessages(msgs);
+        setSelectedClientId(data.conversation?.clientProfileId || null);
       }
     } catch (err) {
       console.error("Failed to load conversation", err);
@@ -119,6 +155,7 @@ function ArimaContent() {
     setActiveConvId(null);
     setMessages([]);
     setPrompt("");
+    setSelectedClientId(null);
   };
 
   // ─── Send a message ──────────────────────────────────────────────
@@ -138,6 +175,7 @@ function ArimaContent() {
         body: JSON.stringify({
           messages: newMessages,
           conversationId: activeConvId || undefined,
+          clientProfileId: selectedClientId || undefined,
         }),
       });
       const data = await res.json();
@@ -337,6 +375,12 @@ function ArimaContent() {
                         >
                           {conv.title || "Untitled"}
                         </p>
+                        {conv.clientName && (
+                          <p className="text-[9px] font-bold text-rose-500/80 truncate flex items-center gap-0.5">
+                            <Building2 className="w-2.5 h-2.5" />
+                            {conv.clientName}
+                          </p>
+                        )}
                         <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-widest">
                           {formatTime(conv.lastMessageAt)} · {conv.messageCount} msgs
                         </p>
@@ -434,6 +478,110 @@ function ArimaContent() {
             {/* Composer */}
             <div className="px-4 sm:px-8 pb-6 pt-2">
               <div className="max-w-3xl mx-auto">
+                {/* Client account picker */}
+                <div className="flex items-center justify-center mb-2">
+                  <div className="relative" ref={accountPickerRef}>
+                    <button
+                      onClick={() => setAccountPickerOpen(o => !o)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all border ${
+                        selectedClientId
+                          ? "bg-rose-50 text-rose-700 border-rose-200"
+                          : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+                      }`}
+                      title="Select the client this conversation is about"
+                    >
+                      <Building2 className="w-3 h-3" />
+                      <span className="max-w-[200px] truncate">
+                        {selectedClientId
+                          ? accounts.find(a => a.id === selectedClientId)?.companyName || "Unknown"
+                          : "No client linked"}
+                      </span>
+                      {selectedClientId && (
+                        <span
+                          onClick={e => {
+                            e.stopPropagation();
+                            setSelectedClientId(null);
+                          }}
+                          className="ml-0.5 text-rose-400 hover:text-rose-700"
+                        >
+                          <X className="w-3 h-3" />
+                        </span>
+                      )}
+                      {!selectedClientId && <ChevronDown className="w-3 h-3 opacity-50" />}
+                    </button>
+
+                    {accountPickerOpen && (
+                      <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-72 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 overflow-hidden">
+                        <div className="p-2 border-b border-slate-100">
+                          <div className="flex items-center gap-2 bg-slate-50 rounded-lg px-2 py-1.5">
+                            <Search className="w-3 h-3 text-slate-300" />
+                            <input
+                              autoFocus
+                              value={accountSearch}
+                              onChange={e => setAccountSearch(e.target.value)}
+                              placeholder="Search accounts..."
+                              className="flex-1 bg-transparent text-[11px] font-semibold text-slate-700 placeholder:text-slate-300 outline-none"
+                            />
+                          </div>
+                        </div>
+                        <div className="max-h-64 overflow-auto thin-scrollbar py-1">
+                          <button
+                            onClick={() => {
+                              setSelectedClientId(null);
+                              setAccountPickerOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-[11px] font-bold text-slate-500 hover:bg-slate-50 transition-colors"
+                          >
+                            No client (general chat)
+                          </button>
+                          {accounts
+                            .filter(a => {
+                              const q = accountSearch.trim().toLowerCase();
+                              if (!q) return true;
+                              return (
+                                a.companyName.toLowerCase().includes(q) ||
+                                a.industry?.toLowerCase().includes(q)
+                              );
+                            })
+                            .map(a => (
+                              <button
+                                key={a.id}
+                                onClick={() => {
+                                  setSelectedClientId(a.id);
+                                  setAccountPickerOpen(false);
+                                  setAccountSearch("");
+                                }}
+                                className={`w-full text-left px-3 py-2 transition-colors ${
+                                  a.id === selectedClientId
+                                    ? "bg-rose-50"
+                                    : "hover:bg-slate-50"
+                                }`}
+                              >
+                                <p
+                                  className={`text-[11px] font-bold truncate ${
+                                    a.id === selectedClientId ? "text-rose-700" : "text-slate-700"
+                                  }`}
+                                >
+                                  {a.companyName}
+                                </p>
+                                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-widest">
+                                  {a.industry} · {a.engagementStatus}
+                                </p>
+                              </button>
+                            ))}
+                          {accounts.length === 0 && (
+                            <div className="px-3 py-6 text-center">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                No accounts found. Create one in the Accounts module.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="flex items-end gap-2 bg-white border border-slate-200 rounded-3xl shadow-sm p-2 focus-within:border-rose-300 transition-colors">
                   <textarea
                     ref={textareaRef}

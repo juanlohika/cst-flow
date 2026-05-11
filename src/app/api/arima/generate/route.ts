@@ -6,8 +6,47 @@ import {
   skills as skillsTable,
   arimaConversations,
   arimaMessages,
+  clientProfiles as clientProfilesTable,
 } from "@/db/schema";
 import { and, eq, desc, sql } from "drizzle-orm";
+
+function buildClientContext(profile: any): string {
+  if (!profile) return "";
+  const modules = (() => {
+    try {
+      const arr = JSON.parse(profile.modulesAvailed || "[]");
+      return Array.isArray(arr) && arr.length > 0 ? arr.join(", ") : "(none specified)";
+    } catch {
+      return profile.modulesAvailed || "(none specified)";
+    }
+  })();
+
+  const lines: string[] = [];
+  lines.push("## CURRENT CLIENT CONTEXT");
+  lines.push("");
+  lines.push(`You are talking ABOUT or ON BEHALF OF the following client account. Use this context to ground every reply. Do not invent fields that are not present.`);
+  lines.push("");
+  lines.push(`- **Company:** ${profile.companyName || "Unknown"}`);
+  lines.push(`- **Industry:** ${profile.industry || "Unknown"}`);
+  if (profile.companySize) lines.push(`- **Company size:** ${profile.companySize}`);
+  lines.push(`- **Modules contracted:** ${modules}`);
+  lines.push(`- **Engagement status:** ${profile.engagementStatus || "unknown"}`);
+  if (profile.primaryContact) lines.push(`- **Primary contact:** ${profile.primaryContact}${profile.primaryContactEmail ? ` (${profile.primaryContactEmail})` : ""}`);
+  if (profile.specialConsiderations) {
+    lines.push("");
+    lines.push(`**Special considerations:** ${profile.specialConsiderations}`);
+  }
+  if (profile.intelligenceContent) {
+    lines.push("");
+    lines.push("### Account intelligence");
+    lines.push(profile.intelligenceContent.length > 4000
+      ? profile.intelligenceContent.slice(0, 4000) + "\n\n[…truncated]"
+      : profile.intelligenceContent);
+  }
+  lines.push("");
+  lines.push("Reference these facts naturally when helpful. Never share information about other clients.");
+  return lines.join("\n");
+}
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +112,7 @@ export async function POST(req: Request) {
 
     // ─── Resolve or create conversation ─────────────────────────────────
     let conversationId = incomingConvId as string | undefined;
+    let activeClientProfileId: string | null = clientProfileId || null;
     const now = new Date().toISOString();
     const lastUserMessage =
       (Array.isArray(messages) && messages.length > 0
@@ -84,7 +124,7 @@ export async function POST(req: Request) {
       await db.insert(arimaConversations).values({
         id: conversationId,
         userId,
-        clientProfileId: clientProfileId || null,
+        clientProfileId: activeClientProfileId,
         channel: "web",
         title: titleFromText(lastUserMessage) || "New conversation",
         status: "active",
@@ -96,13 +136,42 @@ export async function POST(req: Request) {
     } else {
       // Verify ownership; if not the owner, deny
       const existing = await db
-        .select({ id: arimaConversations.id, userId: arimaConversations.userId })
+        .select({
+          id: arimaConversations.id,
+          userId: arimaConversations.userId,
+          clientProfileId: arimaConversations.clientProfileId,
+        })
         .from(arimaConversations)
         .where(eq(arimaConversations.id, conversationId))
         .limit(1);
       const isAdmin = (session.user as any).role === "admin";
       if (!existing[0] || (existing[0].userId !== userId && !isAdmin)) {
         return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+      }
+      // If the user picked a new client mid-conversation, update it; otherwise keep existing
+      if (clientProfileId !== undefined && clientProfileId !== existing[0].clientProfileId) {
+        await db
+          .update(arimaConversations)
+          .set({ clientProfileId: clientProfileId || null, updatedAt: now })
+          .where(eq(arimaConversations.id, conversationId));
+        activeClientProfileId = clientProfileId || null;
+      } else {
+        activeClientProfileId = existing[0].clientProfileId || null;
+      }
+    }
+
+    // ─── Load the linked client profile (if any) ────────────────────────
+    let clientProfile: any = null;
+    if (activeClientProfileId) {
+      try {
+        const rows = await db
+          .select()
+          .from(clientProfilesTable)
+          .where(eq(clientProfilesTable.id, activeClientProfileId))
+          .limit(1);
+        clientProfile = rows[0] || null;
+      } catch (e) {
+        console.warn("[arima] client profile lookup failed:", e);
       }
     }
 
@@ -124,7 +193,11 @@ export async function POST(req: Request) {
     } catch (err) {
       console.error("[arima] skill fetch failed:", err);
     }
-    const systemInstruction = arimaSkill || FALLBACK_INSTRUCTION;
+    const baseInstruction = arimaSkill || FALLBACK_INSTRUCTION;
+    const clientContext = buildClientContext(clientProfile);
+    const systemInstruction = clientContext
+      ? `${baseInstruction}\n\n---\n\n${clientContext}`
+      : baseInstruction;
 
     // ─── Build content for the model ────────────────────────────────────
     let contents: any[] = [];
