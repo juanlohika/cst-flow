@@ -907,6 +907,25 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                   </span>
                 </a>
 
+                {/* Portal Contacts callout */}
+                <a
+                  href="/admin/portal-contacts"
+                  className="flex items-center gap-3 p-4 rounded-2xl border border-purple-200 bg-gradient-to-r from-purple-50 to-fuchsia-50 hover:from-purple-100 hover:to-fuchsia-100 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-400 to-fuchsia-500 flex items-center justify-center shadow-md shadow-purple-500/30 shrink-0">
+                    <span className="text-white text-lg">👥</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-black text-slate-800">ARIMA · Portal Contacts</p>
+                    <p className="text-[11px] font-bold text-slate-500">
+                      Invite external client contacts to chat with ARIMA via magic link.
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-black text-purple-600 uppercase tracking-widest shrink-0">
+                    Open →
+                  </span>
+                </a>
+
                 {/* Channels callout */}
                 <a
                   href="/admin/telegram"
