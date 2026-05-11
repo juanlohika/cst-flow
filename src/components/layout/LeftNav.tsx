@@ -5,12 +5,19 @@ import { usePathname, useSearchParams } from "next/navigation";
 import ForceLink from "@/components/ui/ForceLink";
 import {
   ChevronLeft, ChevronRight, ChevronDown, MonitorPlay,
-  Compass, Zap, Building2, Sparkles, LayoutDashboard
+  Compass, Zap, Building2, Sparkles, LayoutDashboard, Heart,
+  Workflow, ClipboardList, Clock, Paintbrush, Users
 } from "lucide-react";
 
 const ICON_MAP: Record<string, React.ReactNode> = {
   Sparkles: <Sparkles size={14} />,
   MonitorPlay: <MonitorPlay size={14} />,
+  Heart: <Heart size={14} />,
+  Workflow: <Workflow size={14} />,
+  ClipboardList: <ClipboardList size={14} />,
+  Clock: <Clock size={14} />,
+  Paintbrush: <Paintbrush size={14} />,
+  Users: <Users size={14} />,
 };
 
 interface LeftNavProps {

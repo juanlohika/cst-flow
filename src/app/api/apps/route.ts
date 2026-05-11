@@ -12,11 +12,33 @@ const DEFAULT_APPS = [
   { name: "Timeline Maker", slug: "timeline", description: "Project scheduling and Gantt visualization.", icon: "Clock", href: "/timeline", isActive: 1, sortOrder: 2 },
   { name: "Mockup Builder", slug: "mockup", description: "Build and preview UI prototypes.", icon: "Paintbrush", href: "/mockup", isActive: 1, sortOrder: 3 },
   { name: "Meetings Hub", slug: "meetings", description: "Centralized meeting and transcription management.", icon: "Users", href: "/meetings", isActive: 1, sortOrder: 5 },
+  { name: "ARIMA", slug: "arima", description: "AI-powered Relationship Manager for client check-ins and requirement capture.", icon: "Heart", href: "/arima", isActive: 1, sortOrder: 6 },
 ];
 
 export async function GET() {
   try {
-    const apps = await db.select().from(appsTable).orderBy(asc(appsTable.sortOrder), asc(appsTable.name));
+    let apps = await db.select().from(appsTable).orderBy(asc(appsTable.sortOrder), asc(appsTable.name));
+
+    // Auto-seed any DEFAULT_APPS that are missing from the DB (by slug)
+    const existingSlugs = new Set(apps.map(a => a.slug));
+    const missing = DEFAULT_APPS.filter(d => !existingSlugs.has(d.slug));
+    if (missing.length > 0) {
+      for (const d of missing) {
+        await db.insert(appsTable).values({
+          id: `app_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+          name: d.name,
+          slug: d.slug,
+          description: d.description,
+          icon: d.icon,
+          href: d.href,
+          isActive: true,
+          isBuiltIn: true,
+          sortOrder: d.sortOrder,
+        });
+      }
+      apps = await db.select().from(appsTable).orderBy(asc(appsTable.sortOrder), asc(appsTable.name));
+    }
+
     return NextResponse.json(apps.length > 0 ? apps : DEFAULT_APPS);
   } catch (error: any) {
     console.error("Fetch apps error:", error);
