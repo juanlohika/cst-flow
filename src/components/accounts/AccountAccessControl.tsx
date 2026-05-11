@@ -46,8 +46,16 @@ export default function AccountAccessControl({ accountId, companyName }: Props) 
   const [regenerating, setRegenerating] = useState(false);
   const [tokenVisible, setTokenVisible] = useState(false);
 
-  // Only admins should ever see this component, but guard anyway
-  if (!isAdmin) return null;
+  // Only admins should ever see this card. Show a small visible note for
+  // non-admins so the absence isn't confusing.
+  if (!isAdmin) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm px-5 py-3 flex items-center gap-2 text-[11px] font-bold text-slate-400">
+        <Shield className="w-3.5 h-3.5" />
+        Access control is admin-only. Ask an admin to manage member access for this account.
+      </div>
+    );
+  }
 
   const fetchMembers = useCallback(async () => {
     setLoadingMembers(true);

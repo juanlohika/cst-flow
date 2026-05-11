@@ -70,14 +70,18 @@ export default function AccountDetailPage() {
   return (
     <AuthGuard>
       <div className="flex flex-col h-screen bg-surface-subtle">
-        <div className="flex-1 overflow-auto">
-          <AccountHub
-            profile={profile}
-            onEdit={() => router.push(`/accounts`)}
-            onBack={() => router.push("/accounts")}
-          />
-          <div className="px-6 pb-6 max-w-4xl mx-auto -mt-2">
+        <div className="flex-1 overflow-auto flex flex-col">
+          {/* Admin Access Control card sits at the top so it's always visible.
+              The component returns null for non-admins. */}
+          <div className="px-6 pt-6 pb-2 max-w-4xl mx-auto w-full">
             <AccountAccessControl accountId={accountId} companyName={profile.companyName} />
+          </div>
+          <div className="flex-1 min-h-0">
+            <AccountHub
+              profile={profile}
+              onEdit={() => router.push(`/accounts`)}
+              onBack={() => router.push("/accounts")}
+            />
           </div>
         </div>
       </div>
