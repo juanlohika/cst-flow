@@ -44,15 +44,22 @@ const HELP_TEXT = (
   "• `/link LK-XXXX-YYYY` — link your Telegram account to CST OS (generate the code from CST OS → Admin → Channels → Telegram → My Account)."
 );
 
-/** Minimal helper to send a reply, swallowing errors so the webhook never fails. */
+/** Helper to send a reply. Tries Markdown first; if that fails (e.g. malformed
+ *  Markdown in the AI output), retries as plain text so the user gets *something*. */
 async function safeReply(token: string, chatId: number, text: string, replyToMessageId?: number) {
+  const finalText = truncateForTelegram(text || "(empty reply)");
   try {
-    await tgSendMessage(token, chatId, truncateForTelegram(text), {
+    await tgSendMessage(token, chatId, finalText, {
       parseMode: "Markdown",
       replyToMessageId,
     });
-  } catch (e) {
-    console.error("[telegram/webhook] reply failed:", e);
+  } catch (e: any) {
+    console.error("[telegram/webhook] markdown reply failed, retrying as plain:", e?.message);
+    try {
+      await tgSendMessage(token, chatId, finalText, { replyToMessageId });
+    } catch (e2: any) {
+      console.error("[telegram/webhook] plain reply also failed:", e2?.message);
+    }
   }
 }
 
@@ -343,13 +350,14 @@ async function handleArimaChat(args: {
     });
   }
 
-  // Load prior history for this conversation (most recent 20 turns for context)
+  // Load prior history (cap at last 10 turns; each Telegram message can be long,
+  // and we want to leave room for the system prompt + intelligence content).
   const history = await db
     .select({ role: arimaMessages.role, content: arimaMessages.content })
     .from(arimaMessages)
     .where(eq(arimaMessages.conversationId, convoId))
     .orderBy(asc(arimaMessages.createdAt));
-  const trimmedHistory = history.slice(-20);
+  const trimmedHistory = history.slice(-10);
 
   const priorContents = trimmedHistory.map(m => ({
     role: m.role === "assistant" ? "model" as const : "user" as const,
@@ -367,13 +375,27 @@ async function handleArimaChat(args: {
       userMessage: inlineMessage,
       priorContents,
     });
-    await safeReply(args.botToken, args.chatId, result.replyText, args.replyToMessageId);
+    const replyText = (result.replyText || "").trim();
+    if (!replyText) {
+      // AI returned empty (often a safety-filter block or a token-limit issue).
+      // Send a clear fallback so the user isn't left staring at silence.
+      console.error("[telegram/webhook] ARIMA returned empty reply");
+      await safeReply(
+        args.botToken,
+        args.chatId,
+        "⚠️ I couldn't generate a reply for that message. This usually means the AI's safety filters blocked it or the conversation context got too long. Try asking again with shorter or simpler wording.",
+        args.replyToMessageId
+      );
+      return;
+    }
+    await safeReply(args.botToken, args.chatId, replyText, args.replyToMessageId);
   } catch (e: any) {
     console.error("[telegram/webhook] ARIMA failed:", e);
+    const errMsg = e?.message || "unknown error";
     await safeReply(
       args.botToken,
       args.chatId,
-      "Sorry, I hit an error generating a reply. A human teammate will follow up. " + (e?.message ? `\n\n_(${e.message})_` : ""),
+      `⚠️ Sorry — I hit an error generating a reply.\n\n_${errMsg.slice(0, 300)}_\n\nA human teammate will follow up. You can also try a simpler version of your question.`,
       args.replyToMessageId
     );
   }

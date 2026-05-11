@@ -14,9 +14,13 @@ import { and, eq, desc, sql } from "drizzle-orm";
 import { getModelForApp, generateWithRetry, readAIConfig } from "@/lib/ai";
 
 const FALLBACK_INSTRUCTION = `You are ARIMA, an AI Relationship Manager for the CST team at MobileOptima/Tarkie.
-Be warm, concise, professional. Always identify yourself as an AI on the first message.
-Never invent contract terms, commit to deadlines, or share info about other clients.
-Escalate sensitive topics (legal, billing, scope changes, complaints) to a human teammate.`;
+
+CRITICAL RULES:
+- NEVER stay silent. Every message gets a reply, even if the reply is "I don't have that info, let me get a human teammate."
+- Be warm, concise, professional. Identify yourself as an AI on the first message.
+- Never invent contract terms, commit to deadlines, or share info about other clients.
+- Escalate sensitive topics (legal, billing, scope changes, complaints) by SAYING SO out loud, not by going silent.
+- If asked for information you don't have, plainly say "I don't have that detail in my context — let me bring in a human teammate."`;
 
 const REQUEST_REGEX = /\[REQUEST\]([\s\S]*?)\[\/REQUEST\]/i;
 
@@ -104,8 +108,10 @@ function buildClientContext(profile: any): string {
   if (profile.intelligenceContent) {
     lines.push("");
     lines.push("### Account intelligence");
-    lines.push(profile.intelligenceContent.length > 4000
-      ? profile.intelligenceContent.slice(0, 4000) + "\n\n[…truncated]"
+    // Cap at 2500 chars to be safe with token limits + safety filters
+    const cap = 2500;
+    lines.push(profile.intelligenceContent.length > cap
+      ? profile.intelligenceContent.slice(0, cap) + "\n\n[…truncated]"
       : profile.intelligenceContent);
   }
   lines.push("");
@@ -186,7 +192,16 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
   });
   const rawReply = result.response.text();
-  const { cleanText: replyText, request: parsedRequest } = parseRequestBlock(rawReply);
+  let { cleanText: replyText, request: parsedRequest } = parseRequestBlock(rawReply);
+
+  // SAFETY NET: never let an empty reply slip through. If the AI returned
+  // nothing (safety-filter block, token limit, etc.), substitute a plain refusal
+  // so the user always gets something.
+  if (!replyText || !replyText.trim()) {
+    console.warn("[arima/runtime] AI returned empty reply — substituting fallback");
+    replyText =
+      "I'm not able to answer that one right now — it may be outside what I can help with, or the system blocked my response. Let me bring in a human teammate who can follow up. In the meantime, feel free to rephrase your question.";
+  }
 
   // 7) Persist assistant message (clean text)
   const replyAt = new Date().toISOString();
