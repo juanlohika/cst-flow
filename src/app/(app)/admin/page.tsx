@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Key, LayoutTemplate, Users, Calendar, Plus, Trash2, GripVertical, Save, Loader2, ChevronDown, ChevronRight, BookOpen, Pencil, X, RefreshCw, ToggleLeft, ToggleRight, Shield, Sparkles, ExternalLink, Tag, Download, Upload, Building2, AlertCircle, CheckCircle2, Network } from "lucide-react";
+import { Key, LayoutTemplate, Users, Calendar, Plus, Trash2, GripVertical, Save, Loader2, ChevronDown, ChevronRight, BookOpen, Pencil, X, RefreshCw, ToggleLeft, ToggleRight, Shield, Sparkles, ExternalLink, Tag, Download, Upload, Building2, AlertCircle, CheckCircle2, Network, KeyRound, UserCircle, Send, Server, Zap, Brain, Lock } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 
@@ -891,62 +891,57 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                 {/* Access Codes callout */}
                 <a
                   href="/admin/access-codes"
-                  className="flex items-center gap-3 p-4 rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50 to-pink-50 hover:from-rose-100 hover:to-pink-100 transition-colors"
+                  className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
                 >
-                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-rose-400 to-pink-500 flex items-center justify-center shadow-md shadow-rose-500/30 shrink-0">
-                    <span className="text-white text-lg">🔑</span>
+                  <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                    <KeyRound className="w-4 h-4 text-slate-600" strokeWidth={2} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-black text-slate-800">Account Access Codes</p>
-                    <p className="text-[11px] font-bold text-slate-500">
+                    <p className="text-[13px] font-semibold text-slate-800">Account Access Codes</p>
+                    <p className="text-[11px] text-slate-500">
                       Manage Client Codes + Access Tokens for every account in one place.
                     </p>
                   </div>
-                  <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest shrink-0">
-                    Open →
-                  </span>
+                  <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                 </a>
 
                 {/* Portal Contacts callout */}
                 <a
                   href="/admin/portal-contacts"
-                  className="flex items-center gap-3 p-4 rounded-2xl border border-purple-200 bg-gradient-to-r from-purple-50 to-fuchsia-50 hover:from-purple-100 hover:to-fuchsia-100 transition-colors"
+                  className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
                 >
-                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-400 to-fuchsia-500 flex items-center justify-center shadow-md shadow-purple-500/30 shrink-0">
-                    <span className="text-white text-lg">👥</span>
+                  <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                    <Users className="w-4 h-4 text-slate-600" strokeWidth={2} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-black text-slate-800">ARIMA · Portal Contacts</p>
-                    <p className="text-[11px] font-bold text-slate-500">
+                    <p className="text-[13px] font-semibold text-slate-800">ARIMA · Portal Contacts</p>
+                    <p className="text-[11px] text-slate-500">
                       Invite external client contacts to chat with ARIMA via magic link.
                     </p>
                   </div>
-                  <span className="text-[10px] font-black text-purple-600 uppercase tracking-widest shrink-0">
-                    Open →
-                  </span>
+                  <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                 </a>
 
                 {/* Channels callout */}
                 <a
                   href="/admin/telegram"
-                  className="flex items-center gap-3 p-4 rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 to-blue-50 hover:from-sky-100 hover:to-blue-100 transition-colors"
+                  className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
                 >
-                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-sky-400 to-blue-500 flex items-center justify-center shadow-md shadow-blue-500/30 shrink-0">
-                    <span className="text-white text-lg">✈</span>
+                  <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                    <Send className="w-4 h-4 text-slate-600" strokeWidth={2} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-black text-slate-800">ARIMA · Telegram Channel</p>
-                    <p className="text-[11px] font-bold text-slate-500">
+                    <p className="text-[13px] font-semibold text-slate-800">ARIMA · Telegram Channel</p>
+                    <p className="text-[11px] text-slate-500">
                       Configure the Telegram bot for ARIMA: bot token, webhook, group bindings.
                     </p>
                   </div>
-                  <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest shrink-0">
-                    Open →
-                  </span>
+                  <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                 </a>
 
-                <h3 className="font-bold text-xl flex items-center gap-2 border-b pb-4">
-                  🔒 AI Provider Settings
+                <h3 className="font-semibold text-base flex items-center gap-2 border-b pb-4 text-slate-800">
+                  <Lock className="w-4 h-4 text-slate-500" strokeWidth={2} />
+                  AI Provider Settings
                 </h3>
 
                 {/* Provider selector */}
@@ -974,7 +969,10 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                 <div className={`space-y-3 rounded-xl border p-4 transition-all ${primaryProvider === "ollama" ? "border-green-200 bg-green-50/30" : "border-border opacity-60"}`}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold">🖥 Ollama (Local AI)</span>
+                      <span className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+                        <Server className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+                        Ollama (Local AI)
+                      </span>
                       <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">100% Private · No internet needed</span>
                     </div>
                     <button type="button" onClick={() => saveCard("ollama", { ollamaEndpoint, ollamaModel })} disabled={cardSaving === "ollama"}
@@ -1003,7 +1001,10 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                 <div className={`space-y-3 rounded-xl border p-4 transition-all ${primaryProvider === "groq" ? "border-purple-200 bg-purple-50/30" : "border-border opacity-60"}`}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold">⚡ Groq</span>
+                      <span className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+                        <Zap className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+                        Groq
+                      </span>
                       <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Free tier · Fast · console.groq.com</span>
                     </div>
                     <button type="button" onClick={() => saveCard("groq", { groqApiKey })} disabled={cardSaving === "groq" || !groqApiKey}
@@ -1023,7 +1024,10 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                 <div className={`space-y-3 rounded-xl border p-4 transition-all ${primaryProvider === "gemini" ? "border-blue-200 bg-blue-50/30" : "border-border opacity-60"}`}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold">✨ Google Gemini</span>
+                      <span className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+                        Google Gemini
+                      </span>
                       <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">Free only on non-billing projects · aistudio.google.com</span>
                     </div>
                     <button type="button" onClick={() => saveCard("gemini", { geminiApiKey })} disabled={cardSaving === "gemini" || !geminiApiKey}
@@ -1043,7 +1047,10 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                 <div className={`space-y-3 rounded-xl border p-4 transition-all ${primaryProvider === "claude" ? "border-orange-200 bg-orange-50/30" : "border-border opacity-60"}`}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold">🟠 Claude (Anthropic)</span>
+                      <span className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+                        <Brain className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+                        Claude (Anthropic)
+                      </span>
                       <span className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">Best quality · console.anthropic.com</span>
                     </div>
                     <button type="button" onClick={() => saveCard("claude", { anthropicApiKey })} disabled={cardSaving === "claude" || !anthropicApiKey}
@@ -1220,10 +1227,10 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                         <select value={newApp.provider ?? ""} onChange={e => setNewApp({ ...newApp, provider: e.target.value || null })}
                           className="w-full px-3 py-2 border border-input rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white">
                           <option value="">Global default</option>
-                          <option value="claude">🟠 Claude (Anthropic)</option>
-                          <option value="gemini">✨ Gemini</option>
-                          <option value="groq">⚡ Groq</option>
-                          <option value="ollama">🖥 Ollama</option>
+                          <option value="claude">Claude (Anthropic)</option>
+                          <option value="gemini">Gemini</option>
+                          <option value="groq">Groq</option>
+                          <option value="ollama">Ollama</option>
                         </select>
                       </div>
                     </div>
@@ -1283,10 +1290,10 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                                 <select value={editingApp.provider ?? ""} onChange={e => setEditingApp({ ...editingApp, provider: e.target.value || null })}
                                   className="w-full px-2 py-1.5 border border-input rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white">
                                   <option value="">Global default</option>
-                                  <option value="claude">🟠 Claude (Anthropic)</option>
-                                  <option value="gemini">✨ Gemini</option>
-                                  <option value="groq">⚡ Groq</option>
-                                  <option value="ollama">🖥 Ollama</option>
+                                  <option value="claude">Claude (Anthropic)</option>
+                                  <option value="gemini">Gemini</option>
+                                  <option value="groq">Groq</option>
+                                  <option value="ollama">Ollama</option>
                                 </select>
                               </div>
                             </div>

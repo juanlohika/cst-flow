@@ -257,17 +257,14 @@ export async function dispatchNotification(args: NotifyArgs): Promise<{
 }
 
 async function sendEmailNotification(userId: string, args: NotifyArgs): Promise<void> {
-  // Lazy import nodemailer so production builds aren't bloated when SMTP isn't configured
   try {
-    const nodemailer = await import("nodemailer").catch(() => null);
-    if (!nodemailer) return;
-
-    const host = process.env.SMTP_HOST;
-    const port = parseInt(process.env.SMTP_PORT || "587", 10);
-    const user = process.env.SMTP_USER;
-    const pass = process.env.SMTP_PASS;
-    const from = process.env.SMTP_FROM || user;
-    if (!host || !user || !pass) return;
+    // Use the shared SMTP helper — same path the test-email button uses.
+    const { getSmtpTransport } = await import("@/lib/email");
+    const smtp = await getSmtpTransport();
+    if (!smtp) {
+      console.warn("[notifications] SMTP not configured — skipping email for user", userId);
+      return;
+    }
 
     const userRows = await db
       .select({ email: usersTable.email, name: usersTable.name })
@@ -277,19 +274,12 @@ async function sendEmailNotification(userId: string, args: NotifyArgs): Promise<
     const recipient = userRows[0];
     if (!recipient?.email) return;
 
-    const transporter = nodemailer.default.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
-    });
-
     const linkSection = args.link
       ? `<p><a href="${args.link}" style="color:#e11d48;text-decoration:none;font-weight:bold;">Open in CST OS →</a></p>`
       : "";
 
-    await transporter.sendMail({
-      from,
+    await smtp.transport.sendMail({
+      from: `"ARIMA" <${smtp.from}>`,
       to: recipient.email,
       subject: `[ARIMA] ${args.title}`,
       html: `
@@ -301,6 +291,7 @@ async function sendEmailNotification(userId: string, args: NotifyArgs): Promise<
           <p style="font-size:11px;color:#94a3b8;">You're getting this because notifications are enabled for your account in CST OS. <a href="${process.env.PUBLIC_BASE_URL || ""}/arima/notifications" style="color:#64748b;">Manage preferences →</a></p>
         </div>
       `,
+      text: `${args.title}\n\n${args.body || ""}${args.link ? `\n\nOpen: ${args.link}` : ""}`,
     });
 
     // Mark log as sent

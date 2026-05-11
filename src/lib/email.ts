@@ -31,8 +31,14 @@ async function getGlobalSettings() {
 }
 
 
-/* ─── SMTP config: GlobalSetting DB > env vars ────────────────────── */
-async function getSmtpConfig() {
+/* ─── SMTP config: GlobalSetting DB > env vars ──────────────────────
+ *
+ * Reads SMTP credentials from the GlobalSetting table FIRST (admin sets them
+ * via /admin Credentials tab → Email Service card), then falls back to env
+ * vars. The DB keys support both legacy camelCase (smtpHost) and the newer
+ * snake_case keys used by the admin form (smtp_host).
+ */
+export async function getSmtpConfig() {
   const cfg: Record<string, any> = {};
   try {
     const { db } = await import("@/db");
@@ -42,19 +48,45 @@ async function getSmtpConfig() {
   } catch (err) {
     console.warn("SMTP config read error:", err);
   }
-  return {
-    host:   (cfg.smtpHost || process.env.SMTP_HOST || "smtp.gmail.com").replace("smpt", "smtp"),
-    port:   parseInt(cfg.smtpPort || process.env.SMTP_PORT || "587"),
-    secure: cfg.smtpSecure === "true" || process.env.SMTP_SECURE === "true",
-    user:   cfg.smtpUser   || process.env.SMTP_USER,
-    pass:   cfg.smtpPass   || process.env.SMTP_PASS,
-    from:   cfg.smtpFrom   || process.env.SMTP_FROM || cfg.smtpUser || process.env.SMTP_USER || "noreply@tarkie.app",
-  };
+  const host = (cfg.smtp_host || cfg.smtpHost || process.env.SMTP_HOST || "smtp.gmail.com").replace("smpt", "smtp");
+  const portRaw = cfg.smtp_port || cfg.smtpPort || process.env.SMTP_PORT || "587";
+  const port = isNaN(parseInt(portRaw, 10)) ? 587 : parseInt(portRaw, 10);
+  const secureRaw = cfg.smtp_secure || cfg.smtpSecure || process.env.SMTP_SECURE;
+  const secure = secureRaw === "true" || port === 465;
+  const user = cfg.smtp_user || cfg.smtpUser || process.env.SMTP_USER;
+  const pass = cfg.smtp_pass || cfg.smtpPass || process.env.SMTP_PASS;
+  const from = cfg.smtp_from || cfg.smtpFrom || process.env.SMTP_FROM || user || "noreply@tarkie.app";
+  return { host, port, secure, user, pass, from };
+}
+
+/**
+ * Returns a configured nodemailer transport, or null if SMTP is not configured.
+ * Use this everywhere we need to send email — do NOT read env vars directly.
+ */
+export async function getSmtpTransport(): Promise<{ transport: any; from: string } | null> {
+  const cfg = await getSmtpConfig();
+  if (!cfg.host || !cfg.user || !cfg.pass) {
+    return null;
+  }
+  const transport = nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure,
+    auth: { user: cfg.user, pass: cfg.pass },
+    tls: { rejectUnauthorized: false }, // Tolerant of corporate / self-signed SMTP relays
+  });
+  return { transport, from: cfg.from };
 }
 
 async function getTransport() {
   const { host, port, secure, user, pass } = await getSmtpConfig();
-  return nodemailer.createTransport({ host, port, secure, auth: { user, pass } });
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: { user, pass },
+    tls: { rejectUnauthorized: false },
+  });
 }
 
 /* ─── Invite Email Template ──────────────────────────────────── */

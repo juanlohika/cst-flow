@@ -5,6 +5,7 @@ import { clientContacts, clientProfiles as clientProfilesTable } from "@/db/sche
 import { and, eq } from "drizzle-orm";
 import { ensureAccessSchema } from "@/lib/access/accounts";
 import { createMagicLink, buildMagicLinkUrl } from "@/lib/portal/auth";
+import { getSmtpTransport } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -60,21 +61,17 @@ export async function POST(req: Request, { params }: { params: { id: string; con
       .set({ status: "invited", invitedAt: now, updatedAt: now })
       .where(eq(clientContacts.id, contact.id));
 
-    // Send the onboarding email
+    // Send the onboarding email using the shared SMTP helper
+    // (reads from DB globalSettings first, then env vars — same path the test-email button uses)
     let emailSent = false;
     let emailError: string | null = null;
     try {
-      const nodemailer = await import("nodemailer").catch(() => null);
-      if (nodemailer && process.env.SMTP_HOST && process.env.SMTP_USER) {
-        const transporter = nodemailer.default.createTransport({
-          host: process.env.SMTP_HOST,
-          port: parseInt(process.env.SMTP_PORT || "587", 10),
-          secure: parseInt(process.env.SMTP_PORT || "587", 10) === 465,
-          auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-        });
-
-        await transporter.sendMail({
-          from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      const smtp = await getSmtpTransport();
+      if (!smtp) {
+        emailError = "SMTP is not configured. Go to Admin → Credentials → Email Service to set it up, or copy the magic link manually.";
+      } else {
+        await smtp.transport.sendMail({
+          from: `"ARIMA" <${smtp.from}>`,
           to: contact.email,
           subject: `ARIMA — your direct line to the ${contact.companyName || "CST"} team`,
           html: buildInviteHtml({
@@ -83,10 +80,9 @@ export async function POST(req: Request, { params }: { params: { id: string; con
             magicUrl,
             expiresAt,
           }),
+          text: `Hi ${contact.name},\n\nYour account team has set up ARIMA for ${contact.companyName || "your account"}.\n\nOpen ARIMA: ${magicUrl}\n\nThis link expires on ${new Date(expiresAt).toLocaleDateString()}.`,
         });
         emailSent = true;
-      } else {
-        emailError = "SMTP is not configured — no email sent. Copy the link manually.";
       }
     } catch (mailErr: any) {
       emailError = mailErr?.message || "Email send failed";
