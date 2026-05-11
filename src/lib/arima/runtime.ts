@@ -31,7 +31,13 @@ CRITICAL RULES:
 CLOSURE RULES (important):
 - If the user says "thanks", "ok", "got it", "bye", or sends 👍 — reply with ONE short sentence and DO NOT ask anything back.
 - Examples: "You're welcome." / "Sounds good." / "Take care." / "👍"
-- Do NOT add "Is there anything else I can help with?" to closers. Let the conversation end naturally.`;
+- Do NOT add "Is there anything else I can help with?" to closers. Let the conversation end naturally.
+
+ACTION HONESTY (critical):
+- You have callable tools. Talking about doing something is NOT doing it.
+- NEVER claim "I've scheduled", "I've booked", "I've sent the invite", "I've notified the team", "the calendar invite is on its way", etc., unless a real tool returned success.
+- If the user asks you to schedule a meeting and you can't actually book it, call create_request (category="meeting") and say honestly: "I've logged your meeting request — someone from the team will confirm a time and send the calendar invite shortly."
+- Never invent Zoom links, calendar IDs, or confirmation numbers.`;
 
 const REQUEST_REGEX = /\[REQUEST\]([\s\S]*?)\[\/REQUEST\]/i;
 
@@ -230,9 +236,6 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
   }
 
   const clientContext = buildClientContext(clientProfile);
-  const systemInstruction = clientContext
-    ? `${baseInstruction}\n\n---\n\n${clientContext}`
-    : baseInstruction;
 
   // 4) Build contents (prior history + new user message)
   const contents: any[] = [...(args.priorContents || [])];
@@ -243,7 +246,7 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
   const aiConfig = await readAIConfig();
   const providerLabel = (model as any)?.__provider || aiConfig.primaryProvider || "unknown";
 
-  // 6) Call the model with retry + tool-calling loop
+  // 6) Load tools FIRST so we can list them in the system prompt
   const toolDefs = await buildGeminiTools().catch(() => undefined);
   const toolCtx: ToolContext = {
     conversationId: args.conversationId,
@@ -251,6 +254,21 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     clientProfileId: args.clientProfileId || null,
     channel: "web", // overridden by Telegram/portal callers if needed in future
   };
+
+  // Tool-aware preamble: many models will silently ignore the `tools` config
+  // unless the system prompt explicitly tells them what's available and
+  // commands them to USE the tools instead of pretending.
+  let toolPreamble = "";
+  if (toolDefs && toolDefs.length > 0 && toolDefs[0]?.functionDeclarations?.length > 0) {
+    const list = toolDefs[0].functionDeclarations.map((t: any) =>
+      `- ${t.name}: ${t.description}`
+    ).join("\n");
+    toolPreamble = `\n\n---\n\n## AVAILABLE TOOLS\n\nYou have these callable functions. When the user requests an action that matches one of these, CALL IT — do not just talk about doing it. After the tool returns, report what actually happened. If a tool returns ok:false with "awaitingApproval", DO NOT claim the action succeeded — tell the user it's been queued/logged for the team to confirm.\n\n${list}\n\nIf none of these match what the user is asking for an action, call \`create_request\` with an appropriate category so the human team is notified. NEVER claim to have scheduled, booked, sent, or completed anything unless a tool actually returned success.`;
+  }
+
+  const systemInstruction = (clientContext
+    ? `${baseInstruction}\n\n---\n\n${clientContext}`
+    : baseInstruction) + toolPreamble;
 
   const baseInput: any = {
     contents,

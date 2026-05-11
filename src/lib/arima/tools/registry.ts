@@ -189,16 +189,19 @@ export async function executeTool(args: {
     return { ok: false, error: "This tool is currently disabled by an admin.", invocationId };
   }
 
-  // Approval-required tool → queue and return
+  // Approval-required tool → queue and return.
+  // IMPORTANT: ok:false so the AI doesn't claim the action was completed.
+  // We give it a clear, actionable description so it tells the user the truth.
   if (autonomy === "approval") {
     await logInvocation({
       id: invocationId, toolName: args.name, ctx: args.context, input: args.input,
       status: "pending", approvalNeeded: true, createdAt: now,
     });
     return {
-      ok: true,
-      data: { queued: true },
-      summary: "Action queued for human approval.",
+      ok: false,
+      data: { queued: true, awaitingApproval: true },
+      error: "This action requires a human admin to approve before it runs. Tell the user you've logged the request and a teammate will confirm shortly. Do NOT say the action was completed.",
+      summary: "Queued for human approval — not executed yet.",
       invocationId,
       queuedForApproval: true,
     };
