@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/db";
-import { clientContacts, subscriberSessions } from "@/db/schema";
-import { and, eq } from "drizzle-orm";
+import { clientContacts, subscriberSessions, bindingContactAccess, arimaChannelBindings } from "@/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
 import { ensureAccessSchema } from "@/lib/access/accounts";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +28,37 @@ export async function PATCH(req: Request, { params }: { params: { id: string; co
         eq(clientContacts.id, params.contactId),
         eq(clientContacts.clientProfileId, params.id)
       ));
+
+    // Phase 16: if the request includes bindingIds, completely replace the
+    // contact's binding routing with that exact list. Empty list = revoke
+    // access from every Telegram group. Bindings must belong to this account.
+    if (Array.isArray(body?.bindingIds)) {
+      const desired = (body.bindingIds as any[]).filter(x => typeof x === "string" && x.length > 0);
+      let valid: string[] = [];
+      if (desired.length > 0) {
+        const found = await db
+          .select({ id: arimaChannelBindings.id })
+          .from(arimaChannelBindings)
+          .where(and(
+            eq(arimaChannelBindings.clientProfileId, params.id),
+            eq(arimaChannelBindings.status, "active"),
+            inArray(arimaChannelBindings.id, desired),
+          ));
+        valid = found.map(f => f.id);
+      }
+      await db.delete(bindingContactAccess)
+        .where(eq(bindingContactAccess.contactId, params.contactId));
+      const now = new Date().toISOString();
+      for (const bId of valid) {
+        await db.insert(bindingContactAccess).values({
+          id: `bca_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+          bindingId: bId,
+          contactId: params.contactId,
+          addedAt: now,
+          addedByUserId: session.user.id,
+        }).catch(() => {});
+      }
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error: any) {

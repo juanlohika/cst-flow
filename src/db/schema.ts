@@ -533,6 +533,21 @@ export const arimaMessages = sqliteTable("ArimaMessage", {
   createdAt:      text("createdAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+// BindingContactAccess: which ClientContact rows are routed to which binding
+// (Telegram group). Many-to-many — a contact may belong to multiple bindings
+// within the same account, and a binding may include multiple contacts. For
+// Phase 16 the UI restricts contacts to one binding at a time, but the data
+// model allows multiple for future flexibility.
+export const bindingContactAccess = sqliteTable("BindingContactAccess", {
+  id:        text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  bindingId: text("bindingId").notNull(),
+  contactId: text("contactId").notNull(),
+  addedAt:   text("addedAt").default(sql`(datetime('now'))`).notNull(),
+  addedByUserId: text("addedByUserId"),
+}, (table) => ({
+  uniqueBindingContact: { columns: [table.bindingId, table.contactId], name: "BindingContactAccess_unique" },
+}));
+
 // ArimaChannelBinding: maps an external channel chat (Telegram group, etc.) to ONE client account.
 // A bound chat can never see data for any other client. Binding is admin-only.
 export const arimaChannelBindings = sqliteTable("ArimaChannelBinding", {

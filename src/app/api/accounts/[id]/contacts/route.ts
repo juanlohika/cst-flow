@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/db";
-import { clientContacts, clientProfiles as clientProfilesTable } from "@/db/schema";
-import { and, eq, asc } from "drizzle-orm";
+import { clientContacts, clientProfiles as clientProfilesTable, bindingContactAccess, arimaChannelBindings } from "@/db/schema";
+import { and, eq, asc, inArray } from "drizzle-orm";
 import { canAccessClient, ensureAccessSchema } from "@/lib/access/accounts";
 
 export const dynamic = "force-dynamic";
@@ -39,7 +39,24 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
       .where(eq(clientContacts.clientProfileId, params.id))
       .orderBy(asc(clientContacts.name));
 
-    return NextResponse.json(rows);
+    // Hydrate the per-contact binding routing so the UI can render it inline
+    let accessByContact = new Map<string, string[]>();
+    if (rows.length > 0) {
+      const grants = await db
+        .select({ contactId: bindingContactAccess.contactId, bindingId: bindingContactAccess.bindingId })
+        .from(bindingContactAccess)
+        .where(inArray(bindingContactAccess.contactId, rows.map(r => r.id)));
+      for (const g of grants) {
+        const arr = accessByContact.get(g.contactId) || [];
+        arr.push(g.bindingId);
+        accessByContact.set(g.contactId, arr);
+      }
+    }
+
+    return NextResponse.json(rows.map(r => ({
+      ...r,
+      bindingIds: accessByContact.get(r.id) || [],
+    })));
   } catch (error: any) {
     console.error("[contacts GET] error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -97,7 +114,39 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       updatedAt: now,
     });
 
-    return NextResponse.json({ id, name, email, role, phone, status: "invited" }, { status: 201 });
+    // Phase 16: attach this contact to one or more Telegram bindings of the
+    // account. The UI sends one binding today (radio-button picker) but the
+    // data model accepts multiple. Bindings must belong to this account or
+    // we silently drop them — admins can't cross-link contacts across clients.
+    const requestedBindingIds: string[] = Array.isArray(body?.bindingIds)
+      ? body.bindingIds.filter((x: any) => typeof x === "string" && x.length > 0)
+      : (typeof body?.bindingId === "string" ? [body.bindingId] : []);
+    let attachedBindingIds: string[] = [];
+    if (requestedBindingIds.length > 0) {
+      const valid = await db
+        .select({ id: arimaChannelBindings.id })
+        .from(arimaChannelBindings)
+        .where(and(
+          eq(arimaChannelBindings.clientProfileId, params.id),
+          eq(arimaChannelBindings.status, "active"),
+          inArray(arimaChannelBindings.id, requestedBindingIds),
+        ));
+      attachedBindingIds = valid.map(v => v.id);
+      for (const bId of attachedBindingIds) {
+        await db.insert(bindingContactAccess).values({
+          id: `bca_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+          bindingId: bId,
+          contactId: id,
+          addedAt: now,
+          addedByUserId: session.user.id,
+        }).catch(() => {});
+      }
+    }
+
+    return NextResponse.json({
+      id, name, email, role, phone, status: "invited",
+      bindingIds: attachedBindingIds,
+    }, { status: 201 });
   } catch (error: any) {
     console.error("[contacts POST] error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });

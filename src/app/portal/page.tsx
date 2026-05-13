@@ -62,6 +62,11 @@ export default function PortalChatPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Mention typeahead state
+  interface MentionOption { type: string; id: string; name: string; subtitle: string; token: string; }
+  const [mentionPool, setMentionPool] = useState<MentionOption[]>([]);
+  const [mentionState, setMentionState] = useState<{ open: boolean; query: string; anchorIdx: number; activeIdx: number }>({ open: false, query: "", anchorIdx: -1, activeIdx: 0 });
+
   const reloadMessages = useCallback(async () => {
     try {
       const res = await fetch("/api/portal/chat");
@@ -102,6 +107,21 @@ export default function PortalChatPage() {
     }
     init();
   }, [router]);
+
+  // Load the mention pool once we have a session
+  useEffect(() => {
+    if (authChecking || !session) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/portal/mentions");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setMentionPool(data.mentions || []);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [authChecking, session]);
 
   // ─── SSE live updates ───────────────────────────────────────────
   useEffect(() => {
@@ -191,7 +211,79 @@ export default function PortalChatPage() {
     }
   };
 
+  const filteredMentions = (() => {
+    if (!mentionState.open) return [];
+    const q = mentionState.query.toLowerCase();
+    return mentionPool
+      .filter(m => !q || m.name.toLowerCase().includes(q) || m.subtitle?.toLowerCase().includes(q))
+      .slice(0, 6);
+  })();
+
+  const onPromptChange = (val: string) => {
+    setPrompt(val);
+    const cursor = textareaRef.current?.selectionStart ?? val.length;
+    // Walk back from cursor to find an "@" with only word chars / dot / underscore after it.
+    let i = cursor - 1;
+    let found = -1;
+    while (i >= 0) {
+      const ch = val[i];
+      if (ch === "@") { found = i; break; }
+      if (/[a-zA-Z0-9._-]/.test(ch)) { i--; continue; }
+      break;
+    }
+    if (found === -1 || (found > 0 && /[a-zA-Z0-9]/.test(val[found - 1] || ""))) {
+      // No active @-trigger (or @ is part of an email-like token)
+      setMentionState(s => ({ ...s, open: false }));
+      return;
+    }
+    setMentionState({
+      open: true,
+      query: val.slice(found + 1, cursor),
+      anchorIdx: found,
+      activeIdx: 0,
+    });
+  };
+
+  const insertMention = (option: { token: string; name: string }) => {
+    if (mentionState.anchorIdx < 0) return;
+    const cursor = textareaRef.current?.selectionStart ?? prompt.length;
+    const before = prompt.slice(0, mentionState.anchorIdx);
+    const after = prompt.slice(cursor);
+    const inserted = `${option.token} `;
+    const next = `${before}${inserted}${after}`;
+    setPrompt(next);
+    setMentionState({ open: false, query: "", anchorIdx: -1, activeIdx: 0 });
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        const pos = before.length + inserted.length;
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(pos, pos);
+      }
+    });
+  };
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionState.open && filteredMentions.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionState(s => ({ ...s, activeIdx: Math.min(s.activeIdx + 1, filteredMentions.length - 1) }));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionState(s => ({ ...s, activeIdx: Math.max(s.activeIdx - 1, 0) }));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        insertMention(filteredMentions[mentionState.activeIdx]);
+        return;
+      }
+      if (e.key === "Escape") {
+        setMentionState(s => ({ ...s, open: false }));
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -328,6 +420,42 @@ export default function PortalChatPage() {
       {/* COMPOSER */}
       <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-100">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-3">
+          {mentionState.open && filteredMentions.length > 0 && (
+            <div className="mb-2 max-w-md ml-auto mr-auto bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden">
+              {filteredMentions.map((opt, i) => (
+                <button
+                  key={`${opt.type}:${opt.id}`}
+                  onMouseDown={e => { e.preventDefault(); insertMention(opt); }}
+                  onMouseEnter={() => setMentionState(s => ({ ...s, activeIdx: i }))}
+                  className={`w-full text-left px-3 py-2 flex items-center gap-2 ${
+                    i === mentionState.activeIdx ? "bg-[#F0F4FC]" : "hover:bg-slate-50"
+                  }`}
+                >
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-[9px] font-black shrink-0 ${
+                    opt.type === "arima"
+                      ? "bg-gradient-to-br from-[#0177b5] to-[#015a9c]"
+                      : opt.type === "internal"
+                        ? "bg-gradient-to-br from-indigo-400 to-blue-500"
+                        : "bg-gradient-to-br from-emerald-400 to-teal-500"
+                  }`}>
+                    {opt.name.split(/\s+/).map(p => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase() || "?"}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[12px] font-bold text-slate-800 truncate">{opt.name}</p>
+                    {opt.subtitle && (
+                      <p className="text-[10px] text-slate-400 truncate">{opt.subtitle}</p>
+                    )}
+                  </div>
+                  <span className={`text-[9px] font-black uppercase tracking-wider ${
+                    opt.type === "arima" ? "text-[#0177b5]" :
+                    opt.type === "internal" ? "text-indigo-500" : "text-emerald-500"
+                  }`}>
+                    {opt.type === "arima" ? "AI" : opt.type === "internal" ? "Team" : "Client"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           {pendingAttachments.length > 0 && (
             <div className="flex gap-2 mb-2 overflow-x-auto pb-1">
               {pendingAttachments.map((a, i) => (
@@ -368,9 +496,9 @@ export default function PortalChatPage() {
             <textarea
               ref={textareaRef}
               value={prompt}
-              onChange={e => setPrompt(e.target.value)}
+              onChange={e => onPromptChange(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Message the group… (tip: type @arima to ping the AI)"
+              placeholder="Message the group… (tip: type @ to mention someone)"
               rows={1}
               disabled={sending}
               className="flex-1 resize-none outline-none border-none bg-transparent px-2 py-1.5 text-[14px] text-slate-700 placeholder:text-slate-300 max-h-[160px]"
@@ -456,35 +584,59 @@ function EmptyState({ contactName, onPickSuggestion }: { contactName: string; on
 
 function MessageBubble({ m, isMine }: { m: Message; isMine: boolean }) {
   const senderType = m.senderType || (m.role === "assistant" ? "arima" : "external");
-  const name = m.senderName || (senderType === "arima" ? "ARIMA" : "Unknown");
+
+  // Display content: strip the inline "[Name]: " speaker label we add server-side
+  // so it doesn't appear twice (once in the header, once in the bubble text).
+  const inlineNameMatch = m.content?.match(/^\[([^\]]+)\]:\s*([\s\S]*)/);
+  const inlineName = inlineNameMatch?.[1] || null;
+  const displayContent = inlineNameMatch ? inlineNameMatch[2] : m.content;
+
+  // Sender name fallback: legacy messages may not have senderName populated yet;
+  // derive from the inline prefix so they don't render as "Unknown".
+  const name = m.senderName || inlineName || (senderType === "arima" ? "ARIMA" : "Someone");
 
   const avatarBg =
     senderType === "arima" ? "bg-gradient-to-br from-[#0177b5] to-[#015a9c]" :
     senderType === "internal" ? "bg-gradient-to-br from-indigo-400 to-blue-500" :
     "bg-gradient-to-br from-emerald-400 to-teal-500";
 
-  const chip =
-    senderType === "arima" ? { label: "ARIMA", color: "text-[#0177b5] bg-[#F0F4FC] border-[#0177b5]/20" } :
-    senderType === "internal" ? { label: "Team", color: "text-indigo-600 bg-indigo-50 border-indigo-100" } :
-    { label: "Client", color: "text-emerald-600 bg-emerald-50 border-emerald-100" };
+  const roleLabel =
+    senderType === "arima" ? "AI assistant" :
+    senderType === "internal" ? "CST team member" :
+    "Client";
 
   const initials = name.split(/\s+/).map(p => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase() || "?";
+
+  const timeStr = (() => {
+    if (!m.createdAt) return "";
+    try {
+      const d = new Date(m.createdAt);
+      const now = new Date();
+      const sameDay = d.toDateString() === now.toDateString();
+      return sameDay
+        ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+        : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    } catch { return ""; }
+  })();
 
   return (
     <div className={`flex items-end gap-1.5 ${isMine ? "justify-end" : "justify-start"}`}>
       {!isMine && (
-        <div className={`w-7 h-7 rounded-full ${avatarBg} flex items-center justify-center text-white text-[10px] font-black shrink-0`}>
+        <div
+          className={`w-7 h-7 rounded-full ${avatarBg} flex items-center justify-center text-white text-[10px] font-black shrink-0`}
+          title={roleLabel}
+        >
           {initials}
         </div>
       )}
       <div className={`max-w-[78%] flex flex-col ${isMine ? "items-end" : "items-start"}`}>
         <div className="flex items-center gap-1.5 mb-0.5 px-1">
-          <span className="text-[10px] font-bold text-slate-500">{name}</span>
-          <span className={`text-[9px] font-bold uppercase tracking-wider px-1 py-0.5 rounded border ${chip.color}`}>
-            {chip.label}
-          </span>
+          <span className="text-[10px] font-bold text-slate-600" title={roleLabel}>{name}</span>
           {m.senderChannel === "telegram" && (
             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider" title="Sent from Telegram">via TG</span>
+          )}
+          {timeStr && (
+            <span className="text-[10px] text-slate-300" title={m.createdAt}>· {timeStr}</span>
           )}
         </div>
 
@@ -496,7 +648,7 @@ function MessageBubble({ m, isMine }: { m: Message; isMine: boolean }) {
           </div>
         )}
 
-        {m.content && (
+        {displayContent && (
           <div
             className={`px-3.5 py-2 rounded-2xl text-[13.5px] leading-relaxed whitespace-pre-wrap break-words ${
               isMine
@@ -506,7 +658,7 @@ function MessageBubble({ m, isMine }: { m: Message; isMine: boolean }) {
                   : "bg-indigo-50 border border-indigo-100 text-slate-700 rounded-tl-sm"
             }`}
           >
-            {renderWithMentions(m.content)}
+            {renderWithMentions(displayContent)}
           </div>
         )}
       </div>

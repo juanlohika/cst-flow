@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { arimaConversations, arimaMessages, clientContacts, arimaChannelBindings } from "@/db/schema";
+import { arimaConversations, arimaMessages, clientContacts, arimaChannelBindings, bindingContactAccess } from "@/db/schema";
 import { and, eq, asc, inArray } from "drizzle-orm";
 import { getPortalSession } from "@/lib/portal/auth";
 import { runArima, shouldArimaRespond, type MessageAttachment } from "@/lib/arima/runtime";
@@ -18,6 +18,40 @@ export const dynamic = "force-dynamic";
  * Client scoping is automatic — the subscriber's clientProfileId is derived from
  * their ClientContact record, so they CANNOT change it.
  */
+
+/**
+ * Resolve which Telegram bindings this contact is allowed to see/post into.
+ * Returns the binding chatIds. Phase 16 default policy: if the account has
+ * any active bindings AND the contact has NO BindingContactAccess rows yet,
+ * fall back to the FIRST binding (so legacy contacts created before Phase 16
+ * keep working without an admin migration step).
+ */
+async function getAccessibleBindings(args: {
+  contactId: string;
+  clientProfileId: string;
+}): Promise<Array<{ id: string; chatId: string }>> {
+  const accountBindings = await db
+    .select({ id: arimaChannelBindings.id, chatId: arimaChannelBindings.chatId })
+    .from(arimaChannelBindings)
+    .where(and(
+      eq(arimaChannelBindings.clientProfileId, args.clientProfileId),
+      eq(arimaChannelBindings.channel, "telegram"),
+      eq(arimaChannelBindings.status, "active"),
+    ));
+  if (accountBindings.length === 0) return [];
+
+  const granted = await db
+    .select({ bindingId: bindingContactAccess.bindingId })
+    .from(bindingContactAccess)
+    .where(eq(bindingContactAccess.contactId, args.contactId));
+  const allowedIds = new Set(granted.map(g => g.bindingId));
+  const filtered = accountBindings.filter(b => allowedIds.has(b.id));
+  if (filtered.length > 0) return filtered;
+
+  // Backwards-compat: no explicit grant exists → fall back to the first binding
+  // so legacy contacts don't lose access on the day this ships.
+  return accountBindings.slice(0, 1);
+}
 
 async function findOrCreateConversation(args: {
   contactId: string;
@@ -65,15 +99,31 @@ export async function GET() {
       clientProfileId: portal.clientProfileId,
     });
 
-    // Pull every conversation for this client (portal + Telegram + future channels)
-    // so the portal page can render a unified group chat view.
+    // The portal conversation (this contact's own thread) is always visible.
+    // Plus: any Telegram-channel conversation whose binding the contact has
+    // access to. NOT every Telegram conversation tied to the account.
+    const accessible = await getAccessibleBindings({
+      contactId: portal.contactId,
+      clientProfileId: portal.clientProfileId,
+    });
+    const accessibleChatTitles = new Set(accessible.map(b => `tg:${b.chatId}`));
+
     const convoRows = await db
-      .select({ id: arimaConversations.id, channel: arimaConversations.channel })
+      .select({
+        id: arimaConversations.id,
+        channel: arimaConversations.channel,
+        title: arimaConversations.title,
+      })
       .from(arimaConversations)
       .where(eq(arimaConversations.clientProfileId, portal.clientProfileId));
-    const convoIds = convoRows.map(c => c.id);
 
-    const msgs = convoIds.length === 0 ? [] : await db
+    const visibleConvoIds = convoRows
+      .filter(c => c.id === conversationId
+        || c.channel === "portal" && c.id === conversationId
+        || (c.channel === "telegram" && c.title && accessibleChatTitles.has(c.title)))
+      .map(c => c.id);
+
+    const msgs = visibleConvoIds.length === 0 ? [] : await db
       .select({
         id: arimaMessages.id,
         conversationId: arimaMessages.conversationId,
@@ -87,7 +137,7 @@ export async function GET() {
         createdAt: arimaMessages.createdAt,
       })
       .from(arimaMessages)
-      .where(inArray(arimaMessages.conversationId, convoIds))
+      .where(inArray(arimaMessages.conversationId, visibleConvoIds))
       .orderBy(asc(arimaMessages.createdAt));
 
     return NextResponse.json({
@@ -146,19 +196,13 @@ export async function POST(req: Request) {
       parts: [{ text: m.senderName ? `[${m.senderName}]: ${m.content}` : m.content }],
     }));
 
-    // Portal chat is treated as a "group" if a Telegram binding exists for the
-    // same client account — in that case ARIMA stays silent unless @mentioned,
-    // because internal humans on Telegram may be replying directly.
-    const binding = await db
-      .select({ chatId: arimaChannelBindings.chatId })
-      .from(arimaChannelBindings)
-      .where(and(
-        eq(arimaChannelBindings.clientProfileId, portal.clientProfileId),
-        eq(arimaChannelBindings.channel, "telegram"),
-        eq(arimaChannelBindings.status, "active"),
-      ))
-      .limit(1);
-    const isGroup = binding.length > 0;
+    // Portal chat is treated as a "group" when this contact has access to at
+    // least one Telegram binding — that's where their human teammates live.
+    const accessible = await getAccessibleBindings({
+      contactId: portal.contactId,
+      clientProfileId: portal.clientProfileId,
+    });
+    const isGroup = accessible.length > 0;
 
     const shouldReply = shouldArimaRespond({
       senderChannel: "portal",
@@ -189,10 +233,13 @@ export async function POST(req: Request) {
       .where(eq(clientContacts.id, portal.contactId))
       .catch(() => {});
 
-    // Bridge outbound to Telegram if the account is bound
-    if (binding[0]?.chatId) {
+    // Bridge outbound to Telegram — but ONLY to the bindings this contact
+    // has explicit access to (Phase 16). Previously this fired into every
+    // bound Telegram group for the account, which leaked the message across
+    // contexts the client wasn't meant to see.
+    for (const b of accessible) {
       bridgePortalMessageToTelegram({
-        chatId: binding[0].chatId,
+        chatId: b.chatId,
         senderName: portal.contactName,
         clientName: portal.clientName,
         text: formatMentionsForTelegram(cleanText, mentions),

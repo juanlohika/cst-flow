@@ -67,6 +67,16 @@ export async function ensureAccessSchema(): Promise<void> {
       updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
     )`);
 
+    // Phase 16: per-binding contact access list
+    await db.run(sql`CREATE TABLE IF NOT EXISTS BindingContactAccess (
+      id TEXT PRIMARY KEY,
+      bindingId TEXT NOT NULL,
+      contactId TEXT NOT NULL,
+      addedAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      addedByUserId TEXT,
+      UNIQUE(bindingId, contactId)
+    )`);
+
     // ARIMA channel bindings + Telegram linking
     await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaChannelBinding (
       id TEXT PRIMARY KEY,

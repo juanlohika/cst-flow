@@ -32,6 +32,14 @@ interface ClientContact {
   invitedAt: string | null;
   activatedAt: string | null;
   lastSeenAt: string | null;
+  bindingIds: string[];
+}
+
+interface BindingOption {
+  id: string;
+  channel: string;
+  chatId: string;
+  chatTitle: string | null;
 }
 
 interface UserOption {
@@ -70,9 +78,12 @@ export default function ContactsTab({ accountId, companyName }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
 
+  // Account bindings (Telegram groups) — used to route the new contact to a group
+  const [bindings, setBindings] = useState<BindingOption[]>([]);
+
   // Add client contact form
   const [showAddClient, setShowAddClient] = useState(false);
-  const [clientForm, setClientForm] = useState({ name: "", email: "", role: "", phone: "" });
+  const [clientForm, setClientForm] = useState({ name: "", email: "", role: "", phone: "", bindingId: "" });
   const [clientFormError, setClientFormError] = useState<string | null>(null);
 
   // Invite + delete state
@@ -84,9 +95,10 @@ export default function ContactsTab({ accountId, companyName }: Props) {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [mRes, cRes] = await Promise.all([
+      const [mRes, cRes, bRes] = await Promise.all([
         fetch(`/api/accounts/${accountId}/members`),
         fetch(`/api/accounts/${accountId}/contacts`),
+        fetch(`/api/accounts/${accountId}/bindings`),
       ]);
       if (mRes.ok) {
         const data = await mRes.json();
@@ -95,6 +107,10 @@ export default function ContactsTab({ accountId, companyName }: Props) {
       if (cRes.ok) {
         const data = await cRes.json();
         setClientContacts(Array.isArray(data) ? data : []);
+      }
+      if (bRes.ok) {
+        const data = await bRes.json();
+        setBindings(Array.isArray(data) ? data : []);
       }
     } finally {
       setLoading(false);
@@ -159,23 +175,39 @@ export default function ContactsTab({ accountId, companyName }: Props) {
 
   const addClient = async () => {
     setClientFormError(null);
+    if (bindings.length > 0 && !clientForm.bindingId) {
+      setClientFormError("Please pick which Telegram group this contact should chat in.");
+      return;
+    }
     try {
       const res = await fetch(`/api/accounts/${accountId}/contacts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(clientForm),
+        body: JSON.stringify({
+          ...clientForm,
+          bindingIds: clientForm.bindingId ? [clientForm.bindingId] : [],
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
         setClientFormError(data.error || "Failed");
         return;
       }
-      setClientForm({ name: "", email: "", role: "", phone: "" });
+      setClientForm({ name: "", email: "", role: "", phone: "", bindingId: "" });
       setShowAddClient(false);
       fetchAll();
     } catch (err: any) {
       setClientFormError(err.message);
     }
+  };
+
+  const updateContactBinding = async (contactId: string, bindingId: string) => {
+    await fetch(`/api/accounts/${accountId}/contacts/${contactId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bindingIds: bindingId ? [bindingId] : [] }),
+    });
+    fetchAll();
   };
 
   const sendInvite = async (contactId: string) => {
@@ -501,6 +533,22 @@ export default function ContactsTab({ accountId, companyName }: Props) {
                       <p className="text-[10px] text-slate-400 mt-1">
                         Invited {formatTime(c.invitedAt)} · Last seen {formatTime(c.lastSeenAt)}
                       </p>
+                      {bindings.length > 0 && (
+                        <div className="flex items-center gap-1 mt-1.5">
+                          <MessageCircle className="w-3 h-3 text-slate-300" />
+                          <select
+                            value={c.bindingIds?.[0] || ""}
+                            onChange={e => updateContactBinding(c.id, e.target.value)}
+                            className="text-[10px] font-semibold bg-transparent border border-slate-200 rounded px-1.5 py-0.5 text-slate-600 outline-none focus:border-rose-300"
+                            title="Route this contact to a Telegram group"
+                          >
+                            <option value="">No group</option>
+                            {bindings.map(b => (
+                              <option key={b.id} value={b.id}>{b.chatTitle || `Chat ${b.chatId}`}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       <button
@@ -589,6 +637,22 @@ export default function ContactsTab({ accountId, companyName }: Props) {
                   className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-slate-700 outline-none focus:border-rose-300"
                 />
               </div>
+              {bindings.length > 0 && (
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Route to Telegram group</label>
+                  <select
+                    value={clientForm.bindingId}
+                    onChange={e => setClientForm({ ...clientForm, bindingId: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-slate-700 outline-none focus:border-rose-300"
+                  >
+                    <option value="">— Pick a group —</option>
+                    {bindings.map(b => (
+                      <option key={b.id} value={b.id}>{b.chatTitle || `Chat ${b.chatId}`}</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-400">This contact will only see / post into the selected group.</p>
+                </div>
+              )}
               {clientFormError && (
                 <p className="text-[11px] font-bold text-rose-500 flex items-start gap-1">
                   <AlertTriangle className="w-3 h-3 mt-0.5" />
