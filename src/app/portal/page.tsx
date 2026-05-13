@@ -725,6 +725,48 @@ function ImageBubble({ attachment }: { attachment: Attachment }) {
 }
 
 /** Highlight @mentions visually so the recipient sees a clear ping. */
+// Render-side scrubber mirrors the server scrubToolNarration so legacy
+// messages saved before Phase 17 (with the JSON dumps + "I'll now use X"
+// narration) display cleanly without us touching the DB.
+const KNOWN_TOOLS = [
+  "get_client_profile", "get_recent_meetings", "get_account_intelligence",
+  "schedule_meeting", "create_request", "search_meetings",
+  "list_open_requests", "send_check_in",
+];
+function scrubForDisplay(text: string): string {
+  if (!text) return text;
+  let out = text;
+  const escaped = KNOWN_TOOLS.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const toolToken = `(?:\`)?(?:${escaped.join("|")})(?:\`)?`;
+  // Fenced blocks with tool names as labels
+  out = out.replace(new RegExp("```(?:" + escaped.join("|") + ")[^`]*```", "gi"), "");
+  // Fenced JSON / pure-JSON-body blocks
+  out = out.replace(/```[a-zA-Z_-]*\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```/g, "");
+  out = out.replace(/```json[\s\S]*?```/gi, "");
+  // Mid-sentence references
+  out = out.replace(new RegExp(`\\bI'?(?:ll|m going to) (?:now )?(?:use|call|invoke|run|fire|trigger) (?:the )?${toolToken}(?: tool)?\\b`, "gi"), "Let me check");
+  out = out.replace(new RegExp(`\\b(?:using|via|through|with) (?:the )?${toolToken}(?: tool)?\\b`, "gi"), "");
+  out = out.replace(new RegExp(`\\bI(?:'ll)? need to (?:use|call|invoke|run) (?:the )?${toolToken}(?: tool)?\\b`, "gi"), "Let me check");
+  out = out.replace(new RegExp(`\\b(?:the )?\`(?:${escaped.join("|")})\`(?: tool)?`, "gi"), "");
+  out = out.replace(/`[a-z][a-z0-9_]*_[a-z0-9_]+`/g, "");
+  // Filler lines
+  const filler = [
+    /^\s*I'?ll (now )?(?:use|invoke|call|fetch.*using|attempt to call|check via|need to)\b.*$/gim,
+    /^\s*Let me (?:check|verify|fetch|look up|pull|grab|see).{0,80}(?:result|details|history|status)?\.?\s*$/gim,
+    /^\s*I'?(?:ve|m) (?:attempting|going to) (?:to )?(?:call|invoke|use|run)\b.*$/gim,
+    /^\s*I'?ve attempted to .*$/gim,
+    /^\s*using the [`']?[a-zA-Z_]+[`']?(?: tool)?\.?\s*$/gim,
+    /^\s*To give you (?:an? )?(?:overview|summary|view|look)(?: of [^,]+)?, I'?ll .*$/gim,
+  ];
+  for (const re of filler) out = out.replace(re, "");
+  out = out.replace(/\s+\(\s*\)/g, "");
+  out = out.replace(/``\s*``/g, "");
+  out = out.replace(/[ \t]+([.,;!?])/g, "$1");
+  out = out.replace(/[ \t]{2,}/g, " ");
+  out = out.replace(/\n{3,}/g, "\n\n").trim();
+  return out;
+}
+
 /**
  * Tiny, intentionally-limited markdown renderer for chat bubbles.
  * Supports: fenced code blocks (```), inline code (`x`), **bold**, *italic*,
@@ -732,6 +774,7 @@ function ImageBubble({ attachment }: { attachment: Attachment }) {
  * goes through React text nodes / explicit element wrappers.
  */
 function renderWithMentions(text: string): React.ReactNode {
+  text = scrubForDisplay(text);
   if (!text) return text;
   const blocks: React.ReactNode[] = [];
   let idx = 0;

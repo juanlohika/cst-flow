@@ -179,38 +179,87 @@ function safeExtractText(modelResult: any): string {
  *  - Lines that announce a tool invocation ("I'll now use foo", "Let me check…")
  *  - Trailing whitespace cleanup
  */
-function scrubToolNarration(text: string, toolDefs: any): string {
+/**
+ * Strip every form of tool-call narration that has leaked into past replies.
+ * This runs both at write-time (in runArima) and at render-time (the portal
+ * mirrors this logic via a shared regex pack), so even legacy messages stored
+ * before Phase 17 display cleanly without us having to mutate the DB.
+ */
+export function scrubToolNarration(text: string, toolDefs?: any, knownToolNames?: string[]): string {
   if (!text) return text;
   let out = text;
 
-  // Collect known tool names so we can be precise about which fenced blocks to drop.
+  // Collect tool names from either the live tool defs (server-side) or a
+  // statically-passed list (used by the render-side variant).
   const toolNames: string[] = [];
   try {
     const decls = toolDefs?.[0]?.functionDeclarations || [];
     for (const t of decls) if (t?.name) toolNames.push(String(t.name));
   } catch {}
+  if (knownToolNames) for (const n of knownToolNames) if (n) toolNames.push(n);
 
-  // 1) Drop ```tool_name … ``` blocks (and the equivalent fenced JSON dumps).
+  // Always include the common tool names we ship by default, so render-side
+  // scrubbing works without round-tripping the tool registry.
+  const builtIns = [
+    "get_client_profile", "get_recent_meetings", "get_account_intelligence",
+    "schedule_meeting", "create_request", "search_meetings",
+    "list_open_requests", "send_check_in",
+  ];
+  for (const b of builtIns) if (!toolNames.includes(b)) toolNames.push(b);
+
+  // 1) Drop fenced code blocks whose label or content is a tool call.
   if (toolNames.length > 0) {
     const escaped = toolNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    const re = new RegExp(`\`\`\`(?:${escaped.join("|")})[^\`]*\`\`\``, "gi");
-    out = out.replace(re, "");
+    // ```tool_name … ```
+    out = out.replace(new RegExp(`\`\`\`(?:${escaped.join("|")})[^\`]*\`\`\``, "gi"), "");
   }
-  // Generic fallback: any fenced block that's pure JSON (single object/array
-  // and nothing else) — usually an argument dump the model leaked.
+  // Any fenced block whose body is pure JSON (single object/array) — almost
+  // always an argument dump.
   out = out.replace(/```[a-zA-Z_-]*\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```/g, "");
+  // ```json … ``` blocks regardless of body shape (very common Gemini leak)
+  out = out.replace(/```json[\s\S]*?```/gi, "");
 
-  // 2) Narration filler lines.
+  // 2) Scrub MID-SENTENCE tool references. The model loves to write things
+  //    like "I'll call the `schedule_meeting` tool to ..." or "using the
+  //    `get_recent_meetings` tool to fetch the details". We rewrite those
+  //    into innocuous phrasing.
+  if (toolNames.length > 0) {
+    const escaped = toolNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const toolToken = `(?:\`)?(?:${escaped.join("|")})(?:\`)?`;
+    // "I'll call the `foo` tool" / "I'll invoke `foo`" / "I'll use the `foo` tool"
+    out = out.replace(new RegExp(`\\bI'?(?:ll|m going to) (?:now )?(?:use|call|invoke|run|fire|trigger) (?:the )?${toolToken}(?: tool)?\\b`, "gi"), "Let me check");
+    // "using the `foo` tool" / "via the `foo` tool"
+    out = out.replace(new RegExp(`\\b(?:using|via|through|with) (?:the )?${toolToken}(?: tool)?\\b`, "gi"), "");
+    // "I'll need to use `foo` to …" / "I need to call `foo`"
+    out = out.replace(new RegExp(`\\bI(?:'ll)? need to (?:use|call|invoke|run) (?:the )?${toolToken}(?: tool)?\\b`, "gi"), "Let me check");
+    // Bare backtick references — "the `foo` tool", "the `foo`"
+    out = out.replace(new RegExp(`\\b(?:the )?\`(?:${escaped.join("|")})\`(?: tool)?`, "gi"), "");
+  }
+  // Generic backticked snake_case looking like a tool name (anything_with_underscores)
+  out = out.replace(/`[a-z][a-z0-9_]*_[a-z0-9_]+`/g, "");
+
+  // 3) Whole filler lines / phrases.
   const fillerLines = [
-    /^\s*I'?ll (now )?(?:use|invoke|call|fetch.*using|attempt to call|check via)\b.*$/gim,
+    /^\s*I'?ll (now )?(?:use|invoke|call|fetch.*using|attempt to call|check via|need to)\b.*$/gim,
     /^\s*Let me (?:check|verify|fetch|look up|pull|grab|see).{0,80}(?:result|details|history|status)?\.?\s*$/gim,
-    /^\s*I'?(?:ve|m) (?:attempting|going to) (?:to )?(?:call|invoke|use)\b.*$/gim,
+    /^\s*I'?(?:ve|m) (?:attempting|going to) (?:to )?(?:call|invoke|use|run)\b.*$/gim,
+    /^\s*I'?ve attempted to .*$/gim,
     /^\s*using the [`']?[a-zA-Z_]+[`']?(?: tool)?\.?\s*$/gim,
+    /^\s*To give you (?:an? )?(?:overview|summary|view|look)(?: of [^,]+)?, I'?ll .*$/gim,
   ];
   for (const re of fillerLines) out = out.replace(re, "");
 
-  // 3) Collapse triple+ newlines and trim
+  // 4) Dangling empty parentheticals left by mid-sentence scrubs
+  out = out.replace(/\s+\(\s*\)/g, "");
+  // Empty quotes left by removed code
+  out = out.replace(/``\s*``/g, "");
+  // Double spaces, leading punctuation that became orphaned
+  out = out.replace(/[ \t]+([.,;!?])/g, "$1");
+  out = out.replace(/[ \t]{2,}/g, " ");
+
+  // 5) Collapse 3+ newlines and trim
   out = out.replace(/\n{3,}/g, "\n\n").trim();
+
   return out;
 }
 
@@ -345,7 +394,15 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
   } catch (err) {
     console.error("[arima/runtime] skill fetch failed:", err);
   }
-  const baseInstruction = arimaSkill || FALLBACK_INSTRUCTION;
+  // If the DB-stored skill doesn't yet have the Phase 17/18 "tool calls
+  // are invisible" rule, force-append it so we don't depend on an admin
+  // running POST /api/skills/seed. This makes the rule a hard runtime
+  // guarantee — no race between deploy and seed.
+  const TOOL_INVIS_MARKER = "Tool calls are INVISIBLE";
+  let baseInstruction = arimaSkill || FALLBACK_INSTRUCTION;
+  if (!baseInstruction.includes(TOOL_INVIS_MARKER)) {
+    baseInstruction += `\n\n---\n\n## CRITICAL: Tool calls are INVISIBLE plumbing\n\nWhen you call a tool, that's between you and the system — the user must NEVER see tool names, JSON payloads, code blocks with arguments, or process narration like "I'll now use X", "Let me check the result", "I've attempted to call Y", "I'll fetch via Z", "using the \`tool_name\` tool".\n\nJust speak the OUTCOME in plain language. "Got it — meeting request logged. A teammate will confirm a time." That's it. Never name the tool you used. Never echo its arguments.`;
+  }
 
   // 3) Load client profile if requested
   let clientProfile: any = null;
