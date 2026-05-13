@@ -69,7 +69,7 @@ export async function createMagicLink(args: {
 export async function consumeMagicLink(
   token: string,
   context: { userAgent?: string; ipAddress?: string }
-): Promise<{ ok: true; sessionId: string; session: PortalSession } | { ok: false; reason: string }> {
+): Promise<{ ok: true; sessionId: string; session: PortalSession; firstActivation: boolean } | { ok: false; reason: string }> {
   const rows = await db
     .select({
       id: subscriberMagicLinks.id,
@@ -87,6 +87,15 @@ export async function consumeMagicLink(
   if (new Date(link.expiresAt).getTime() < Date.now()) {
     return { ok: false, reason: "This link has expired. Ask your account manager for a new one." };
   }
+
+  // Check if this is the contact's very first activation (used by the caller
+  // to fire a one-time "joined via portal" notification into Telegram).
+  const priorContact = await db
+    .select({ activatedAt: clientContacts.activatedAt })
+    .from(clientContacts)
+    .where(eq(clientContacts.id, link.contactId))
+    .limit(1);
+  const firstActivation = !priorContact[0]?.activatedAt;
 
   // Mark link used
   const now = new Date().toISOString();
@@ -117,7 +126,7 @@ export async function consumeMagicLink(
 
   const session = await loadSessionByContactId(link.contactId);
   if (!session) return { ok: false, reason: "Subscriber data not found." };
-  return { ok: true, sessionId, session };
+  return { ok: true, sessionId, session, firstActivation };
 }
 
 async function loadSessionByContactId(contactId: string): Promise<PortalSession | null> {

@@ -198,7 +198,7 @@ export default function PortalChatPage() {
   if (authChecking || !session) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-rose-400" />
+        <Loader2 className="w-6 h-6 animate-spin text-[#0177b5]" />
       </div>
     );
   }
@@ -209,8 +209,8 @@ export default function PortalChatPage() {
       <header className="bg-white/90 backdrop-blur-md border-b border-slate-100 sticky top-0 z-10">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-rose-400 to-pink-500 flex items-center justify-center shadow-md shadow-rose-500/30 shrink-0">
-              <Heart className="w-4 h-4 text-white" fill="white" />
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#0177b5] to-[#015a9c] flex items-center justify-center shadow-md shadow-[#0177b5]/30 shrink-0">
+              <Heart className="w-4 h-4 text-white" fill="white" strokeWidth={1.5} />
             </div>
             <div className="min-w-0">
               <p className="text-[13px] font-black text-slate-800 tracking-tight truncate">ARIMA</p>
@@ -221,7 +221,7 @@ export default function PortalChatPage() {
           </div>
           <button
             onClick={logout}
-            className="flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-rose-500 uppercase tracking-widest transition-colors"
+            className="flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-[#0177b5] uppercase tracking-widest transition-colors"
             title="Sign out"
           >
             <LogOut className="w-3 h-3" />
@@ -235,7 +235,7 @@ export default function PortalChatPage() {
         <div className="max-w-3xl mx-auto space-y-2">
           {loadingHistory && messages.length === 0 && (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-5 h-5 animate-spin text-rose-300" />
+              <Loader2 className="w-5 h-5 animate-spin text-[#0177b5]/60" />
             </div>
           )}
 
@@ -250,9 +250,9 @@ export default function PortalChatPage() {
           {sending && (
             <div className="flex justify-start ml-9">
               <div className="bg-white border border-slate-100 rounded-2xl rounded-tl-sm shadow-sm px-4 py-3 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 bg-rose-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                <span className="w-1.5 h-1.5 bg-rose-400 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                <span className="w-1.5 h-1.5 bg-rose-400 rounded-full animate-bounce" />
+                <span className="w-1.5 h-1.5 bg-[#0177b5] rounded-full animate-bounce [animation-delay:-0.3s]" />
+                <span className="w-1.5 h-1.5 bg-[#0177b5] rounded-full animate-bounce [animation-delay:-0.15s]" />
+                <span className="w-1.5 h-1.5 bg-[#0177b5] rounded-full animate-bounce" />
               </div>
             </div>
           )}
@@ -275,7 +275,7 @@ export default function PortalChatPage() {
                   />
                   <button
                     onClick={() => removePendingAttachment(i)}
-                    className="absolute -top-1.5 -right-1.5 bg-slate-800 hover:bg-rose-500 text-white rounded-full p-0.5 shadow"
+                    className="absolute -top-1.5 -right-1.5 bg-slate-800 hover:bg-[#015a9c] text-white rounded-full p-0.5 shadow"
                     title="Remove"
                   >
                     <X className="w-3 h-3" />
@@ -284,12 +284,12 @@ export default function PortalChatPage() {
               ))}
             </div>
           )}
-          <div className="flex items-end gap-2 bg-slate-50 border border-slate-200 rounded-3xl p-2 focus-within:border-rose-300 transition-colors">
+          <div className="flex items-end gap-2 bg-slate-50 border border-slate-200 rounded-3xl p-2 focus-within:border-[#0177b5]/40 transition-colors">
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={sending}
               title="Attach image"
-              className="w-9 h-9 rounded-full flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-50 shrink-0"
+              className="w-9 h-9 rounded-full flex items-center justify-center text-slate-400 hover:text-[#0177b5] hover:bg-[#F0F4FC] shrink-0"
             >
               <Paperclip className="w-4 h-4" />
             </button>
@@ -316,7 +316,7 @@ export default function PortalChatPage() {
               disabled={sending || (!prompt.trim() && pendingAttachments.length === 0)}
               className={`w-9 h-9 rounded-full flex items-center justify-center transition-all shrink-0 ${
                 (prompt.trim() || pendingAttachments.length > 0) && !sending
-                  ? "bg-gradient-to-br from-rose-400 to-pink-500 text-white shadow-md shadow-rose-500/30 hover:scale-105"
+                  ? "bg-gradient-to-br from-[#0177b5] to-[#015a9c] text-white shadow-md shadow-[#0177b5]/30 hover:scale-105"
                   : "bg-slate-200 text-slate-400"
               }`}
             >
@@ -361,8 +361,8 @@ function isMine(m: Message, contactId: string): boolean {
 function EmptyState({ contactName, onPickSuggestion }: { contactName: string; onPickSuggestion: (s: string) => void }) {
   return (
     <div className="flex flex-col items-center justify-center text-center py-12">
-      <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-rose-400 to-pink-500 flex items-center justify-center shadow-xl shadow-rose-500/30 mb-4">
-        <Heart className="w-8 h-8 text-white" fill="white" />
+      <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-[#0177b5] to-[#015a9c] flex items-center justify-center shadow-xl shadow-[#0177b5]/30 mb-4">
+        <Heart className="w-8 h-8 text-white" fill="white" strokeWidth={1.5} />
       </div>
       <h2 className="text-lg font-black text-slate-800 mb-1">
         Hi {contactName.split(" ")[0]}!
@@ -379,7 +379,7 @@ function EmptyState({ contactName, onPickSuggestion }: { contactName: string; on
           <button
             key={s}
             onClick={() => onPickSuggestion(s)}
-            className="px-3 py-1.5 rounded-full text-[10px] font-bold text-slate-600 bg-white border border-slate-200 hover:border-rose-300 hover:text-rose-600 transition-all flex items-center gap-1"
+            className="px-3 py-1.5 rounded-full text-[10px] font-bold text-slate-600 bg-white border border-slate-200 hover:border-[#0177b5] hover:text-[#0177b5] transition-all flex items-center gap-1"
           >
             <Sparkles className="w-2.5 h-2.5 opacity-50" />
             {s}
@@ -395,12 +395,12 @@ function MessageBubble({ m, isMine }: { m: Message; isMine: boolean }) {
   const name = m.senderName || (senderType === "arima" ? "ARIMA" : "Unknown");
 
   const avatarBg =
-    senderType === "arima" ? "bg-gradient-to-br from-rose-400 to-pink-500" :
+    senderType === "arima" ? "bg-gradient-to-br from-[#0177b5] to-[#015a9c]" :
     senderType === "internal" ? "bg-gradient-to-br from-indigo-400 to-blue-500" :
     "bg-gradient-to-br from-emerald-400 to-teal-500";
 
   const chip =
-    senderType === "arima" ? { label: "ARIMA", color: "text-rose-600 bg-rose-50 border-rose-100" } :
+    senderType === "arima" ? { label: "ARIMA", color: "text-[#0177b5] bg-[#F0F4FC] border-[#0177b5]/20" } :
     senderType === "internal" ? { label: "Team", color: "text-indigo-600 bg-indigo-50 border-indigo-100" } :
     { label: "Client", color: "text-emerald-600 bg-emerald-50 border-emerald-100" };
 
@@ -436,7 +436,7 @@ function MessageBubble({ m, isMine }: { m: Message; isMine: boolean }) {
           <div
             className={`px-3.5 py-2 rounded-2xl text-[13.5px] leading-relaxed whitespace-pre-wrap break-words ${
               isMine
-                ? "bg-gradient-to-br from-rose-500 to-pink-500 text-white rounded-tr-sm shadow-md shadow-rose-500/20"
+                ? "bg-gradient-to-br from-[#0177b5] to-[#015a9c] text-white rounded-tr-sm shadow-md shadow-[#0177b5]/20"
                 : senderType === "arima"
                   ? "bg-white border border-slate-100 text-slate-700 rounded-tl-sm shadow-sm"
                   : "bg-indigo-50 border border-indigo-100 text-slate-700 rounded-tl-sm"

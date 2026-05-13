@@ -15,7 +15,7 @@ export default function WelcomePage() {
 function LoadingCard() {
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
-      <Loader2 className="w-6 h-6 animate-spin text-rose-400" />
+      <Loader2 className="w-6 h-6 animate-spin text-[#0177b5]" />
     </div>
   );
 }
@@ -66,10 +66,10 @@ function WelcomeInner() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
-      <div className="bg-white rounded-3xl shadow-xl shadow-rose-500/10 border border-slate-100 p-8 max-w-md w-full text-center">
+      <div className="bg-white rounded-3xl shadow-xl shadow-[#0177b5]/10 border border-slate-100 p-8 max-w-md w-full text-center">
         {status === "validating" && (
           <>
-            <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-rose-400 to-pink-500 flex items-center justify-center shadow-lg shadow-rose-500/30 mb-4">
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-[#0177b5] to-[#015a9c] flex items-center justify-center shadow-lg shadow-[#0177b5]/30 mb-4">
               <Loader2 className="w-7 h-7 text-white animate-spin" />
             </div>
             <h1 className="text-lg font-black text-slate-800 mb-1">Activating your access…</h1>

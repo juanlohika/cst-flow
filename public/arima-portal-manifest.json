@@ -6,8 +6,8 @@
   "scope": "/portal",
   "display": "standalone",
   "orientation": "portrait",
-  "theme_color": "#ec4899",
-  "background_color": "#fff1f2",
+  "theme_color": "#0177b5",
+  "background_color": "#F0F4FC",
   "icons": [
     {
       "src": "/tarkie-logo.svg",

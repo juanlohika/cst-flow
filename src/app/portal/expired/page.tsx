@@ -5,7 +5,7 @@ export const metadata = { title: "ARIMA — Session ended" };
 export default function ExpiredPage() {
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
-      <div className="bg-white rounded-3xl shadow-xl shadow-rose-500/10 border border-slate-100 p-8 max-w-md w-full text-center">
+      <div className="bg-white rounded-3xl shadow-xl shadow-[#0177b5]/10 border border-slate-100 p-8 max-w-md w-full text-center">
         <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-slate-300 to-slate-400 flex items-center justify-center shadow-lg mb-4">
           <Clock className="w-7 h-7 text-white" />
         </div>

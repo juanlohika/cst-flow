@@ -17,7 +17,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
-  themeColor: "#ec4899",
+  themeColor: "#0177b5",
 };
 
 /**
@@ -26,7 +26,7 @@ export const viewport: Viewport = {
  */
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-rose-50/40 via-white to-white">
+    <div className="min-h-screen bg-gradient-to-b from-[#F0F4FC] via-white to-white">
       {children}
     </div>
   );
