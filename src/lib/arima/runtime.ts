@@ -38,7 +38,12 @@ ACTION HONESTY (critical):
 - You have callable tools. Talking about doing something is NOT doing it.
 - NEVER claim "I've scheduled", "I've booked", "I've sent the invite", "I've notified the team", "the calendar invite is on its way", etc., unless a real tool returned success.
 - If the user asks you to schedule a meeting and you can't actually book it, call create_request (category="meeting") and say honestly: "I've logged your meeting request — someone from the team will confirm a time and send the calendar invite shortly."
-- Never invent Zoom links, calendar IDs, or confirmation numbers.`;
+- Never invent Zoom links, calendar IDs, or confirmation numbers.
+
+TOOL CALLS ARE INVISIBLE (critical):
+- Tool names, JSON payloads, function arguments, and code-fenced tool blocks are PLUMBING. The user must NEVER see them in your reply.
+- NEVER write things like "I'll now use schedule_meeting", "Let me check the result", "I'll fetch via get_recent_meetings", or any code block containing tool args.
+- Speak only the human-readable outcome. Example good: "Got it — your meeting request for tomorrow with Lester is logged. A teammate will confirm a time and send the invite." Example bad: anything mentioning the tool name or showing JSON.`;
 
 const REQUEST_REGEX = /\[REQUEST\]([\s\S]*?)\[\/REQUEST\]/i;
 
@@ -165,6 +170,48 @@ function safeExtractText(modelResult: any): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * Strip tool-call narration the model sometimes leaks into the visible reply,
+ * even when the system prompt forbids it. Removes:
+ *  - Triple-backtick fenced blocks whose label looks like a tool name
+ *  - Lines that announce a tool invocation ("I'll now use foo", "Let me check…")
+ *  - Trailing whitespace cleanup
+ */
+function scrubToolNarration(text: string, toolDefs: any): string {
+  if (!text) return text;
+  let out = text;
+
+  // Collect known tool names so we can be precise about which fenced blocks to drop.
+  const toolNames: string[] = [];
+  try {
+    const decls = toolDefs?.[0]?.functionDeclarations || [];
+    for (const t of decls) if (t?.name) toolNames.push(String(t.name));
+  } catch {}
+
+  // 1) Drop ```tool_name … ``` blocks (and the equivalent fenced JSON dumps).
+  if (toolNames.length > 0) {
+    const escaped = toolNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const re = new RegExp(`\`\`\`(?:${escaped.join("|")})[^\`]*\`\`\``, "gi");
+    out = out.replace(re, "");
+  }
+  // Generic fallback: any fenced block that's pure JSON (single object/array
+  // and nothing else) — usually an argument dump the model leaked.
+  out = out.replace(/```[a-zA-Z_-]*\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```/g, "");
+
+  // 2) Narration filler lines.
+  const fillerLines = [
+    /^\s*I'?ll (now )?(?:use|invoke|call|fetch.*using|attempt to call|check via)\b.*$/gim,
+    /^\s*Let me (?:check|verify|fetch|look up|pull|grab|see).{0,80}(?:result|details|history|status)?\.?\s*$/gim,
+    /^\s*I'?(?:ve|m) (?:attempting|going to) (?:to )?(?:call|invoke|use)\b.*$/gim,
+    /^\s*using the [`']?[a-zA-Z_]+[`']?(?: tool)?\.?\s*$/gim,
+  ];
+  for (const re of fillerLines) out = out.replace(re, "");
+
+  // 3) Collapse triple+ newlines and trim
+  out = out.replace(/\n{3,}/g, "\n\n").trim();
+  return out;
 }
 
 function parseRequestBlock(text: string): { cleanText: string; request: ParsedRequest | null } {
@@ -497,6 +544,12 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
   if (!rawReply) rawReply = safeExtractText(result);
 
   let { cleanText: replyText, request: parsedRequest } = parseRequestBlock(rawReply);
+
+  // Post-process safety net: strip tool-call narration even if the model ignores
+  // the system-prompt rule. Removes triple-backtick blocks whose label is a known
+  // tool name, and common filler phrases like "I'll now use X" / "Let me check
+  // the result". This is plumbing — the client never needs to see it.
+  replyText = scrubToolNarration(replyText, toolDefs);
 
   // SAFETY NET: never let an empty reply slip through. If the AI returned
   // nothing (safety-filter block, token limit, etc.), substitute a plain refusal

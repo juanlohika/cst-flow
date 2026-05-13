@@ -682,20 +682,66 @@ function ImageBubble({ attachment }: { attachment: Attachment }) {
 }
 
 /** Highlight @mentions visually so the recipient sees a clear ping. */
+/**
+ * Tiny, intentionally-limited markdown renderer for chat bubbles.
+ * Supports: fenced code blocks (```), inline code (`x`), **bold**, *italic*,
+ * autolinks for http/https, and @mentions. No HTML, no XSS surface — everything
+ * goes through React text nodes / explicit element wrappers.
+ */
 function renderWithMentions(text: string): React.ReactNode {
-  const parts: React.ReactNode[] = [];
-  const re = /(@[a-zA-Z0-9_.-]+)/g;
-  let lastIdx = 0;
+  if (!text) return text;
+  const blocks: React.ReactNode[] = [];
+  let idx = 0;
+  const fenceRe = /```([a-zA-Z_-]*)\n?([\s\S]*?)```/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > lastIdx) parts.push(text.slice(lastIdx, m.index));
-    parts.push(
-      <span key={m.index} className="font-bold underline decoration-dotted underline-offset-2">{m[1]}</span>
+  let bidx = 0;
+  while ((m = fenceRe.exec(text)) !== null) {
+    if (m.index > idx) blocks.push(<span key={`p${bidx++}`}>{renderInline(text.slice(idx, m.index))}</span>);
+    const lang = m[1] || "";
+    blocks.push(
+      <pre key={`code${bidx++}`} className="my-2 rounded-lg bg-slate-900 text-slate-100 text-[11.5px] font-mono leading-relaxed overflow-x-auto px-3 py-2">
+        {lang && <div className="text-[9px] uppercase tracking-widest text-slate-400 mb-1">{lang}</div>}
+        <code>{m[2].replace(/\n+$/, "")}</code>
+      </pre>
     );
-    lastIdx = re.lastIndex;
+    idx = fenceRe.lastIndex;
   }
-  if (lastIdx < text.length) parts.push(text.slice(lastIdx));
-  return parts.length > 0 ? parts : text;
+  if (idx < text.length) blocks.push(<span key={`tail${bidx++}`}>{renderInline(text.slice(idx))}</span>);
+  return blocks.length > 0 ? <>{blocks}</> : text;
+}
+
+function renderInline(text: string): React.ReactNode {
+  // Token grammar order: inline code → bold → italic → links → mentions → plain text.
+  // We use a single regex with alternation and walk the matches in order.
+  const re = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*|https?:\/\/[^\s)]+|@\[[^\]]+\]\((?:user|contact):[^)]+\)|@[a-zA-Z0-9_.-]+)/g;
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const t = m[0];
+    if (t.startsWith("`") && t.endsWith("`")) {
+      out.push(<code key={`i${k++}`} className="px-1 py-0.5 rounded bg-slate-100 text-slate-700 text-[12px] font-mono">{t.slice(1, -1)}</code>);
+    } else if (t.startsWith("**") && t.endsWith("**")) {
+      out.push(<strong key={`i${k++}`}>{t.slice(2, -2)}</strong>);
+    } else if (t.startsWith("*") && t.endsWith("*")) {
+      out.push(<em key={`i${k++}`}>{t.slice(1, -1)}</em>);
+    } else if (t.startsWith("http")) {
+      out.push(<a key={`i${k++}`} href={t} target="_blank" rel="noreferrer" className="underline decoration-dotted underline-offset-2 text-[#0177b5]">{t}</a>);
+    } else if (t.startsWith("@[")) {
+      // Portal mention token: @[Name](user:id) — show as styled chip
+      const inner = t.match(/^@\[([^\]]+)\]/)?.[1] || t;
+      out.push(<span key={`i${k++}`} className="font-bold text-[#0177b5]">@{inner}</span>);
+    } else if (t.startsWith("@")) {
+      out.push(<span key={`i${k++}`} className="font-bold underline decoration-dotted underline-offset-2">{t}</span>);
+    } else {
+      out.push(t);
+    }
+    last = re.lastIndex;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out.length > 0 ? <>{out}</> : text;
 }
 
 function arrayBufferToBase64(buf: ArrayBuffer): string {
