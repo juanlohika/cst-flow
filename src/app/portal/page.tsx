@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   Heart, ArrowUp, Loader2, Sparkles, LogOut, CheckCircle2,
-  Send, Paperclip, X, Image as ImageIcon,
+  Send, Paperclip, X, Image as ImageIcon, AtSign,
 } from "lucide-react";
 
 interface Attachment {
@@ -127,7 +127,7 @@ export default function PortalChatPage() {
         // Title-bar nudge so they notice if the tab is in the background
         try {
           const original = document.title;
-          document.title = `🔔 ${original}`;
+          document.title = `(1) ${original}`;
           const restore = () => { document.title = original; window.removeEventListener("focus", restore); };
           window.addEventListener("focus", restore);
         } catch {}
@@ -417,8 +417,9 @@ export default function PortalChatPage() {
 
       {pingedBanner && (
         <div className="sticky top-14 z-20 bg-gradient-to-r from-[#0177b5] to-[#015a9c] text-white py-1.5 px-4 sm:px-6 flex items-center justify-between gap-3 shadow-md">
-          <p className="text-[12px] font-bold truncate">
-            🔔 You were mentioned by {pingedBanner.from}
+          <p className="text-[12px] font-bold truncate flex items-center gap-1.5">
+            <AtSign className="w-3.5 h-3.5 shrink-0" strokeWidth={2.4} />
+            You were mentioned by {pingedBanner.from}
           </p>
           <button
             onClick={() => setPingedBanner(null)}
