@@ -19,6 +19,7 @@ import {
   accountMemberships,
   telegramAccountLinks,
   clientContacts,
+  bindingContactAccess,
 } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 
@@ -36,16 +37,15 @@ export async function resolveTelegramMentions(args: {
   text: string;
   entities: Array<{ type: string; offset: number; length: number; user?: { id: number; username?: string; first_name?: string }; }>;
   clientProfileId: string;
+  bindingId?: string | null;
 }): Promise<MentionRef[]> {
   const out: MentionRef[] = [];
   if (ARIMA_RE.test(args.text)) out.push({ type: "arima", id: null, name: "ARIMA" });
 
-  if (!args.entities?.length) return dedupe(out);
-
   // Collect @usernames + text_mention user IDs from the entities
   const usernamesTagged: string[] = [];
   const telegramUserIdsTagged: string[] = [];
-  for (const e of args.entities) {
+  for (const e of args.entities || []) {
     if (e.type === "mention") {
       const handle = args.text.slice(e.offset + 1, e.offset + e.length);
       if (handle && handle.toLowerCase() !== "arima") usernamesTagged.push(handle.toLowerCase());
@@ -54,7 +54,21 @@ export async function resolveTelegramMentions(args: {
     }
   }
 
-  if (!usernamesTagged.length && !telegramUserIdsTagged.length) return dedupe(out);
+  // Telegram entities don't include mentions for non-Telegram users (e.g. our
+  // external portal contacts have no @handle on Telegram). So also walk the
+  // raw text for any @Word tokens that *could* be a portal-contact name. Skip
+  // tokens that already matched an entity to avoid double-resolving them.
+  const looseTokens: string[] = [];
+  const looseRe = /(^|[^a-z0-9_])@([a-zA-Z][a-zA-Z0-9_]{1,40})/g;
+  let lm: RegExpExecArray | null;
+  while ((lm = looseRe.exec(args.text)) !== null) {
+    const t = lm[2].toLowerCase();
+    if (t === "arima") continue;
+    if (usernamesTagged.includes(t)) continue;
+    looseTokens.push(t);
+  }
+
+  if (!usernamesTagged.length && !telegramUserIdsTagged.length && !looseTokens.length) return dedupe(out);
 
   // Find the internal members of this account, then filter to those whose
   // Telegram link matches one of the tagged @usernames or user IDs.
@@ -95,6 +109,44 @@ export async function resolveTelegramMentions(args: {
           name: m?.name || link.telegramUsername || "team member",
           telegramUsername: link.telegramUsername || null,
         });
+      }
+    }
+  }
+
+  // ─── Portal contacts ─────────────────────────────────────────────
+  // Resolve loose @Word tokens (plain mentions Telegram doesn't tag because
+  // the target isn't a Telegram user) against the portal contacts on this
+  // account. If a bindingId is provided, restrict to contacts routed to it.
+  const candidateTokens = Array.from(new Set<string>([...usernamesTagged, ...looseTokens]));
+  if (candidateTokens.length > 0) {
+    let contacts = await db
+      .select({ id: clientContacts.id, name: clientContacts.name, email: clientContacts.email })
+      .from(clientContacts)
+      .where(eq(clientContacts.clientProfileId, args.clientProfileId));
+
+    if (args.bindingId && contacts.length > 0) {
+      const grants = await db
+        .select({ contactId: bindingContactAccess.contactId })
+        .from(bindingContactAccess)
+        .where(and(
+          eq(bindingContactAccess.bindingId, args.bindingId),
+          inArray(bindingContactAccess.contactId, contacts.map(c => c.id))
+        ));
+      const allowed = new Set(grants.map(g => g.contactId));
+      // If any explicit grant exists for this binding, scope to those; otherwise
+      // fall back to all account contacts (legacy mode pre-Phase 16 grants).
+      if (allowed.size > 0) contacts = contacts.filter(c => allowed.has(c.id));
+    }
+
+    for (const c of contacts) {
+      const normName = (c.name || "").toLowerCase().replace(/\s+/g, "");
+      const firstName = (c.name || "").split(/\s+/)[0]?.toLowerCase() || "";
+      const emailLocal = (c.email || "").split("@")[0]?.toLowerCase() || "";
+      for (const tok of candidateTokens) {
+        if (tok === normName || tok === firstName || tok === emailLocal) {
+          out.push({ type: "external", id: c.id, name: c.name });
+          break;
+        }
       }
     }
   }

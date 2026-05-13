@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Heart, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Loader2, AlertTriangle, CheckCircle2, Mail, ArrowRight, Send } from "lucide-react";
 
 export default function WelcomePage() {
   return (
@@ -27,12 +27,18 @@ function WelcomeInner() {
 
   const [status, setStatus] = useState<"validating" | "success" | "error">("validating");
   const [error, setError] = useState<string>("");
+  const [errorCode, setErrorCode] = useState<string>("");
+  const [contactEmail, setContactEmail] = useState<string>("");
+  const [resendEmail, setResendEmail] = useState<string>("");
+  const [resending, setResending] = useState(false);
+  const [resent, setResent] = useState(false);
   const [sessionInfo, setSessionInfo] = useState<{ contactName: string; clientName: string } | null>(null);
 
   useEffect(() => {
     if (!token) {
       setStatus("error");
       setError("No invite token in this link. Please use the link from your email exactly as it was sent.");
+      setErrorCode("invalid");
       return;
     }
 
@@ -47,22 +53,46 @@ function WelcomeInner() {
         if (!res.ok) {
           setStatus("error");
           setError(data.error || "Could not validate the invite link.");
+          setErrorCode(data.errorCode || "invalid");
+          if (data.contactEmail) {
+            setContactEmail(data.contactEmail);
+            setResendEmail(data.contactEmail);
+          }
           return;
         }
+        // alreadySignedIn → server reused our existing session cookie. Just go in.
         setSessionInfo({
           contactName: data.session.contactName,
           clientName: data.session.clientName,
         });
         setStatus("success");
-        // Redirect after a brief celebration
-        setTimeout(() => router.push("/portal"), 1500);
+        setTimeout(() => router.push("/portal"), data.alreadySignedIn ? 600 : 1500);
       } catch (err: any) {
         setStatus("error");
         setError(err.message || "Network error. Please try again.");
+        setErrorCode("invalid");
       }
     }
     validate();
   }, [token, router]);
+
+  const sendResend = async () => {
+    const target = resendEmail.trim();
+    if (!target || resending) return;
+    setResending(true);
+    try {
+      await fetch("/api/portal/auth/resend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: target }),
+      });
+    } finally {
+      setResending(false);
+      setResent(true);
+    }
+  };
+
+  const canResend = errorCode === "already_used" || errorCode === "expired";
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
@@ -95,13 +125,71 @@ function WelcomeInner() {
         {status === "error" && (
           <>
             <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg shadow-amber-500/30 mb-4">
-              <AlertTriangle className="w-7 h-7 text-white" />
+              <AlertTriangle className="w-7 h-7 text-white" strokeWidth={1.8} />
             </div>
-            <h1 className="text-lg font-black text-slate-800 mb-1">Couldn't open ARIMA</h1>
+            <h1 className="text-lg font-black text-slate-800 mb-1">
+              {canResend ? "Link already used" : "Couldn't open ARIMA"}
+            </h1>
             <p className="text-[13px] text-slate-500 mb-4">{error}</p>
-            <p className="text-[11px] text-slate-400">
-              If this keeps happening, contact your account team and ask for a fresh invite link.
-            </p>
+
+            {canResend && !resent && (
+              <div className="space-y-2 text-left">
+                <p className="text-[11px] text-slate-500 px-1">
+                  We'll email you a fresh one-time link.
+                  {contactEmail && (
+                    <> Sending to <strong className="text-slate-700">{contactEmail}</strong>.</>
+                  )}
+                </p>
+                {!contactEmail && (
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input
+                      type="email"
+                      value={resendEmail}
+                      onChange={e => setResendEmail(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") sendResend(); }}
+                      placeholder="you@company.com"
+                      autoFocus
+                      disabled={resending}
+                      className="w-full pl-10 pr-3 py-3 rounded-xl border border-slate-200 bg-slate-50 text-[14px] text-slate-700 placeholder:text-slate-300 outline-none focus:border-[#0177b5]/40 focus:bg-white"
+                    />
+                  </div>
+                )}
+                <button
+                  onClick={sendResend}
+                  disabled={(!contactEmail && !resendEmail.trim()) || resending}
+                  className={`w-full py-3 rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 transition-all ${
+                    (contactEmail || resendEmail.trim()) && !resending
+                      ? "bg-gradient-to-br from-[#0177b5] to-[#015a9c] text-white shadow-md shadow-[#0177b5]/30 hover:shadow-lg"
+                      : "bg-slate-100 text-slate-400"
+                  }`}
+                >
+                  {resending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  Send me a new link
+                  {!resending && <ArrowRight className="w-4 h-4" />}
+                </button>
+              </div>
+            )}
+
+            {canResend && resent && (
+              <div className="bg-[#F0F4FC] border border-[#0177b5]/15 rounded-2xl p-4 flex items-start gap-3 text-left">
+                <div className="w-7 h-7 rounded-xl bg-[#0177b5]/15 flex items-center justify-center shrink-0">
+                  <CheckCircle2 className="w-4 h-4 text-[#0177b5]" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[12px] font-black text-slate-800 mb-1">Check your inbox</p>
+                  <p className="text-[12px] text-slate-600 leading-relaxed">
+                    A fresh link is on its way to <strong className="text-slate-700">{contactEmail || resendEmail}</strong>. Click it from this device to stay signed in for 6 months.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {!canResend && (
+              <p className="text-[11px] text-slate-400">
+                If this keeps happening, contact your account team and ask for a fresh invite link.
+              </p>
+            )}
           </>
         )}
       </div>

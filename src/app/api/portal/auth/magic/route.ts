@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { consumeMagicLink, setSessionCookie } from "@/lib/portal/auth";
+import { consumeMagicLink, getPortalSession, setSessionCookie } from "@/lib/portal/auth";
 import { ensureAccessSchema } from "@/lib/access/accounts";
 import { notifyPortalJoinToTelegram } from "@/lib/portal/telegramJoin";
 
@@ -29,7 +29,20 @@ export async function POST(req: Request) {
 
     const result = await consumeMagicLink(token, { userAgent, ipAddress });
     if (!result.ok) {
-      return NextResponse.json({ error: result.reason }, { status: 400 });
+      // If the link is already used (or expired) BUT this device already has a
+      // valid session, just hand them the existing session — no friction. They
+      // probably re-clicked the email from a device they're already signed in on.
+      if (result.errorCode === "already_used" || result.errorCode === "expired") {
+        const existing = await getPortalSession();
+        if (existing) {
+          return NextResponse.json({ session: existing, alreadySignedIn: true });
+        }
+      }
+      return NextResponse.json({
+        error: result.reason,
+        errorCode: result.errorCode || "invalid",
+        contactEmail: result.contactEmail || null,
+      }, { status: 400 });
     }
 
     await setSessionCookie(result.sessionId);

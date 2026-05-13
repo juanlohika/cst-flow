@@ -66,26 +66,43 @@ export async function createMagicLink(args: {
  * Validate a magic-link token and (on success) create a SubscriberSession.
  * Returns the new sessionId to set as a cookie, or an error.
  */
+export type ConsumeMagicLinkResult =
+  | { ok: true; sessionId: string; session: PortalSession; firstActivation: boolean }
+  | { ok: false; reason: string; errorCode?: "already_used" | "expired" | "invalid"; contactEmail?: string };
+
 export async function consumeMagicLink(
   token: string,
   context: { userAgent?: string; ipAddress?: string }
-): Promise<{ ok: true; sessionId: string; session: PortalSession; firstActivation: boolean } | { ok: false; reason: string }> {
+): Promise<ConsumeMagicLinkResult> {
   const rows = await db
     .select({
       id: subscriberMagicLinks.id,
       contactId: subscriberMagicLinks.contactId,
       expiresAt: subscriberMagicLinks.expiresAt,
       usedAt: subscriberMagicLinks.usedAt,
+      sentToEmail: subscriberMagicLinks.sentToEmail,
     })
     .from(subscriberMagicLinks)
     .where(eq(subscriberMagicLinks.token, token))
     .limit(1);
 
   const link = rows[0];
-  if (!link) return { ok: false, reason: "Invalid or expired link." };
-  if (link.usedAt) return { ok: false, reason: "This link has already been used. Ask your account manager for a new one." };
+  if (!link) return { ok: false, reason: "Invalid or expired link.", errorCode: "invalid" };
+  if (link.usedAt) {
+    return {
+      ok: false,
+      reason: "This link has already been used. Send yourself a fresh one in one tap.",
+      errorCode: "already_used",
+      contactEmail: link.sentToEmail || undefined,
+    };
+  }
   if (new Date(link.expiresAt).getTime() < Date.now()) {
-    return { ok: false, reason: "This link has expired. Ask your account manager for a new one." };
+    return {
+      ok: false,
+      reason: "This link has expired. Send yourself a fresh one in one tap.",
+      errorCode: "expired",
+      contactEmail: link.sentToEmail || undefined,
+    };
   }
 
   // Check if this is the contact's very first activation (used by the caller

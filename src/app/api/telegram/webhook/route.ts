@@ -3,8 +3,13 @@ import { db } from "@/db";
 import {
   arimaConversations,
   arimaMessages,
+  clientContacts,
+  bindingContactAccess,
+  accountMemberships,
+  users as usersTable,
+  telegramAccountLinks,
 } from "@/db/schema";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { getTelegramConfig } from "@/lib/telegram/config";
 import {
   tgSendMessage,
@@ -42,7 +47,8 @@ const HELP_TEXT = (
   "• `/unbind` — remove the binding\n\n" +
   "Anyone in a bound group:\n" +
   "• `/status` — show what client this group is bound to\n" +
-  "• Just chat normally and I'll respond.\n\n" +
+  "• `/contacts` — list portal users + team members you can @mention\n" +
+  "• Just chat normally and I'll respond when @arima'd.\n\n" +
   "Private DM with the bot:\n" +
   "• `/link LK-XXXX-YYYY` — link your Telegram account to CST OS (generate the code from CST OS → Admin → Channels → Telegram → My Account)."
 );
@@ -246,6 +252,21 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true });
       }
 
+      if (cmd === "contacts") {
+        if (!isGroup) {
+          await safeReply(config.botToken, chat.id, "Run `/contacts` in a bound group.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const current = await getActiveBindingForChat(chat.id);
+        if (!current) {
+          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound yet. Run `/bind <token>` first.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const reply = await buildContactsDirectory(current.id, current.clientProfileId, current.clientName);
+        await safeReply(config.botToken, chat.id, reply, message.message_id);
+        return NextResponse.json({ ok: true });
+      }
+
       // Unknown command
       await safeReply(config.botToken, chat.id, "Unknown command. Try `/help`.", message.message_id);
       return NextResponse.json({ ok: true });
@@ -266,6 +287,7 @@ export async function POST(req: Request) {
         userMessage: text,
         replyToMessageId: message.message_id,
         clientProfileId: binding.clientProfileId,
+        bindingId: binding.id,
         cstUserId: binding.boundByUserId || "system-telegram", // owner of the conversation row
         senderName: from.first_name || from.username || "Telegram user",
         senderTelegramId: String(from.id),
@@ -317,6 +339,7 @@ async function handleArimaChat(args: {
   userMessage: string;
   replyToMessageId: number;
   clientProfileId: string;
+  bindingId: string;
   cstUserId: string;
   senderName: string;
   senderTelegramId: string;
@@ -338,11 +361,14 @@ async function handleArimaChat(args: {
     }
   } catch {}
 
-  // Parse @mentions out of the message entities
+  // Parse @mentions out of the message entities + plain text. bindingId scopes
+  // portal-contact resolution so a tag in group A can only resolve to contacts
+  // routed to group A.
   const mentions: MentionRef[] = await resolveTelegramMentions({
     text: args.userMessage,
     entities: args.entities,
     clientProfileId: args.clientProfileId,
+    bindingId: args.bindingId,
   }).catch(() => [] as MentionRef[]);
 
   // Pull the largest photo (Telegram sends multiple sizes); download to bytes.
@@ -476,4 +502,90 @@ async function handleArimaChat(args: {
       args.replyToMessageId
     );
   }
+}
+
+/**
+ * Build the /contacts directory message for a bound group:
+ *  - Portal contacts routed to THIS binding (preferred) or all contacts on
+ *    the account if no per-binding grants exist yet.
+ *  - Internal team members with their Telegram link status.
+ *
+ * Telegram's Markdown is picky — names with underscores or asterisks would
+ * break it. We escape them defensively before formatting.
+ */
+async function buildContactsDirectory(bindingId: string, clientProfileId: string, clientName: string): Promise<string> {
+  const escape = (s: string | null | undefined) => (s || "").replace(/([_*`\[\]()])/g, "\\$1");
+
+  // Portal contacts: prefer the scoped list; fall back to all account contacts
+  // when no per-binding grants exist yet (legacy migration path).
+  const grants = await db
+    .select({ contactId: bindingContactAccess.contactId })
+    .from(bindingContactAccess)
+    .where(eq(bindingContactAccess.bindingId, bindingId));
+  let portalRows: { id: string; name: string; email: string; role: string | null }[];
+  if (grants.length > 0) {
+    portalRows = await db
+      .select({ id: clientContacts.id, name: clientContacts.name, email: clientContacts.email, role: clientContacts.role })
+      .from(clientContacts)
+      .where(inArray(clientContacts.id, grants.map(g => g.contactId)));
+  } else {
+    portalRows = await db
+      .select({ id: clientContacts.id, name: clientContacts.name, email: clientContacts.email, role: clientContacts.role })
+      .from(clientContacts)
+      .where(eq(clientContacts.clientProfileId, clientProfileId));
+  }
+
+  // Internal team for this account + telegram link badge
+  const members = await db
+    .select({
+      userId: accountMemberships.userId,
+      internalRole: accountMemberships.internalRole,
+      isPrimary: accountMemberships.isPrimary,
+      name: usersTable.name,
+      email: usersTable.email,
+    })
+    .from(accountMemberships)
+    .leftJoin(usersTable, eq(usersTable.id, accountMemberships.userId))
+    .where(eq(accountMemberships.clientProfileId, clientProfileId));
+  let linkByUserId = new Map<string, { telegramUsername: string | null }>();
+  if (members.length > 0) {
+    const links = await db
+      .select({ cstUserId: telegramAccountLinks.cstUserId, telegramUsername: telegramAccountLinks.telegramUsername })
+      .from(telegramAccountLinks)
+      .where(and(
+        inArray(telegramAccountLinks.cstUserId, members.map(m => m.userId)),
+        eq(telegramAccountLinks.status, "active"),
+      ));
+    linkByUserId = new Map(links.map(l => [l.cstUserId, l]));
+  }
+
+  const lines: string[] = [];
+  lines.push(`👥 *${escape(clientName)} — Contacts*`);
+  lines.push("");
+  if (portalRows.length > 0) {
+    lines.push("*Portal users (chat via web):*");
+    for (const c of portalRows) {
+      const first = (c.name || "").split(/\s+/)[0] || "";
+      const full = (c.name || "").replace(/\s+/g, "");
+      const handles = [first, full !== first ? full : null].filter(Boolean).map(h => `\`@${h}\``).join(" or ");
+      const roleStr = c.role ? ` (${escape(c.role)})` : "";
+      lines.push(`• ${escape(c.name || c.email)}${roleStr} — tag with ${handles}`);
+    }
+  } else {
+    lines.push("_No portal users routed to this group yet._");
+  }
+  lines.push("");
+  if (members.length > 0) {
+    lines.push("*Internal team:*");
+    for (const m of members) {
+      const link = linkByUserId.get(m.userId);
+      const tg = link?.telegramUsername ? ` — \`@${link.telegramUsername}\`` : "";
+      const role = m.internalRole ? ` (${escape(m.internalRole)})` : "";
+      const primary = m.isPrimary ? " 👑" : "";
+      lines.push(`• ${escape(m.name || m.email || "Team member")}${role}${primary}${tg}`);
+    }
+  }
+  lines.push("");
+  lines.push("_Tag a portal user with `@Name` and they'll get a notification on the web side. Internal `@usernames` work as native Telegram pings._");
+  return lines.join("\n");
 }

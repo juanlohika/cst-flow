@@ -108,6 +108,35 @@ export default function PortalChatPage() {
     init();
   }, [router]);
 
+  // Mention notification: track newest pinged message id so we only highlight once.
+  const [pingedBanner, setPingedBanner] = useState<{ messageId: string; from: string } | null>(null);
+  const lastSeenIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!session || messages.length === 0) return;
+    // Walk backwards; find the most recent message that mentions me and that
+    // we haven't already shown a banner for.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.id === lastSeenIdRef.current) break;
+      const pinged = (m.mentions || []).some(x =>
+        (x.type === "external" && x.id === session.contactId)
+      );
+      if (pinged && m.senderType !== "external") {
+        setPingedBanner({ messageId: m.id, from: m.senderName || "Someone" });
+        // Title-bar nudge so they notice if the tab is in the background
+        try {
+          const original = document.title;
+          document.title = `🔔 ${original}`;
+          const restore = () => { document.title = original; window.removeEventListener("focus", restore); };
+          window.addEventListener("focus", restore);
+        } catch {}
+        break;
+      }
+    }
+    lastSeenIdRef.current = messages[messages.length - 1]?.id || null;
+  }, [messages, session]);
+
   // Load the mention pool once we have a session
   useEffect(() => {
     if (authChecking || !session) return;
@@ -385,6 +414,20 @@ export default function PortalChatPage() {
           </div>
         </div>
       </header>
+
+      {pingedBanner && (
+        <div className="sticky top-14 z-20 bg-gradient-to-r from-[#0177b5] to-[#015a9c] text-white py-1.5 px-4 sm:px-6 flex items-center justify-between gap-3 shadow-md">
+          <p className="text-[12px] font-bold truncate">
+            🔔 You were mentioned by {pingedBanner.from}
+          </p>
+          <button
+            onClick={() => setPingedBanner(null)}
+            className="text-[10px] font-black uppercase tracking-widest opacity-80 hover:opacity-100 shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* MESSAGES */}
       <main className="flex-1 overflow-auto px-4 sm:px-6 py-4 pb-36">
