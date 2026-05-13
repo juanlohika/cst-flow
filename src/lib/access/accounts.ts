@@ -46,6 +46,8 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN senderChannel TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN mentions TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN attachments TEXT`); } catch {}
+    // Phase 20: agentMode on bindings — which agent leads this room (arima or eliana)
+    try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN agentMode TEXT DEFAULT 'arima' NOT NULL`); } catch {}
 
     // Create ArimaRequest table if missing
     await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaRequest (
@@ -75,6 +77,65 @@ export async function ensureAccessSchema(): Promise<void> {
       addedAt TEXT DEFAULT (datetime('now')) NOT NULL,
       addedByUserId TEXT,
       UNIQUE(bindingId, contactId)
+    )`);
+
+    // Phase 20: shared Knowledge Repository — every agent reads from here.
+    await db.run(sql`CREATE TABLE IF NOT EXISTS KnowledgeDocument (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      content TEXT NOT NULL,
+      sourceMime TEXT,
+      sourceBytes INTEGER,
+      version INTEGER DEFAULT 1 NOT NULL,
+      status TEXT DEFAULT 'active' NOT NULL,
+      audience TEXT DEFAULT 'all' NOT NULL,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      updatedAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      createdByUserId TEXT
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS KnowledgeDocumentVersion (
+      id TEXT PRIMARY KEY,
+      documentId TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      changeNote TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      createdByUserId TEXT
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS KnowledgeFeedEntry (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      category TEXT DEFAULT 'general' NOT NULL,
+      audience TEXT DEFAULT 'all' NOT NULL,
+      publishedAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      expiresAt TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      createdByUserId TEXT
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS KnowledgeModule (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      category TEXT,
+      description TEXT NOT NULL,
+      whoItsFor TEXT,
+      keyFeatures TEXT,
+      priceNote TEXT,
+      status TEXT DEFAULT 'active' NOT NULL,
+      audience TEXT DEFAULT 'all' NOT NULL,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS KnowledgeAgentAccess (
+      id TEXT PRIMARY KEY,
+      agentId TEXT NOT NULL,
+      category TEXT NOT NULL,
+      enabled INTEGER DEFAULT 1 NOT NULL,
+      UNIQUE(agentId, category)
     )`);
 
     // ARIMA channel bindings + Telegram linking

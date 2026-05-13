@@ -14,6 +14,8 @@ export interface BindingInfo {
   clientCode: string | null;
   status: string;
   boundAt: string;
+  /** Phase 20: which agent leads this room — "arima" (RM) or "eliana" (BA). Defaults to arima. */
+  agentMode: "arima" | "eliana";
 }
 
 export async function getActiveBindingForChat(chatId: number | string): Promise<BindingInfo | null> {
@@ -25,6 +27,7 @@ export async function getActiveBindingForChat(chatId: number | string): Promise<
       clientProfileId: arimaChannelBindings.clientProfileId,
       status: arimaChannelBindings.status,
       boundAt: arimaChannelBindings.boundAt,
+      agentMode: arimaChannelBindings.agentMode,
       clientName: clientProfilesTable.companyName,
       clientCode: clientProfilesTable.clientCode,
     })
@@ -50,6 +53,7 @@ export async function getActiveBindingForChat(chatId: number | string): Promise<
     clientCode: r.clientCode,
     status: r.status,
     boundAt: r.boundAt,
+    agentMode: ((r as any).agentMode === "eliana" ? "eliana" : "arima"),
   };
 }
 
@@ -124,6 +128,7 @@ export async function listActiveBindings(): Promise<BindingInfo[]> {
       clientProfileId: arimaChannelBindings.clientProfileId,
       status: arimaChannelBindings.status,
       boundAt: arimaChannelBindings.boundAt,
+      agentMode: arimaChannelBindings.agentMode,
       clientName: clientProfilesTable.companyName,
       clientCode: clientProfilesTable.clientCode,
     })
@@ -145,5 +150,6 @@ export async function listActiveBindings(): Promise<BindingInfo[]> {
     clientCode: r.clientCode,
     status: r.status,
     boundAt: r.boundAt,
+    agentMode: ((r as any).agentMode === "eliana" ? "eliana" : "arima"),
   }));
 }

@@ -48,6 +48,7 @@ const HELP_TEXT = (
   "Anyone in a bound group:\n" +
   "• `/status` — show what client this group is bound to\n" +
   "• `/contacts` — list portal users + team members you can @mention\n" +
+  "• `/mode` — see / switch the AI agent for this room (admin only)\n" +
   "• Just chat normally and I'll respond when @arima'd.\n\n" +
   "Private DM with the bot:\n" +
   "• `/link LK-XXXX-YYYY` — link your Telegram account to CST OS (generate the code from CST OS → Admin → Channels → Telegram → My Account)."
@@ -252,6 +253,52 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true });
       }
 
+      if (cmd === "mode") {
+        if (!isGroup) {
+          await safeReply(config.botToken, chat.id, "Run `/mode` in a bound group.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const current = await getActiveBindingForChat(chat.id);
+        if (!current) {
+          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound yet. Run `/bind <token>` first.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        // Only CST OS admins can change agent mode (it changes which AI leads the room)
+        const cstUser = await resolveCstUserFromTelegram(from.id);
+        if (!cstUser || cstUser.role !== "admin") {
+          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can change the agent mode.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const target = (argText || "").toLowerCase().trim();
+        if (target !== "arima" && target !== "eliana" && target !== "1" && target !== "2" && target !== "") {
+          await safeReply(config.botToken, chat.id, "Usage: `/mode arima` (relationship) or `/mode eliana` (BA / requirements). Send `/mode` alone to see the current mode.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        // Read current mode from the binding
+        const { db } = await import("@/db");
+        const { arimaChannelBindings } = await import("@/db/schema");
+        const { eq } = await import("drizzle-orm");
+        const rows = await db
+          .select({ id: arimaChannelBindings.id, agentMode: arimaChannelBindings.agentMode })
+          .from(arimaChannelBindings)
+          .where(eq(arimaChannelBindings.id, current.id))
+          .limit(1);
+        const currentMode = (rows[0] as any)?.agentMode || "arima";
+        if (!target) {
+          await safeReply(config.botToken, chat.id, `📌 Current mode: *${currentMode === "eliana" ? "Eliana — Business Analyst" : "ARIMA — Relationship Manager"}*.\n\nSwitch with \`/mode arima\` or \`/mode eliana\`.`, message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const next = (target === "eliana" || target === "2") ? "eliana" : "arima";
+        await db.update(arimaChannelBindings)
+          .set({ agentMode: next } as any)
+          .where(eq(arimaChannelBindings.id, current.id));
+        const banner = next === "eliana"
+          ? "✅ Switched to *Eliana* — Business Analyst mode.\n\nEliana will proactively ask clarifying questions to understand the business case before recommending a solution. She references the Tarkie module catalog and existing playbook, and produces a structured requirements summary at the end."
+          : "✅ Switched to *ARIMA* — Relationship Manager mode.\n\nARIMA responds when @mentioned and handles day-to-day client communication.";
+        await safeReply(config.botToken, chat.id, banner, message.message_id);
+        return NextResponse.json({ ok: true });
+      }
+
       if (cmd === "contacts") {
         if (!isGroup) {
           await safeReply(config.botToken, chat.id, "Run `/contacts` in a bound group.", message.message_id);
@@ -288,6 +335,7 @@ export async function POST(req: Request) {
         replyToMessageId: message.message_id,
         clientProfileId: binding.clientProfileId,
         bindingId: binding.id,
+        agentMode: binding.agentMode,
         cstUserId: binding.boundByUserId || "system-telegram", // owner of the conversation row
         senderName: from.first_name || from.username || "Telegram user",
         senderTelegramId: String(from.id),
@@ -340,6 +388,7 @@ async function handleArimaChat(args: {
   replyToMessageId: number;
   clientProfileId: string;
   bindingId: string;
+  agentMode: "arima" | "eliana";
   cstUserId: string;
   senderName: string;
   senderTelegramId: string;
@@ -393,13 +442,17 @@ async function handleArimaChat(args: {
   }
 
   const hasArimaMention = mentions.some(m => m.type === "arima");
-  const shouldReply = shouldArimaRespond({
-    senderChannel: "telegram",
-    isGroup: args.isGroup,
-    text: args.userMessage,
-    mentions,
-    hasAttachments: attachments.length > 0,
-  });
+  // Phase 20: in Eliana mode (BA discovery room), the agent ALWAYS replies —
+  // she's proactive, leading the conversation, not waiting to be @mentioned.
+  const shouldReply = args.agentMode === "eliana"
+    ? true
+    : shouldArimaRespond({
+        senderChannel: "telegram",
+        isGroup: args.isGroup,
+        text: args.userMessage,
+        mentions,
+        hasAttachments: attachments.length > 0,
+      });
 
   // Show "typing" only if we'll actually reply
   if (shouldReply) {
@@ -472,6 +525,7 @@ async function handleArimaChat(args: {
       attachments,
       mentions,
       skipModelCall: !shouldReply,
+      agentMode: args.agentMode,
     });
 
     // Notify portal viewers for this client so they refresh and see the message

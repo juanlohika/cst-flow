@@ -1007,6 +1007,23 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                   <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                 </a>
 
+                {/* Phase 20: Knowledge Repository — shared brain for every agent */}
+                <a
+                  href="/admin/knowledge"
+                  className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                    <BookOpen className="w-4 h-4 text-slate-600" strokeWidth={2} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-semibold text-slate-800">Knowledge Repository</p>
+                    <p className="text-[11px] text-slate-500">
+                      Shared brain for ARIMA · Eliana · future agents. Upload playbooks (PDF/MD), post product updates, maintain the Tarkie module catalog.
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                </a>
+
                 <h3 className="font-semibold text-base flex items-center gap-2 border-b pb-4 text-slate-800">
                   <Lock className="w-4 h-4 text-slate-500" strokeWidth={2} />
                   AI Provider Settings

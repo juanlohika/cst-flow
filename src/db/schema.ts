@@ -533,6 +533,88 @@ export const arimaMessages = sqliteTable("ArimaMessage", {
   createdAt:      text("createdAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+// ─── Knowledge Repository (Phase 20) ──────────────────────────────────
+// Shared knowledge that any AI agent (ARIMA, Eliana, future) can pull from
+// at runtime. NOT skill prompts (those are HOW an agent behaves) — this is
+// WHAT every agent should know about the world: product catalog, playbooks,
+// pricing, FAQs, recent updates.
+
+// KnowledgeDocument: long-form reference material (playbook, pricing sheet,
+// module catalog, technical specs). Versioned — uploading a new version
+// archives the old one. Active document is what agents see.
+export const knowledgeDocuments = sqliteTable("KnowledgeDocument", {
+  id:           text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  slug:         text("slug").notNull().unique(),            // e.g. "tarkie-playbook"
+  title:        text("title").notNull(),
+  category:     text("category").notNull(),                 // playbook | module-catalog | pricing | faq | tech-spec | other
+  content:      text("content").notNull(),                  // Markdown (PDF gets extracted to markdown on upload)
+  sourceMime:   text("sourceMime"),                         // application/pdf | text/markdown | text/plain
+  sourceBytes:  integer("sourceBytes"),                     // size of the original upload
+  version:      integer("version").default(1).notNull(),
+  status:       text("status").default("active").notNull(), // active | archived
+  audience:     text("audience").default("all").notNull(),  // all | internal | external (controls which agents see it)
+  createdAt:    text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:    text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+  createdByUserId: text("createdByUserId"),
+});
+
+// KnowledgeDocumentVersion: history of every document, kept for rollback +
+// audit trail. Inserted every time a doc is updated.
+export const knowledgeDocumentVersions = sqliteTable("KnowledgeDocumentVersion", {
+  id:           text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  documentId:   text("documentId").notNull(),
+  version:      integer("version").notNull(),
+  title:        text("title").notNull(),
+  content:      text("content").notNull(),
+  changeNote:   text("changeNote"),                         // one-liner: "Updated Q3 pricing", etc.
+  createdAt:    text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  createdByUserId: text("createdByUserId"),
+});
+
+// KnowledgeFeedEntry: short timestamped notes that agents reference for
+// "what's new" responses. Auto-expiring optional.
+export const knowledgeFeedEntries = sqliteTable("KnowledgeFeedEntry", {
+  id:           text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  title:        text("title").notNull(),
+  body:         text("body").notNull(),                     // Markdown
+  category:     text("category").default("general").notNull(), // feature | pricing | integration | bugfix | general
+  audience:     text("audience").default("all").notNull(),  // all | internal | external
+  publishedAt:  text("publishedAt").default(sql`(datetime('now'))`).notNull(),
+  expiresAt:    text("expiresAt"),                          // null = never expires
+  createdAt:    text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  createdByUserId: text("createdByUserId"),
+});
+
+// KnowledgeModule: structured catalog entry for each Tarkie module. Eliana
+// uses this to suggest existing solutions instead of jumping to "we'll build
+// a custom integration."
+export const knowledgeModules = sqliteTable("KnowledgeModule", {
+  id:           text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  slug:         text("slug").notNull().unique(),            // e.g. "attendance"
+  name:         text("name").notNull(),                     // "Attendance"
+  category:     text("category"),                           // workforce | sales | operations | reporting | etc.
+  description:  text("description").notNull(),              // 1-2 sentence summary
+  whoItsFor:    text("whoItsFor"),                          // target user / use case
+  keyFeatures:  text("keyFeatures"),                        // bullet list (markdown)
+  priceNote:    text("priceNote"),                          // free-form, e.g. "Included in Pro" or "Add-on"
+  status:       text("status").default("active").notNull(), // active | beta | sunset
+  audience:     text("audience").default("all").notNull(),
+  createdAt:    text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:    text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// KnowledgeAgentAccess: per-agent toggle for which knowledge categories
+// each agent sees in its context. Default: all agents see everything tagged
+// audience='all'; only internal agents see audience='internal'.
+export const knowledgeAgentAccess = sqliteTable("KnowledgeAgentAccess", {
+  id:           text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  agentId:      text("agentId").notNull(),                  // arima | eliana | etc.
+  category:     text("category").notNull(),                 // playbook | module-catalog | pricing | feed | etc.
+  enabled:      integer("enabled", { mode: "boolean" }).default(true).notNull(),
+}, (table) => ({
+  uniqueAgentCategory: { columns: [table.agentId, table.category], name: "KnowledgeAgentAccess_unique" },
+}));
+
 // BindingContactAccess: which ClientContact rows are routed to which binding
 // (Telegram group). Many-to-many — a contact may belong to multiple bindings
 // within the same account, and a binding may include multiple contacts. For
@@ -558,6 +640,7 @@ export const arimaChannelBindings = sqliteTable("ArimaChannelBinding", {
   clientProfileId: text("clientProfileId").notNull(),       // the bound client account
   boundByUserId:   text("boundByUserId"),                   // CST OS user who ran /bind
   status:          text("status").default("active").notNull(), // active | revoked
+  agentMode:       text("agentMode").default("arima").notNull(), // arima (RM) | eliana (BA) — which agent leads this room
   boundAt:         text("boundAt").default(sql`(datetime('now'))`).notNull(),
   revokedAt:       text("revokedAt"),
 }, (table) => ({

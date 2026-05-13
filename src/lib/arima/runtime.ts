@@ -46,6 +46,7 @@ TOOL CALLS ARE INVISIBLE (critical):
 - Speak only the human-readable outcome. Example good: "Got it — your meeting request for tomorrow with Lester is logged. A teammate will confirm a time and send the invite." Example bad: anything mentioning the tool name or showing JSON.`;
 
 const REQUEST_REGEX = /\[REQUEST\]([\s\S]*?)\[\/REQUEST\]/i;
+const BRD_REGEX = /\[BRD\]([\s\S]*?)\[\/BRD\]/i;
 
 export interface ParsedRequest {
   title: string;
@@ -99,6 +100,12 @@ export interface ArimaRunArgs {
    * in a group chat where ARIMA wasn't @-mentioned.
    */
   skipModelCall?: boolean;
+  /**
+   * Phase 20: which agent is leading this conversation. Defaults to "arima"
+   * (the relationship manager). When "eliana", we load the BA skill category
+   * + inject Eliana-specific knowledge audience.
+   */
+  agentMode?: "arima" | "eliana";
 }
 
 export interface ArimaRunResult {
@@ -264,6 +271,47 @@ export function scrubToolNarration(text: string, toolDefs?: any, knownToolNames?
 }
 
 function parseRequestBlock(text: string): { cleanText: string; request: ParsedRequest | null } {
+  // Try [BRD] first (Eliana's structured discovery summary). If found, convert
+  // to a ParsedRequest with category="brd" and a multi-line description.
+  const brdMatch = text.match(BRD_REGEX);
+  if (brdMatch) {
+    const inside = brdMatch[1];
+    const grab = (key: string) => {
+      const re = new RegExp(`^\\s*${key}\\s*:\\s*(.+?)\\s*$`, "im");
+      const m = inside.match(re);
+      return m ? m[1].trim() : "";
+    };
+    const title = grab("title");
+    if (title) {
+      const lines: string[] = [];
+      const businessGoal = grab("business_goal") || grab("businessGoal");
+      const currentWorkaround = grab("current_workaround") || grab("currentWorkaround");
+      const proposedApproach = grab("proposed_approach") || grab("proposedApproach");
+      const relatedModule = grab("related_module") || grab("relatedModule");
+      const complexity = grab("estimated_complexity") || grab("complexity");
+      const notes = grab("notes");
+      if (businessGoal) lines.push(`**Business goal:** ${businessGoal}`);
+      if (currentWorkaround) lines.push(`**Current workaround:** ${currentWorkaround}`);
+      if (proposedApproach) lines.push(`**Proposed approach:** ${proposedApproach}`);
+      if (relatedModule) lines.push(`**Related module:** ${relatedModule}`);
+      if (complexity) lines.push(`**Estimated complexity:** ${complexity}`);
+      if (notes) lines.push(`**Notes:** ${notes}`);
+      const priorityRaw = (grab("priority") || "medium").toLowerCase();
+      const validPriorities = ["low", "medium", "high", "urgent"];
+      const priority = validPriorities.includes(priorityRaw) ? priorityRaw : "medium";
+      const cleanText = text.replace(BRD_REGEX, "").replace(/```\s*```/g, "").trim();
+      return {
+        cleanText,
+        request: {
+          title: title.slice(0, 200),
+          description: lines.join("\n"),
+          category: "brd",
+          priority,
+        },
+      };
+    }
+  }
+
   const match = text.match(REQUEST_REGEX);
   if (!match) return { cleanText: text, request: null };
 
@@ -279,7 +327,7 @@ function parseRequestBlock(text: string): { cleanText: string; request: ParsedRe
   const categoryRaw = (grab("category") || "other").toLowerCase();
   const priorityRaw = (grab("priority") || "medium").toLowerCase();
 
-  const validCategories = ["feature", "bug", "question", "config", "meeting", "other"];
+  const validCategories = ["feature", "bug", "question", "config", "meeting", "other", "brd"];
   const validPriorities = ["low", "medium", "high", "urgent"];
   const category = validCategories.includes(categoryRaw) ? categoryRaw : "other";
   const priority = validPriorities.includes(priorityRaw) ? priorityRaw : "medium";
@@ -380,16 +428,24 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     };
   }
 
-  // 2) Load skill text (concat all active arima skills)
+  // 2) Load skill text. Phase 20: when agentMode === 'eliana', load BA skills
+  // (category "eliana" — falls back to "ba", then arima if neither exists).
+  const agentMode = args.agentMode || "arima";
   let arimaSkill = "";
   try {
-    const skills = await db
-      .select()
-      .from(skillsTable)
-      .where(and(eq(skillsTable.category, "arima"), eq(skillsTable.isActive, true)))
-      .orderBy(desc(skillsTable.updatedAt));
-    if (skills.length > 0) {
-      arimaSkill = skills.map(s => s.content).join("\n\n---\n\n");
+    const skillCategories = agentMode === "eliana"
+      ? ["eliana", "ba", "arima"]   // Eliana prompt, BA prompt as fallback, then ARIMA as last-ditch
+      : ["arima"];
+    for (const cat of skillCategories) {
+      const skills = await db
+        .select()
+        .from(skillsTable)
+        .where(and(eq(skillsTable.category, cat), eq(skillsTable.isActive, true)))
+        .orderBy(desc(skillsTable.updatedAt));
+      if (skills.length > 0) {
+        arimaSkill = skills.map(s => s.content).join("\n\n---\n\n");
+        break;
+      }
     }
   } catch (err) {
     console.error("[arima/runtime] skill fetch failed:", err);
@@ -402,6 +458,18 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
   let baseInstruction = arimaSkill || FALLBACK_INSTRUCTION;
   if (!baseInstruction.includes(TOOL_INVIS_MARKER)) {
     baseInstruction += `\n\n---\n\n## CRITICAL: Tool calls are INVISIBLE plumbing\n\nWhen you call a tool, that's between you and the system — the user must NEVER see tool names, JSON payloads, code blocks with arguments, or process narration like "I'll now use X", "Let me check the result", "I've attempted to call Y", "I'll fetch via Z", "using the \`tool_name\` tool".\n\nJust speak the OUTCOME in plain language. "Got it — meeting request logged. A teammate will confirm a time." That's it. Never name the tool you used. Never echo its arguments.`;
+  }
+
+  // Phase 20: inject the shared Knowledge Repository so the agent has the
+  // latest Tarkie playbook, module catalog, and what's-new feed in every reply.
+  try {
+    const { buildAgentKnowledgeContext } = await import("@/lib/knowledge");
+    const knowledgeContext = await buildAgentKnowledgeContext(agentMode);
+    if (knowledgeContext) {
+      baseInstruction += `\n\n---\n\n${knowledgeContext}`;
+    }
+  } catch (e) {
+    console.warn("[arima/runtime] knowledge context load failed:", e);
   }
 
   // 3) Load client profile if requested
