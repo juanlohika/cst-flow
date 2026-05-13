@@ -21,7 +21,7 @@ import { eq, and } from "drizzle-orm";
  */
 
 const SESSION_COOKIE_NAME = "arima_portal_session";
-const SESSION_TTL_DAYS = 30;
+const SESSION_TTL_DAYS = 180; // "Trust this device for 6 months"
 const MAGIC_LINK_TTL_DAYS = 7;
 
 export interface PortalSession {
@@ -213,6 +213,13 @@ export async function revokeSession(sessionId: string): Promise<void> {
   await db.update(subscriberSessions)
     .set({ status: "revoked" })
     .where(eq(subscriberSessions.sessionId, sessionId));
+}
+
+/** Revoke every active session for a contact (the "sign out of all my devices" button). */
+export async function revokeAllSessionsForContact(contactId: string): Promise<void> {
+  await db.update(subscriberSessions)
+    .set({ status: "revoked" })
+    .where(eq(subscriberSessions.contactId, contactId));
 }
 
 /** Build the public URL for a magic link (used in onboarding emails) */

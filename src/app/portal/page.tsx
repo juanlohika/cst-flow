@@ -189,9 +189,19 @@ export default function PortalChatPage() {
     }
   };
 
+  const [menuOpen, setMenuOpen] = useState(false);
+
   const logout = async () => {
-    if (!confirm("Sign out of ARIMA?")) return;
+    setMenuOpen(false);
+    if (!confirm("Sign out of this device?")) return;
     try { await fetch("/api/portal/auth/logout", { method: "POST" }); } catch {}
+    router.push("/portal/expired");
+  };
+
+  const logoutAll = async () => {
+    setMenuOpen(false);
+    if (!confirm("Sign out of every device you've used? You'll need a new link to get back in on any of them.")) return;
+    try { await fetch("/api/portal/auth/logout/all", { method: "POST" }); } catch {}
     router.push("/portal/expired");
   };
 
@@ -219,14 +229,41 @@ export default function PortalChatPage() {
               </p>
             </div>
           </div>
-          <button
-            onClick={logout}
-            className="flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-[#0177b5] uppercase tracking-widest transition-colors"
-            title="Sign out"
-          >
-            <LogOut className="w-3 h-3" />
-            Sign out
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setMenuOpen(o => !o)}
+              className="flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-[#0177b5] uppercase tracking-widest transition-colors"
+              title="Account"
+            >
+              <LogOut className="w-3 h-3" />
+              Sign out
+            </button>
+            {menuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-10"
+                  onClick={() => setMenuOpen(false)}
+                />
+                <div className="absolute right-0 top-full mt-1.5 w-56 bg-white border border-slate-100 rounded-xl shadow-xl z-20 py-1 text-left">
+                  <button
+                    onClick={logout}
+                    className="w-full px-3 py-2 text-[12px] font-semibold text-slate-700 hover:bg-[#F0F4FC] flex items-center gap-2"
+                  >
+                    <LogOut className="w-3.5 h-3.5 text-slate-500" />
+                    Sign out of this device
+                  </button>
+                  <button
+                    onClick={logoutAll}
+                    className="w-full px-3 py-2 text-[12px] font-semibold text-rose-600 hover:bg-rose-50 flex items-center gap-2 border-t border-slate-50"
+                    title="Use this if a device was lost or stolen"
+                  >
+                    <LogOut className="w-3.5 h-3.5 text-rose-500" />
+                    Sign out of all devices
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
