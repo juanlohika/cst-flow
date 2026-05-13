@@ -23,6 +23,28 @@ export async function tgGetMe(token: string) {
   return call(token, "getMe", {});
 }
 
+/**
+ * Look up the storage path for a Telegram file, then fetch the bytes.
+ * Returns the raw buffer + the mime/path. Callers can base64-encode for Gemini.
+ * Caps download size to avoid hammering memory on huge attachments.
+ */
+export async function tgFetchFile(token: string, fileId: string, maxBytes = 8 * 1024 * 1024): Promise<{ buffer: Buffer; mime: string; filePath: string } | null> {
+  const meta = await call(token, "getFile", { file_id: fileId }).catch(() => null);
+  if (!meta?.file_path) return null;
+  if (meta?.file_size && meta.file_size > maxBytes) return null;
+  const url = `${TELEGRAM_API}/file/bot${token}/${meta.file_path}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const buf = Buffer.from(await res.arrayBuffer());
+  // Telegram normalizes photo paths like "photos/file_3.jpg"; derive mime from extension.
+  const lower = (meta.file_path as string).toLowerCase();
+  const mime = lower.endsWith(".png") ? "image/png"
+    : lower.endsWith(".webp") ? "image/webp"
+    : lower.endsWith(".gif") ? "image/gif"
+    : "image/jpeg";
+  return { buffer: buf, mime, filePath: meta.file_path };
+}
+
 export async function tgSendMessage(token: string, chatId: number | string, text: string, opts: { parseMode?: "Markdown" | "HTML"; replyToMessageId?: number; disablePreview?: boolean } = {}) {
   return call(token, "sendMessage", {
     chat_id: chatId,

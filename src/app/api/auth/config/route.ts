@@ -103,6 +103,13 @@ export async function GET() {
       { table: "ClientProfile", column: "accessToken", type: "TEXT" },
       { table: "AccountMembership", column: "internalRole", type: "TEXT" },
       { table: "AccountMembership", column: "isPrimary", type: "INTEGER DEFAULT 0 NOT NULL" },
+      // Phase 13: real sender attribution for unified group chat
+      { table: "ArimaMessage", column: "senderType", type: "TEXT" },
+      { table: "ArimaMessage", column: "senderUserId", type: "TEXT" },
+      { table: "ArimaMessage", column: "senderName", type: "TEXT" },
+      { table: "ArimaMessage", column: "senderChannel", type: "TEXT" },
+      { table: "ArimaMessage", column: "mentions", type: "TEXT" },
+      { table: "ArimaMessage", column: "attachments", type: "TEXT" },
     ];
 
     for (const r of repairs) {

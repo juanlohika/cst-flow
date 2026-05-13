@@ -49,6 +49,25 @@ export interface ParsedRequest {
   priority: string;
 }
 
+export interface MessageAttachment {
+  type: "image";
+  url?: string;            // for storage-hosted attachments (portal)
+  mime: string;            // image/png | image/jpeg | image/webp
+  width?: number;
+  height?: number;
+  source: "telegram" | "portal";
+  // If we already downloaded the bytes (telegram), include them here. The runtime
+  // will inline-embed them so Gemini can read the image without a public URL.
+  base64?: string;
+}
+
+export interface MentionRef {
+  type: "internal" | "external" | "arima";
+  id: string | null;
+  name: string;
+  telegramUsername?: string | null;
+}
+
 export interface ArimaRunArgs {
   /** The conversation to append to. Required (create one beforehand if needed). */
   conversationId: string;
@@ -60,6 +79,21 @@ export interface ArimaRunArgs {
   userMessage: string;
   /** Full prior conversation as Gemini-format contents (excluding the new user message). */
   priorContents?: Array<{ role: "user" | "model"; parts: { text: string }[] }>;
+  /** Phase 13: real sender attribution */
+  senderType?: "internal" | "external" | "arima" | "system";
+  senderUserId?: string | null;
+  senderName?: string | null;
+  senderChannel?: "telegram" | "portal" | "web";
+  /** Phase 13: image (and future file) attachments that should be fed to vision */
+  attachments?: MessageAttachment[];
+  /** Phase 13: parsed @mentions */
+  mentions?: MentionRef[];
+  /**
+   * Phase 13: silent-by-default gating. If true, persist the user message but
+   * skip the model call entirely (no reply). Used for human-to-human chatter
+   * in a group chat where ARIMA wasn't @-mentioned.
+   */
+  skipModelCall?: boolean;
 }
 
 export interface ArimaRunResult {
@@ -68,6 +102,28 @@ export interface ArimaRunResult {
   capturedRequest: ParsedRequest | null;
   provider: string;
   assistantMessageId: string;
+  /** True when the runtime decided not to call the model (silent listener mode). */
+  skipped?: boolean;
+}
+
+/**
+ * Decide whether ARIMA should actually reply, given a group-chat context.
+ * In a DM/portal-1:1, always reply. In a Telegram group / shared portal thread,
+ * only reply when explicitly engaged.
+ */
+export function shouldArimaRespond(args: {
+  senderChannel?: "telegram" | "portal" | "web";
+  isGroup: boolean;
+  text: string;
+  mentions?: MentionRef[];
+  hasAttachments?: boolean;
+}): boolean {
+  if (!args.isGroup) return true;
+  const lower = (args.text || "").toLowerCase();
+  if (lower.includes("@arima")) return true;
+  if ((args.mentions || []).some(m => m.type === "arima")) return true;
+  // Photo-only message in a group is ambiguous; stay silent unless explicitly asked.
+  return false;
 }
 
 /**
@@ -190,19 +246,42 @@ function buildClientContext(profile: any): string {
 export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
   const now = new Date().toISOString();
 
-  // 1) Persist user message
+  // 1) Persist user message (with full Phase 13 attribution)
   const userMsgId = `msg_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
   await db.insert(arimaMessages).values({
     id: userMsgId,
     conversationId: args.conversationId,
     role: "user",
     content: args.userMessage,
+    senderType: args.senderType || "external",
+    senderUserId: args.senderUserId || null,
+    senderName: args.senderName || null,
+    senderChannel: args.senderChannel || "web",
+    mentions: args.mentions && args.mentions.length > 0 ? JSON.stringify(args.mentions) : null,
+    attachments: args.attachments && args.attachments.length > 0
+      ? JSON.stringify(args.attachments.map(a => ({
+          type: a.type, url: a.url || null, mime: a.mime,
+          width: a.width || null, height: a.height || null, source: a.source,
+        })))
+      : null,
     createdAt: now,
   });
 
   // Inbound message → reset the check-in no-response counter (if a schedule exists)
   if (args.clientProfileId) {
     markScheduleResponded(args.clientProfileId).catch(() => {});
+  }
+
+  // Phase 13 silent-listener mode: persist the message and exit without calling the model.
+  if (args.skipModelCall) {
+    return {
+      replyText: "",
+      capturedRequestId: null,
+      capturedRequest: null,
+      provider: "silent",
+      assistantMessageId: "",
+      skipped: true,
+    };
   }
 
   // 2) Load skill text (concat all active arima skills)
@@ -238,9 +317,22 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
 
   const clientContext = buildClientContext(clientProfile);
 
-  // 4) Build contents (prior history + new user message)
+  // 4) Build contents (prior history + new user message + any image attachments)
   const contents: any[] = [...(args.priorContents || [])];
-  contents.push({ role: "user", parts: [{ text: args.userMessage }] });
+  const newParts: any[] = [];
+  // Senders identify themselves so multi-speaker group context is readable to the model
+  const speakerLabel = args.senderName ? `[${args.senderName}]: ` : "";
+  newParts.push({ text: speakerLabel + (args.userMessage || "") });
+  for (const att of (args.attachments || [])) {
+    if (att.type !== "image") continue;
+    if (att.base64) {
+      newParts.push({ inlineData: { mimeType: att.mime, data: att.base64 } });
+    } else if (att.url) {
+      // Some adapters accept fileData with a URL; fall back to a textual note for those that don't.
+      newParts.push({ fileData: { mimeType: att.mime, fileUri: att.url } });
+    }
+  }
+  contents.push({ role: "user", parts: newParts });
 
   // 5) Resolve model + provider label
   const model = await getModelForApp("arima");
@@ -289,6 +381,9 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
       role: "assistant",
       content: refusal,
       provider: "guardrail",
+      senderType: "arima",
+      senderName: "ARIMA",
+      senderChannel: args.senderChannel || "web",
       createdAt: new Date().toISOString(),
     });
     // Notify team
@@ -421,6 +516,9 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     role: "assistant",
     content: replyText,
     provider: providerLabel,
+    senderType: "arima",
+    senderName: "ARIMA",
+    senderChannel: args.senderChannel || "web",
     createdAt: replyAt,
   });
 

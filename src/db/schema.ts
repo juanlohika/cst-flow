@@ -523,6 +523,13 @@ export const arimaMessages = sqliteTable("ArimaMessage", {
   tokensIn:       integer("tokensIn"),
   tokensOut:      integer("tokensOut"),
   toolCalls:      text("toolCalls"),                   // JSON array of tool invocations (future)
+  // Phase 13: real sender attribution for unified group chat
+  senderType:     text("senderType"),                  // internal | external | arima | system
+  senderUserId:   text("senderUserId"),                // CST OS user id | ClientContact id | null
+  senderName:     text("senderName"),                  // denormalized display name
+  senderChannel:  text("senderChannel"),               // telegram | portal | web
+  mentions:       text("mentions"),                    // JSON: [{type:'internal'|'external'|'arima', id, name, telegramUsername?}]
+  attachments:    text("attachments"),                 // JSON: [{type:'image', url, mime, width?, height?, source:'telegram'|'portal'}]
   createdAt:      text("createdAt").default(sql`(datetime('now'))`).notNull(),
 });
 

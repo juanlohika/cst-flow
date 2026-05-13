@@ -859,22 +859,54 @@ function ArimaContent() {
                   </p>
                 </div>
                 <div className="space-y-3">
-                  {inboxMessages.map((m: any) => (
-                    <div
-                      key={m.id}
-                      className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-                    >
-                      <div
-                        className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${
-                          m.role === "user"
-                            ? "bg-slate-900 text-white rounded-tr-sm"
-                            : "bg-white border border-slate-100 text-slate-700 rounded-tl-sm"
-                        }`}
-                      >
-                        {m.content}
+                  {inboxMessages.map((m: any) => {
+                    const senderType: string = m.senderType || (m.role === "assistant" ? "arima" : "external");
+                    const senderName: string = m.senderName || (senderType === "arima" ? "ARIMA" : "Unknown");
+                    const isLeftSide = senderType !== "external"; // internal + arima on the left
+                    const chip =
+                      senderType === "arima" ? { label: "ARIMA", color: "text-rose-600 bg-rose-50 border-rose-100" } :
+                      senderType === "internal" ? { label: "Team", color: "text-indigo-600 bg-indigo-50 border-indigo-100" } :
+                      { label: "Client", color: "text-emerald-600 bg-emerald-50 border-emerald-100" };
+                    let attachments: any[] = [];
+                    try { attachments = m.attachments ? JSON.parse(m.attachments) : []; } catch {}
+                    return (
+                      <div key={m.id} className={`flex ${isLeftSide ? "justify-start" : "justify-end"}`}>
+                        <div className={`max-w-[80%] flex flex-col ${isLeftSide ? "items-start" : "items-end"}`}>
+                          <div className="flex items-center gap-1.5 mb-1 px-1">
+                            <span className="text-[11px] font-bold text-slate-600">{senderName}</span>
+                            <span className={`text-[9px] font-bold uppercase tracking-wider px-1 py-0.5 rounded border ${chip.color}`}>
+                              {chip.label}
+                            </span>
+                            {m.senderChannel === "telegram" && (
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">via TG</span>
+                            )}
+                          </div>
+                          {attachments.length > 0 && (
+                            <div className="grid grid-cols-2 gap-1 mb-1 max-w-[280px]">
+                              {attachments.map((a, i) => {
+                                const src = a.url || (a.base64 ? `data:${a.mime};base64,${a.base64}` : "");
+                                if (!src) return null;
+                                return (
+                                  <img key={i} src={src} alt="attachment" className="w-full h-28 object-cover rounded-lg border border-slate-200" />
+                                );
+                              })}
+                            </div>
+                          )}
+                          {m.content && (
+                            <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${
+                              senderType === "external"
+                                ? "bg-slate-900 text-white rounded-tr-sm"
+                                : senderType === "arima"
+                                  ? "bg-white border border-slate-100 text-slate-700 rounded-tl-sm"
+                                  : "bg-indigo-50 border border-indigo-100 text-slate-700 rounded-tl-sm"
+                            }`}>
+                              {m.content}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

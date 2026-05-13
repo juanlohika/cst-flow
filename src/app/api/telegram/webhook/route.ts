@@ -9,6 +9,7 @@ import { getTelegramConfig } from "@/lib/telegram/config";
 import {
   tgSendMessage,
   tgSendChatAction,
+  tgFetchFile,
   isUserGroupAdmin,
   isGroupChatType,
   isPrivateChatType,
@@ -21,8 +22,10 @@ import {
   createBinding,
   revokeBinding,
 } from "@/lib/telegram/binding";
-import { runArima } from "@/lib/arima/runtime";
+import { runArima, shouldArimaRespond, type MessageAttachment, type MentionRef } from "@/lib/arima/runtime";
 import { ensureAccessSchema } from "@/lib/access/accounts";
+import { resolveTelegramMentions } from "@/lib/arima/mentions";
+import { broadcastToClient } from "@/lib/portal/stream";
 
 export const dynamic = "force-dynamic";
 
@@ -96,9 +99,13 @@ export async function POST(req: Request) {
 
     const chat = message.chat;
     const from = message.from;
-    const text: string = message.text || "";
-    if (!chat || !from || !text) {
-      return NextResponse.json({ ok: true, ignored: "no-text" });
+    const text: string = message.text || message.caption || "";
+    const photos: any[] = Array.isArray(message.photo) ? message.photo : [];
+    const entities: any[] = Array.isArray(message.entities)
+      ? message.entities
+      : (Array.isArray(message.caption_entities) ? message.caption_entities : []);
+    if (!chat || !from || (!text && photos.length === 0)) {
+      return NextResponse.json({ ok: true, ignored: "no-content" });
     }
 
     const isGroup = isGroupChatType(chat.type);
@@ -262,7 +269,11 @@ export async function POST(req: Request) {
         cstUserId: binding.boundByUserId || "system-telegram", // owner of the conversation row
         senderName: from.first_name || from.username || "Telegram user",
         senderTelegramId: String(from.id),
+        senderTelegramUsername: from.username || null,
         channel: "telegram",
+        photos,
+        entities,
+        isGroup: true,
       });
       return NextResponse.json({ ok: true });
     }
@@ -309,13 +320,67 @@ async function handleArimaChat(args: {
   cstUserId: string;
   senderName: string;
   senderTelegramId: string;
+  senderTelegramUsername: string | null;
   channel: string;
+  photos: any[];
+  entities: any[];
+  isGroup: boolean;
 }) {
-  // Show "typing" so the user knows we're working
-  try { await tgSendChatAction(args.botToken, args.chatId, "typing"); } catch {}
+  // Resolve the sender to a CST OS internal user if they've linked their Telegram.
+  // Falls back to "external" attribution if no link exists (treats it as a client speaker).
+  let senderCstUserId: string | null = null;
+  let senderType: "internal" | "external" = "external";
+  try {
+    const linked = await resolveCstUserFromTelegram(args.senderTelegramId);
+    if (linked?.cstUserId) {
+      senderCstUserId = linked.cstUserId;
+      senderType = "internal";
+    }
+  } catch {}
+
+  // Parse @mentions out of the message entities
+  const mentions: MentionRef[] = await resolveTelegramMentions({
+    text: args.userMessage,
+    entities: args.entities,
+    clientProfileId: args.clientProfileId,
+  }).catch(() => [] as MentionRef[]);
+
+  // Pull the largest photo (Telegram sends multiple sizes); download to bytes.
+  const attachments: MessageAttachment[] = [];
+  if (args.photos?.length > 0) {
+    const largest = [...args.photos].sort((a, b) =>
+      (b.width * b.height) - (a.width * a.height)
+    )[0];
+    if (largest?.file_id) {
+      const file = await tgFetchFile(args.botToken, largest.file_id).catch(() => null);
+      if (file) {
+        attachments.push({
+          type: "image",
+          mime: file.mime,
+          width: largest.width,
+          height: largest.height,
+          source: "telegram",
+          base64: file.buffer.toString("base64"),
+        });
+      }
+    }
+  }
+
+  const hasArimaMention = mentions.some(m => m.type === "arima");
+  const shouldReply = shouldArimaRespond({
+    senderChannel: "telegram",
+    isGroup: args.isGroup,
+    text: args.userMessage,
+    mentions,
+    hasAttachments: attachments.length > 0,
+  });
+
+  // Show "typing" only if we'll actually reply
+  if (shouldReply) {
+    try { await tgSendChatAction(args.botToken, args.chatId, "typing"); } catch {}
+  }
 
   // Find or create a conversation for this Telegram chat.
-  // Strategy: one open ArimaConversation per (channel, chatId) — keep it long-running.
   const externalKey = `tg:${args.chatId}`;
 
   let convoId: string;
@@ -350,10 +415,13 @@ async function handleArimaChat(args: {
     });
   }
 
-  // Load prior history (cap at last 10 turns; each Telegram message can be long,
-  // and we want to leave room for the system prompt + intelligence content).
+  // Load prior history (cap at last 10 turns).
   const history = await db
-    .select({ role: arimaMessages.role, content: arimaMessages.content })
+    .select({
+      role: arimaMessages.role,
+      content: arimaMessages.content,
+      senderName: arimaMessages.senderName,
+    })
     .from(arimaMessages)
     .where(eq(arimaMessages.conversationId, convoId))
     .orderBy(asc(arimaMessages.createdAt));
@@ -361,24 +429,32 @@ async function handleArimaChat(args: {
 
   const priorContents = trimmedHistory.map(m => ({
     role: m.role === "assistant" ? "model" as const : "user" as const,
-    parts: [{ text: m.content }],
+    parts: [{ text: m.senderName ? `[${m.senderName}]: ${m.content}` : m.content }],
   }));
-
-  // Prefix the user's text with their Telegram name so ARIMA knows who's speaking
-  const inlineMessage = `[${args.senderName}]: ${args.userMessage}`;
 
   try {
     const result = await runArima({
       conversationId: convoId,
       userId: args.cstUserId,
       clientProfileId: args.clientProfileId,
-      userMessage: inlineMessage,
+      userMessage: args.userMessage || (attachments.length > 0 ? "(photo)" : ""),
       priorContents,
+      senderType,
+      senderUserId: senderCstUserId,
+      senderName: args.senderName,
+      senderChannel: "telegram",
+      attachments,
+      mentions,
+      skipModelCall: !shouldReply,
     });
+
+    // Notify portal viewers for this client so they refresh and see the message
+    broadcastToClient(args.clientProfileId, { type: "refresh" });
+
+    if (!shouldReply) return; // silent listener mode — message stored, no reply
+
     const replyText = (result.replyText || "").trim();
     if (!replyText) {
-      // AI returned empty (often a safety-filter block or a token-limit issue).
-      // Send a clear fallback so the user isn't left staring at silence.
       console.error("[telegram/webhook] ARIMA returned empty reply");
       await safeReply(
         args.botToken,
@@ -391,6 +467,7 @@ async function handleArimaChat(args: {
     await safeReply(args.botToken, args.chatId, replyText, args.replyToMessageId);
   } catch (e: any) {
     console.error("[telegram/webhook] ARIMA failed:", e);
+    if (!shouldReply) return;
     const errMsg = e?.message || "unknown error";
     await safeReply(
       args.botToken,
