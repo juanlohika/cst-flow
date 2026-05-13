@@ -21,6 +21,7 @@ import DonutChart from "@/components/charts/DonutChart";
 import ProjectSettingsView from "@/components/projects/ProjectSettingsView";
 import BufferModal from "@/components/timeline/BufferModal";
 import ProjectSettingsModal from "@/components/projects/ProjectSettingsModal";
+import ContactsTab from "@/components/accounts/ContactsTab";
 import { Share, Mail, Copy, Check, X, Settings } from "lucide-react";
 
 
@@ -628,10 +629,11 @@ function SortHeader({ label, col, sortKey, sortDir, onSort }: {
 
 // ─── Account Hub (5-Tab) ───────────────────────────────────────────────────────
 
-type HubTab = "profile" | "meetings" | "brd" | "flows" | "projects" | "mockups" | "intelligence" | "presentations";
+type HubTab = "profile" | "contacts" | "meetings" | "brd" | "flows" | "projects" | "mockups" | "intelligence" | "presentations";
 
 const HUB_TABS: { id: HubTab; label: string; icon: React.ElementType }[] = [
   { id: "profile", label: "Profile", icon: User },
+  { id: "contacts", label: "Contacts", icon: Users },
   { id: "intelligence", label: "Intelligence", icon: Brain },
   { id: "presentations", label: "Presentations", icon: MonitorPlay },
   { id: "meetings", label: "Meetings", icon: CalendarCheck },
@@ -709,6 +711,7 @@ export function AccountHub({ profile, onEdit, onBack }: {
       <div className="flex-1 overflow-y-auto bg-white styled-scroll">
         <div className="min-w-0">
           {activeTab === "profile" && <ProfileTab profile={profile} modules={modules} />}
+          {activeTab === "contacts" && <ContactsTab accountId={profile.id} companyName={profile.companyName} />}
           {activeTab === "intelligence" && <IntelligenceTab accountId={profile.id} />}
           {activeTab === "presentations" && <PresentationsTab accountId={profile.id} />}
           {activeTab === "meetings" && <MeetingsTab accountId={profile.id} companyName={profile.companyName} />}

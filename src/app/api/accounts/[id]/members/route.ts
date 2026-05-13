@@ -48,6 +48,8 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
         id: membershipsTable.id,
         userId: membershipsTable.userId,
         role: membershipsTable.role,
+        internalRole: membershipsTable.internalRole,
+        isPrimary: membershipsTable.isPrimary,
         grantedBy: membershipsTable.grantedBy,
         grantedAt: membershipsTable.grantedAt,
         userName: usersTable.name,
@@ -58,7 +60,36 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
       .leftJoin(usersTable, eq(usersTable.id, membershipsTable.userId))
       .where(eq(membershipsTable.clientProfileId, params.id));
 
-    return NextResponse.json({ account: profile[0], members: rows });
+    // Look up Telegram link status for each member (so the UI can show whether
+    // they'll receive Telegram DMs from ARIMA)
+    let telegramMap = new Map<string, { telegramUsername: string | null; telegramName: string | null }>();
+    try {
+      const { telegramAccountLinks } = await import("@/db/schema");
+      const userIds = rows.map(r => r.userId);
+      if (userIds.length > 0) {
+        const { inArray } = await import("drizzle-orm");
+        const links = await db
+          .select({
+            cstUserId: telegramAccountLinks.cstUserId,
+            telegramUsername: telegramAccountLinks.telegramUsername,
+            telegramName: telegramAccountLinks.telegramName,
+          })
+          .from(telegramAccountLinks)
+          .where(and(inArray(telegramAccountLinks.cstUserId, userIds), eq(telegramAccountLinks.status, "active")));
+        telegramMap = new Map(links.map(l => [l.cstUserId, { telegramUsername: l.telegramUsername, telegramName: l.telegramName }]));
+      }
+    } catch (e) {
+      // Telegram tables may not exist on very fresh deploys — non-fatal
+    }
+
+    const enriched = rows.map(r => ({
+      ...r,
+      telegramLinked: telegramMap.has(r.userId),
+      telegramUsername: telegramMap.get(r.userId)?.telegramUsername || null,
+      telegramName: telegramMap.get(r.userId)?.telegramName || null,
+    }));
+
+    return NextResponse.json({ account: profile[0], members: enriched });
   } catch (error: any) {
     console.error("[members GET] error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -120,17 +151,30 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       return NextResponse.json({ id: existing[0].id, role, alreadyMember: true });
     }
 
+    const internalRole = body?.internalRole || null;
+    const isPrimary = !!body?.isPrimary;
+
+    // If new member is being set as Primary, clear other primaries first
+    if (isPrimary) {
+      await db
+        .update(membershipsTable)
+        .set({ isPrimary: false })
+        .where(eq(membershipsTable.clientProfileId, params.id));
+    }
+
     const id = `mem_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
     await db.insert(membershipsTable).values({
       id,
       userId: targetUserId,
       clientProfileId: params.id,
       role,
+      internalRole,
+      isPrimary,
       grantedBy: session.user.id,
       grantedAt: new Date().toISOString(),
     });
 
-    return NextResponse.json({ id, role, user: targetUser[0] }, { status: 201 });
+    return NextResponse.json({ id, role, internalRole, isPrimary, user: targetUser[0] }, { status: 201 });
   } catch (error: any) {
     console.error("[members POST] error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });

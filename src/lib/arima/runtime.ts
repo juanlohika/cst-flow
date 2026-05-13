@@ -495,12 +495,14 @@ async function notifyRequestCaptured(args: {
     let clientName = "(no client)";
 
     if (args.clientProfileId) {
-      // Pull every CST OS user who is a member of this client account
+      // Pull every CST OS user who is a member of this client account. Primary
+      // owner first so the bell/DM lands with them at the top of the recipient list.
       const members = await db
-        .select({ userId: accountMemberships.userId })
+        .select({ userId: accountMemberships.userId, isPrimary: accountMemberships.isPrimary })
         .from(accountMemberships)
         .where(eq(accountMemberships.clientProfileId, args.clientProfileId));
-      recipientIds = members.map(m => m.userId);
+      const sorted = [...members].sort((a, b) => Number(!!b.isPrimary) - Number(!!a.isPrimary));
+      recipientIds = sorted.map(m => m.userId);
 
       // Get client name for the notification body
       const clientRows = await db

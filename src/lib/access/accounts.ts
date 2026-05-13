@@ -36,6 +36,9 @@ export async function ensureAccessSchema(): Promise<void> {
     // ALTER ... ADD COLUMN throws if the column already exists, so each is wrapped.
     try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN clientCode TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN accessToken TEXT`); } catch {}
+    // Phase 12: typed internal-role + primary flag on AccountMembership
+    try { await db.run(sql`ALTER TABLE AccountMembership ADD COLUMN internalRole TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE AccountMembership ADD COLUMN isPrimary INTEGER DEFAULT 0 NOT NULL`); } catch {}
 
     // Create ArimaRequest table if missing
     await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaRequest (

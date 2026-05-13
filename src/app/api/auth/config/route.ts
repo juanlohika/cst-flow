@@ -101,6 +101,8 @@ export async function GET() {
       { table: "Role", column: "createdAt", type: "TEXT DEFAULT (datetime('now'))" },
       { table: "ClientProfile", column: "clientCode", type: "TEXT" },
       { table: "ClientProfile", column: "accessToken", type: "TEXT" },
+      { table: "AccountMembership", column: "internalRole", type: "TEXT" },
+      { table: "AccountMembership", column: "isPrimary", type: "INTEGER DEFAULT 0 NOT NULL" },
     ];
 
     for (const r of repairs) {
@@ -227,6 +229,47 @@ export async function GET() {
       }
       if (codeFills > 0) migrations.push(`Backfilled clientCode for ${codeFills} accounts.`);
       if (memberFills > 0) migrations.push(`Auto-granted creator memberships for ${memberFills} accounts.`);
+
+      // Auto-promote: for any account that has at least one member but no Primary,
+      // mark the lead (or oldest member) as Primary so ARIMA has someone to DM.
+      try {
+        const allMembers = await db
+          .select({
+            id: membershipsTable.id,
+            clientProfileId: membershipsTable.clientProfileId,
+            role: membershipsTable.role,
+            isPrimary: membershipsTable.isPrimary,
+            grantedAt: membershipsTable.grantedAt,
+          })
+          .from(membershipsTable);
+
+        const byAccount = new Map<string, typeof allMembers>();
+        for (const m of allMembers) {
+          const arr = byAccount.get(m.clientProfileId) || [];
+          arr.push(m);
+          byAccount.set(m.clientProfileId, arr);
+        }
+        let primaryFills = 0;
+        for (const [, list] of byAccount) {
+          if (list.some(m => !!m.isPrimary)) continue;
+          if (list.length === 0) continue;
+          const sorted = [...list].sort((a, b) => {
+            const aLead = a.role === "lead" ? 0 : 1;
+            const bLead = b.role === "lead" ? 0 : 1;
+            if (aLead !== bLead) return aLead - bLead;
+            return (a.grantedAt || "").localeCompare(b.grantedAt || "");
+          });
+          const winner = sorted[0];
+          await db
+            .update(membershipsTable)
+            .set({ isPrimary: true })
+            .where(eq(membershipsTable.id, winner.id));
+          primaryFills++;
+        }
+        if (primaryFills > 0) migrations.push(`Auto-promoted ${primaryFills} member(s) to Primary.`);
+      } catch (primaryErr: any) {
+        console.warn("[migrator] primary backfill warn:", primaryErr?.message);
+      }
     } catch (backfillErr: any) {
       console.warn("[migrator] backfill warn:", backfillErr?.message);
     }

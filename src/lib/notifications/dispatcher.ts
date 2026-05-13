@@ -5,12 +5,13 @@ import {
   notificationPreferences,
   notificationLogs,
   users as usersTable,
+  telegramAccountLinks,
 } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { configureWebPush } from "./vapid";
 
 export type NotificationType = "request_captured" | "telegram_message" | "mention";
-export type NotificationChannel = "web_push" | "email";
+export type NotificationChannel = "web_push" | "email" | "telegram";
 
 export interface NotifyArgs {
   userIds: string[];                  // CST OS user IDs to notify
@@ -248,6 +249,11 @@ export async function dispatchNotification(args: NotifyArgs): Promise<{
           console.warn("[notifications] email send failed:", err?.message);
         });
       }
+
+      // ─── Telegram DM (if user has an active TelegramAccountLink) ─────
+      sendTelegramDmNotification(userId, args).catch(err => {
+        console.warn("[notifications] telegram DM failed:", err?.message);
+      });
     } catch (e: any) {
       console.error("[notifications] dispatch failed for user", userId, e);
     }
@@ -306,5 +312,58 @@ async function sendEmailNotification(userId: string, args: NotifyArgs): Promise<
       .catch(() => {});
   } catch (e: any) {
     console.warn("[notifications] sendEmailNotification error:", e?.message);
+  }
+}
+
+/**
+ * Send a Telegram DM to the user via the ARIMA bot if they've linked their
+ * Telegram account. Best-effort; failures are swallowed and logged.
+ */
+async function sendTelegramDmNotification(userId: string, args: NotifyArgs): Promise<void> {
+  try {
+    const link = await db
+      .select({
+        telegramUserId: telegramAccountLinks.telegramUserId,
+        telegramName: telegramAccountLinks.telegramName,
+      })
+      .from(telegramAccountLinks)
+      .where(and(
+        eq(telegramAccountLinks.cstUserId, userId),
+        eq(telegramAccountLinks.status, "active")
+      ))
+      .limit(1);
+
+    if (!link[0]?.telegramUserId) return;
+
+    const { getTelegramConfig } = await import("@/lib/telegram/config");
+    const { tgSendMessage, truncateForTelegram } = await import("@/lib/telegram/api");
+    const cfg = await getTelegramConfig();
+    if (!cfg.botToken) return;
+
+    const lines: string[] = [];
+    lines.push(`*${args.title}*`);
+    if (args.body) lines.push("", args.body);
+    if (args.link) lines.push("", `[Open in CST OS](${args.link})`);
+
+    await tgSendMessage(cfg.botToken, link[0].telegramUserId, truncateForTelegram(lines.join("\n")), {
+      parseMode: "Markdown",
+      disablePreview: true,
+    });
+
+    await db.insert(notificationLogs).values({
+      id: `nl_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+      userId,
+      type: args.type,
+      channel: "telegram" as any,
+      title: args.title,
+      body: args.body || null,
+      link: args.link || null,
+      payload: args.payload ? JSON.stringify(args.payload) : null,
+      status: "sent",
+      createdAt: new Date().toISOString(),
+      sentAt: new Date().toISOString(),
+    }).catch(() => {});
+  } catch (e: any) {
+    console.warn("[notifications] sendTelegramDmNotification error:", e?.message);
   }
 }

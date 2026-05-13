@@ -276,7 +276,10 @@ export const accountMemberships = sqliteTable("AccountMembership", {
   id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   userId:          text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
   clientProfileId: text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
-  role:            text("role").default("member").notNull(), // member | lead | viewer
+  role:            text("role").default("member").notNull(), // member | lead | viewer (kept for legacy access control)
+  // Phase 12: typed internal contact role + primary-owner flag for routing
+  internalRole:    text("internalRole"),                       // PM | BA | RM | Developer | Other (null = legacy)
+  isPrimary:       integer("isPrimary", { mode: "boolean" }).default(false).notNull(),
   grantedBy:       text("grantedBy"),  // userId of admin who granted access
   grantedAt:       text("grantedAt").default(sql`(datetime('now'))`).notNull(),
 }, (table) => ({
