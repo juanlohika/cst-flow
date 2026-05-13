@@ -39,6 +39,13 @@ export async function ensureAccessSchema(): Promise<void> {
     // Phase 12: typed internal-role + primary flag on AccountMembership
     try { await db.run(sql`ALTER TABLE AccountMembership ADD COLUMN internalRole TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE AccountMembership ADD COLUMN isPrimary INTEGER DEFAULT 0 NOT NULL`); } catch {}
+    // Phase 13: sender attribution + attachments + mentions on every message
+    try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN senderType TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN senderUserId TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN senderName TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN senderChannel TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN mentions TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN attachments TEXT`); } catch {}
 
     // Create ArimaRequest table if missing
     await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaRequest (

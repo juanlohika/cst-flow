@@ -72,20 +72,29 @@ export default function PortalChatPage() {
     } catch {}
   }, []);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   // ─── Auth check + initial history ───────────────────────────────
   useEffect(() => {
     async function init() {
       try {
         const res = await fetch("/api/portal/chat");
-        if (!res.ok) {
+        if (res.status === 401) {
+          // Real auth failure — session expired, send to the resend flow
           router.push("/portal/expired");
+          return;
+        }
+        if (!res.ok) {
+          // Transient (5xx / DB hiccup) — keep them on the page, show a banner so they can retry.
+          const data = await res.json().catch(() => ({}));
+          setLoadError(data?.error || `Couldn't load messages (HTTP ${res.status}). Try refreshing in a moment.`);
           return;
         }
         const data = await res.json();
         setSession(data.session);
         setMessages((data.messages || []) as Message[]);
-      } catch {
-        router.push("/portal/expired");
+      } catch (err: any) {
+        setLoadError(err?.message || "Network error. Please refresh.");
       } finally {
         setAuthChecking(false);
         setLoadingHistory(false);
@@ -205,10 +214,28 @@ export default function PortalChatPage() {
     router.push("/portal/expired");
   };
 
-  if (authChecking || !session) {
+  if (authChecking) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-[#0177b5]" />
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <div className="bg-white rounded-3xl shadow-xl shadow-[#0177b5]/10 border border-slate-100 p-8 max-w-md w-full text-center">
+          <p className="text-[13px] text-slate-600 mb-4">
+            {loadError || "Couldn't load your conversation."}
+          </p>
+          <button
+            onClick={() => location.reload()}
+            className="px-4 py-2 rounded-xl bg-gradient-to-br from-[#0177b5] to-[#015a9c] text-white text-[12px] font-bold shadow-md shadow-[#0177b5]/30"
+          >
+            Try again
+          </button>
+        </div>
       </div>
     );
   }

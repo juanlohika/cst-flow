@@ -7,7 +7,7 @@
   "display": "standalone",
   "orientation": "portrait",
   "theme_color": "#0177b5",
-  "background_color": "#F0F4FC",
+  "background_color": "#f0f4fc",
   "icons": [
     {
       "src": "/tarkie-logo.svg",
