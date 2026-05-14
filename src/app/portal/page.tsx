@@ -633,7 +633,14 @@ function MessageBubble({ m, isMine }: { m: Message; isMine: boolean }) {
   // so it doesn't appear twice (once in the header, once in the bubble text).
   const inlineNameMatch = m.content?.match(/^\[([^\]]+)\]:\s*([\s\S]*)/);
   const inlineName = inlineNameMatch?.[1] || null;
-  const displayContent = inlineNameMatch ? inlineNameMatch[2] : m.content;
+  let displayContent = inlineNameMatch ? inlineNameMatch[2] : m.content;
+  // If this is a photo-only message (text is just our "(photo)" placeholder)
+  // and an actual image attachment exists, hide the placeholder — the image
+  // bubble alone communicates the content.
+  const hasImageAttachment = (m.attachments || []).some(a => a.type === "image" && (a.url || a.base64));
+  if (hasImageAttachment && /^\s*\(photo\)\s*$/i.test(displayContent || "")) {
+    displayContent = "";
+  }
 
   // Sender name fallback: legacy messages may not have senderName populated yet;
   // derive from the inline prefix so they don't render as "Unknown".

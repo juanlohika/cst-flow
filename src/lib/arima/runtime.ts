@@ -663,6 +663,10 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
       ? JSON.stringify(args.attachments.map(a => ({
           type: a.type, url: a.url || null, mime: a.mime,
           width: a.width || null, height: a.height || null, source: a.source,
+          // Persist the base64 bytes too so the portal can render Telegram-side
+          // photos (Telegram doesn't give us a public URL; we downloaded the
+          // bytes earlier and need them again when rendering).
+          base64: a.base64 || null,
         })))
       : null,
     createdAt: now,

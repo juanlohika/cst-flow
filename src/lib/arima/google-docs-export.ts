@@ -1,21 +1,22 @@
 /**
- * Phase 22.1 — Google Docs export.
+ * Phase 22.1 — Google Docs export (v2: native tables + Mermaid images).
  *
- * Takes a generated BRD Markdown document and creates a Google Doc in the
- * configured Drive folder. The Google Doc is created with the team's
- * service-account credentials and shared via the team's Workspace (folder
- * permissions inherit).
+ * Renders an Eliana-generated BRD Markdown into a fully-formatted Google Doc:
+ *   - Headings (#, ##, ###, ####) become real Google Docs heading styles
+ *   - Markdown tables become NATIVE Google Docs tables (insertTable + per-cell content)
+ *   - Mermaid code fences are rendered to PNG via mermaid.ink and embedded as images
+ *   - Other fenced code blocks stay as monospace plain text
+ *   - Bullet / numbered lists become real Docs lists
+ *   - Inline **bold** / *italic* / `code` survive as text runs (basic — v2.1 can refine)
  *
- * Configuration (in order of precedence):
- *   1. globalSettings DB keys: GOOGLE_SERVICE_ACCOUNT_JSON + GOOGLE_DRIVE_BRD_FOLDER_ID
- *   2. process.env equivalents
+ * Strategy: parse the Markdown into a sequence of blocks (heading, paragraph,
+ * table, mermaid, codeBlock, listItem). Insert them one at a time, query the
+ * doc's current length between blocks so we never have to do index math
+ * across operations that change body size unpredictably (tables add cells +
+ * paragraph nodes; image insertion adds inline elements).
  *
- * Idempotent: if a row already has brdGoogleDocId, we re-use the existing
- * doc and update its contents instead of creating a new one.
- *
- * Best-effort: failures don't break the BRD generation flow — the BRD
- * document already exists as Markdown on the request row, the Google Doc
- * is a bonus export.
+ * Idempotent re-export: if the request already has a brdGoogleDocId we clear
+ * the doc body and re-stream the content into the same doc.
  */
 import { db } from "@/db";
 import { arimaRequests } from "@/db/schema";
@@ -27,7 +28,6 @@ interface GoogleConfig {
 }
 
 async function loadGoogleConfig(): Promise<GoogleConfig | null> {
-  // Try DB-stored globalSettings first
   try {
     const { globalSettings } = await import("@/db/schema");
     const rows = await db.select().from(globalSettings);
@@ -37,7 +37,6 @@ async function loadGoogleConfig(): Promise<GoogleConfig | null> {
     if (!serviceAccountJson || !driveFolderId) return null;
     return { serviceAccountJson, driveFolderId };
   } catch {
-    // Fall through to env-only
     const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "";
     const driveFolderId = process.env.GOOGLE_DRIVE_BRD_FOLDER_ID || "";
     if (!serviceAccountJson || !driveFolderId) return null;
@@ -45,18 +44,6 @@ async function loadGoogleConfig(): Promise<GoogleConfig | null> {
   }
 }
 
-/**
- * Convert a Markdown BRD into a Google Doc.
- *
- * Strategy: Create the doc as plain text first (preserves all structure as
- * readable content), then use batchUpdate to apply formatting on top —
- * headings, bold, tables. Mermaid code blocks are left as plain text since
- * Google Docs doesn't have native Mermaid; clients view them as the raw
- * code or paste into a Mermaid renderer.
- *
- * For simplicity we use the "insert as plain text" approach with a few
- * heading transformations. Good enough for v1 — admins can refine.
- */
 export async function exportBrdToGoogleDocs(args: { requestId: string }): Promise<{
   ok: boolean;
   docId?: string;
@@ -68,7 +55,6 @@ export async function exportBrdToGoogleDocs(args: { requestId: string }): Promis
     return { ok: false, error: "Google Docs export is not configured. Add GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_DRIVE_BRD_FOLDER_ID in admin settings." };
   }
 
-  // Load the request
   const rows = await db.select().from(arimaRequests).where(eq(arimaRequests.id, args.requestId)).limit(1);
   const row = rows[0];
   if (!row) return { ok: false, error: "Request not found" };
@@ -100,16 +86,12 @@ export async function exportBrdToGoogleDocs(args: { requestId: string }): Promis
     const title = row.title.slice(0, 200);
     const markdown = String((row as any).brdDocument || "");
 
-    // If the row already has a Google Doc, update its content instead of creating a new one.
     const existingDocId = (row as any).brdGoogleDocId as string | null;
     let docId = existingDocId || "";
     let docUrl = (row as any).brdGoogleDocUrl as string | null || "";
 
     if (!docId) {
-      // Verify the service account can actually see the configured folder.
-      // Without this, drive.files.create returns "File not found: <folderId>"
-      // which is misleading — the folder exists, the service account just
-      // lacks permission on it.
+      // Verify the service account can see the folder before creating
       try {
         await drive.files.get({
           fileId: cfg.driveFolderId,
@@ -121,20 +103,18 @@ export async function exportBrdToGoogleDocs(args: { requestId: string }): Promis
         if (code === 404) {
           throw new Error(
             `Service account can't see the configured Drive folder (${cfg.driveFolderId}). ` +
-            `Open the folder in Google Drive → right-click → Share → add the service account email (${credentials.client_email}) as Editor. ` +
-            `Then try export again.`
+            `Open the folder in Google Drive → Share → add the service account email (${credentials.client_email}) as Editor.`
           );
         }
         if (code === 403) {
           throw new Error(
             `Service account doesn't have Editor permission on the configured Drive folder. ` +
-            `Open the folder → Share → find the service account (${credentials.client_email}) → change role to Editor.`
+            `Open the folder → Share → change role to Editor.`
           );
         }
         throw folderErr;
       }
 
-      // Create a new doc in the configured folder
       const created = await drive.files.create({
         requestBody: {
           name: title,
@@ -148,40 +128,19 @@ export async function exportBrdToGoogleDocs(args: { requestId: string }): Promis
       docUrl = created.data.webViewLink || `https://docs.google.com/document/d/${docId}/edit`;
       if (!docId) throw new Error("Google didn't return a doc id");
     } else {
-      // Update title on the existing doc
+      // Rename if title changed
       await drive.files.update({
         fileId: docId,
         requestBody: { name: title },
       }).catch(() => {});
 
-      // Clear existing content (replace the body with our markdown)
-      const existing = await docs.documents.get({ documentId: docId });
-      const endIndex = (existing.data.body?.content || []).reduce((acc, el) => {
-        return Math.max(acc, (el.endIndex || 1));
-      }, 1);
-      if (endIndex > 2) {
-        // Delete from index 1 to endIndex - 1 (leaves the trailing newline)
-        await docs.documents.batchUpdate({
-          documentId: docId,
-          requestBody: {
-            requests: [{
-              deleteContentRange: {
-                range: { startIndex: 1, endIndex: endIndex - 1 },
-              },
-            }],
-          },
-        });
-      }
+      // Clear existing content
+      await clearDocBody(docs, docId);
     }
 
-    // Insert the markdown content as plain text + apply heading styles
-    const requests = buildDocsRequestsFromMarkdown(markdown);
-    if (requests.length > 0) {
-      await docs.documents.batchUpdate({
-        documentId: docId,
-        requestBody: { requests },
-      });
-    }
+    // Parse markdown into blocks and stream them into the doc
+    const blocks = parseMarkdownToBlocks(markdown);
+    await streamBlocksIntoDoc(docs, docId, blocks);
 
     const finalUrl = docUrl || `https://docs.google.com/document/d/${docId}/edit`;
     const now = new Date().toISOString();
@@ -208,46 +167,443 @@ export async function exportBrdToGoogleDocs(args: { requestId: string }): Promis
   }
 }
 
+// ─── Doc helpers ──────────────────────────────────────────────────────
+
+async function clearDocBody(docs: any, docId: string): Promise<void> {
+  const existing = await docs.documents.get({ documentId: docId });
+  const endIndex = (existing.data.body?.content || []).reduce((acc: number, el: any) => {
+    return Math.max(acc, (el.endIndex || 1));
+  }, 1);
+  if (endIndex > 2) {
+    await docs.documents.batchUpdate({
+      documentId: docId,
+      requestBody: {
+        requests: [{
+          deleteContentRange: {
+            range: { startIndex: 1, endIndex: endIndex - 1 },
+          },
+        }],
+      },
+    });
+  }
+}
+
 /**
- * Convert a Markdown BRD into Google Docs batchUpdate requests. We do a
- * minimal pass — insert all text, then apply heading paragraph styles on the
- * heading lines, bold on the lines we transformed. Tables and Mermaid blocks
- * are kept as plain text (Google Docs natively renders code blocks as
- * monospace; tables we'd need to construct via insertTable for full
- * fidelity — a v2 enhancement).
+ * Query the current document length so the next insert can be positioned at
+ * the very end (right before the trailing newline at body length - 1).
  */
-function buildDocsRequestsFromMarkdown(markdown: string): any[] {
-  const requests: any[] = [];
-  // Insert all the content first
-  requests.push({
-    insertText: {
-      location: { index: 1 },
-      text: markdown + "\n",
-    },
-  });
+async function getEndIndex(docs: any, docId: string): Promise<number> {
+  const doc = await docs.documents.get({ documentId: docId });
+  const elements = doc.data.body?.content || [];
+  let max = 1;
+  for (const el of elements) {
+    if (typeof el.endIndex === "number" && el.endIndex > max) max = el.endIndex;
+  }
+  // The body always has a trailing empty segment that ends at the doc length.
+  // To insert content "at the end" we insert at endIndex - 1 (before the
+  // final newline of the body).
+  return Math.max(1, max - 1);
+}
 
-  // Walk through and find H1/H2/H3 lines for paragraph-style application
-  let cursor = 1;
-  const lines = markdown.split("\n");
-  for (const line of lines) {
-    const lineLen = line.length + 1; // +1 for newline
-    let style: string | null = null;
-    if (/^#\s+/.test(line)) style = "HEADING_1";
-    else if (/^##\s+/.test(line)) style = "HEADING_2";
-    else if (/^###\s+/.test(line)) style = "HEADING_3";
-    else if (/^####\s+/.test(line)) style = "HEADING_4";
+// ─── Markdown parsing ────────────────────────────────────────────────
 
-    if (style) {
-      requests.push({
-        updateParagraphStyle: {
-          range: { startIndex: cursor, endIndex: cursor + lineLen - 1 },
-          paragraphStyle: { namedStyleType: style },
-          fields: "namedStyleType",
-        },
-      });
+type Block =
+  | { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; text: string }
+  | { kind: "paragraph"; text: string }
+  | { kind: "table"; headers: string[]; rows: string[][] }
+  | { kind: "mermaid"; code: string }
+  | { kind: "code"; lang: string | null; code: string }
+  | { kind: "list"; ordered: boolean; items: string[] }
+  | { kind: "blank" };
+
+function parseMarkdownToBlocks(md: string): Block[] {
+  const blocks: Block[] = [];
+  const lines = md.split("\n");
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Fenced code block (mermaid or generic)
+    const fenceMatch = line.match(/^```\s*([a-zA-Z0-9_-]*)\s*$/);
+    if (fenceMatch) {
+      const lang = fenceMatch[1] || null;
+      const buf: string[] = [];
+      i++;
+      while (i < lines.length && !/^```\s*$/.test(lines[i])) {
+        buf.push(lines[i]);
+        i++;
+      }
+      i++; // skip closing ```
+      if (lang === "mermaid") {
+        blocks.push({ kind: "mermaid", code: buf.join("\n") });
+      } else {
+        blocks.push({ kind: "code", lang, code: buf.join("\n") });
+      }
+      continue;
     }
-    cursor += lineLen;
+
+    // Heading
+    const hMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (hMatch) {
+      const level = Math.min(6, hMatch[1].length) as 1 | 2 | 3 | 4 | 5 | 6;
+      blocks.push({ kind: "heading", level, text: hMatch[2].trim() });
+      i++;
+      continue;
+    }
+
+    // Markdown table — looks like "| ... |" with a separator row of "|---|" below
+    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|[\s:-]+\|\s*$/.test(lines[i + 1])) {
+      const headerRow = parseTableRow(line);
+      i += 2; // skip header + separator
+      const dataRows: string[][] = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+        dataRows.push(parseTableRow(lines[i]));
+        i++;
+      }
+      blocks.push({ kind: "table", headers: headerRow, rows: dataRows });
+      continue;
+    }
+
+    // List item (unordered)
+    if (/^\s*[-*+]\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*[-*+]\s+/, "").trim());
+        i++;
+      }
+      blocks.push({ kind: "list", ordered: false, items });
+      continue;
+    }
+
+    // Ordered list
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*\d+\.\s+/, "").trim());
+        i++;
+      }
+      blocks.push({ kind: "list", ordered: true, items });
+      continue;
+    }
+
+    // Blank line
+    if (line.trim() === "") {
+      blocks.push({ kind: "blank" });
+      i++;
+      continue;
+    }
+
+    // Default: collect contiguous non-empty, non-special lines as one paragraph
+    const para: string[] = [line];
+    i++;
+    while (i < lines.length) {
+      const nl = lines[i];
+      if (nl.trim() === "" ||
+        /^#{1,6}\s+/.test(nl) ||
+        /^```/.test(nl) ||
+        /^\s*\|.*\|\s*$/.test(nl) ||
+        /^\s*[-*+]\s+/.test(nl) ||
+        /^\s*\d+\.\s+/.test(nl)
+      ) break;
+      para.push(nl);
+      i++;
+    }
+    blocks.push({ kind: "paragraph", text: para.join(" ").trim() });
   }
 
-  return requests;
+  return blocks;
+}
+
+function parseTableRow(line: string): string[] {
+  // Strip leading/trailing pipe + whitespace, split on |
+  return line
+    .replace(/^\s*\|/, "")
+    .replace(/\|\s*$/, "")
+    .split("|")
+    .map(c => c.trim());
+}
+
+/**
+ * Strip inline markdown formatting (we render plain text into cells/paragraphs
+ * for now — inline bold/italic styling can be added in a follow-up).
+ */
+function stripInlineMarkdown(s: string): string {
+  return s
+    .replace(/`([^`]+)`/g, "$1")        // inline code
+    .replace(/\*\*([^*]+)\*\*/g, "$1") // bold
+    .replace(/\*([^*]+)\*/g, "$1")     // italic
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)"); // links → "text (url)"
+}
+
+// ─── Streaming blocks into a Google Doc ──────────────────────────────
+
+async function streamBlocksIntoDoc(docs: any, docId: string, blocks: Block[]): Promise<void> {
+  for (const block of blocks) {
+    try {
+      await insertBlock(docs, docId, block);
+    } catch (e: any) {
+      // Best-effort: never fail the whole export on one bad block. Log and continue.
+      console.warn("[google-docs-export] block insert failed (continuing):", e?.message || e);
+    }
+  }
+}
+
+async function insertBlock(docs: any, docId: string, block: Block): Promise<void> {
+  const cursor = await getEndIndex(docs, docId);
+
+  if (block.kind === "heading") {
+    const text = stripInlineMarkdown(block.text);
+    await docs.documents.batchUpdate({
+      documentId: docId,
+      requestBody: {
+        requests: [
+          { insertText: { location: { index: cursor }, text: text + "\n" } },
+          {
+            updateParagraphStyle: {
+              range: { startIndex: cursor, endIndex: cursor + text.length + 1 },
+              paragraphStyle: { namedStyleType: `HEADING_${block.level}` },
+              fields: "namedStyleType",
+            },
+          },
+        ],
+      },
+    });
+    return;
+  }
+
+  if (block.kind === "paragraph") {
+    const text = stripInlineMarkdown(block.text);
+    if (!text) return;
+    await docs.documents.batchUpdate({
+      documentId: docId,
+      requestBody: {
+        requests: [{ insertText: { location: { index: cursor }, text: text + "\n" } }],
+      },
+    });
+    return;
+  }
+
+  if (block.kind === "blank") {
+    await docs.documents.batchUpdate({
+      documentId: docId,
+      requestBody: {
+        requests: [{ insertText: { location: { index: cursor }, text: "\n" } }],
+      },
+    });
+    return;
+  }
+
+  if (block.kind === "list") {
+    // Insert each item as a line, then apply list-style range over them
+    const text = block.items.map(it => stripInlineMarkdown(it)).join("\n") + "\n";
+    await docs.documents.batchUpdate({
+      documentId: docId,
+      requestBody: {
+        requests: [
+          { insertText: { location: { index: cursor }, text } },
+          {
+            createParagraphBullets: {
+              range: { startIndex: cursor, endIndex: cursor + text.length },
+              bulletPreset: block.ordered ? "NUMBERED_DECIMAL_ALPHA_ROMAN" : "BULLET_DISC_CIRCLE_SQUARE",
+            },
+          },
+        ],
+      },
+    });
+    return;
+  }
+
+  if (block.kind === "code") {
+    // Render code as a single paragraph with Courier-style formatting.
+    // True monospace styling requires updateTextStyle on the range.
+    const text = block.code + "\n";
+    await docs.documents.batchUpdate({
+      documentId: docId,
+      requestBody: {
+        requests: [
+          { insertText: { location: { index: cursor }, text } },
+          {
+            updateTextStyle: {
+              range: { startIndex: cursor, endIndex: cursor + text.length },
+              textStyle: { weightedFontFamily: { fontFamily: "Courier New" } },
+              fields: "weightedFontFamily",
+            },
+          },
+        ],
+      },
+    });
+    return;
+  }
+
+  if (block.kind === "mermaid") {
+    // Render the Mermaid diagram via the mermaid.ink public service →
+    // we get a PNG URL that Google's insertInlineImage accepts.
+    // Fallback: if image embed fails, drop the raw code as a styled paragraph
+    // so the diagram source isn't lost.
+    const imageUrl = mermaidInkUrl(block.code);
+    try {
+      await docs.documents.batchUpdate({
+        documentId: docId,
+        requestBody: {
+          requests: [
+            {
+              insertInlineImage: {
+                location: { index: cursor },
+                uri: imageUrl,
+                objectSize: {
+                  width: { magnitude: 500, unit: "PT" },
+                  height: { magnitude: 320, unit: "PT" },
+                },
+              },
+            },
+            // Add a newline after the image
+            { insertText: { location: { index: cursor + 1 }, text: "\n" } },
+          ],
+        },
+      });
+      return;
+    } catch (imgErr: any) {
+      console.warn("[google-docs-export] mermaid image embed failed; falling back to code:", imgErr?.message);
+      const fallbackText = "[Mermaid diagram — open in mermaid.live to view]\n" + block.code + "\n";
+      await docs.documents.batchUpdate({
+        documentId: docId,
+        requestBody: {
+          requests: [
+            { insertText: { location: { index: cursor }, text: fallbackText } },
+            {
+              updateTextStyle: {
+                range: { startIndex: cursor, endIndex: cursor + fallbackText.length },
+                textStyle: { weightedFontFamily: { fontFamily: "Courier New" } },
+                fields: "weightedFontFamily",
+              },
+            },
+          ],
+        },
+      });
+      return;
+    }
+  }
+
+  if (block.kind === "table") {
+    // 1) Insert an empty native table of the right dimensions
+    const numRows = 1 + block.rows.length; // +1 for header row
+    const numCols = Math.max(block.headers.length, ...block.rows.map(r => r.length));
+    if (numCols === 0) return;
+    await docs.documents.batchUpdate({
+      documentId: docId,
+      requestBody: {
+        requests: [{
+          insertTable: {
+            location: { index: cursor },
+            rows: numRows,
+            columns: numCols,
+          },
+        }],
+      },
+    });
+
+    // 2) Re-query the doc to find the table we just inserted and walk its
+    //    cells in document order. Each cell starts with an empty paragraph
+    //    we can insert text into.
+    const doc = await docs.documents.get({ documentId: docId });
+    const elements = doc.data.body?.content || [];
+    // Find the table that starts at or after our cursor
+    let table: any = null;
+    for (const el of elements) {
+      if (el.table && el.startIndex && el.startIndex >= cursor) {
+        table = el;
+        break;
+      }
+    }
+    if (!table || !table.table) return;
+
+    // Collect cell start indexes in row-major order
+    const cellInserts: Array<{ index: number; text: string }> = [];
+    let r = 0;
+    for (const tableRow of table.table.tableRows || []) {
+      let c = 0;
+      const sourceRow = r === 0 ? block.headers : (block.rows[r - 1] || []);
+      for (const cell of tableRow.tableCells || []) {
+        const cellContent = cell.content?.[0];
+        const cellStart = cellContent?.startIndex;
+        if (typeof cellStart === "number") {
+          const cellText = stripInlineMarkdown(sourceRow[c] || "");
+          if (cellText) {
+            cellInserts.push({ index: cellStart, text: cellText });
+          }
+        }
+        c++;
+      }
+      r++;
+    }
+
+    // Insert cell text in REVERSE order so earlier insertions don't shift
+    // later cell start indexes (each insertText changes downstream indexes).
+    cellInserts.sort((a, b) => b.index - a.index);
+    if (cellInserts.length > 0) {
+      await docs.documents.batchUpdate({
+        documentId: docId,
+        requestBody: {
+          requests: cellInserts.map(ci => ({
+            insertText: { location: { index: ci.index }, text: ci.text },
+          })),
+        },
+      });
+
+      // Bold the header row text (re-query to find current cell ranges since
+      // text was inserted; we approximate by re-finding the first row's cells)
+      try {
+        const updated = await docs.documents.get({ documentId: docId });
+        const els = updated.data.body?.content || [];
+        let tbl: any = null;
+        for (const el of els) {
+          if (el.table && el.startIndex && el.startIndex >= cursor) { tbl = el; break; }
+        }
+        if (tbl?.table?.tableRows?.[0]) {
+          const headerRequests: any[] = [];
+          for (const cell of tbl.table.tableRows[0].tableCells || []) {
+            const cellContent = cell.content?.[0];
+            const startIdx = cellContent?.startIndex;
+            const endIdx = cellContent?.endIndex;
+            if (typeof startIdx === "number" && typeof endIdx === "number" && endIdx > startIdx + 1) {
+              headerRequests.push({
+                updateTextStyle: {
+                  range: { startIndex: startIdx, endIndex: endIdx - 1 },
+                  textStyle: { bold: true },
+                  fields: "bold",
+                },
+              });
+            }
+          }
+          if (headerRequests.length > 0) {
+            await docs.documents.batchUpdate({
+              documentId: docId,
+              requestBody: { requests: headerRequests },
+            });
+          }
+        }
+      } catch {}
+    }
+    return;
+  }
+}
+
+// ─── Mermaid.ink helper ───────────────────────────────────────────────
+
+/**
+ * mermaid.ink is a free public renderer. We base64-encode the graph
+ * definition (URL-safe variant) and request a PNG image. The resulting URL
+ * is publicly accessible and Google's insertInlineImage can fetch it.
+ *
+ * Tradeoff: depends on a third-party service. If mermaid.ink is down or
+ * rate-limits us, the export still succeeds — we fall back to plain code.
+ */
+function mermaidInkUrl(graph: string): string {
+  // mermaid.ink expects base64url-encoded graph definition
+  const b64 = Buffer.from(graph, "utf-8").toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  return `https://mermaid.ink/img/${b64}?type=png&bgColor=FFFFFF`;
 }
