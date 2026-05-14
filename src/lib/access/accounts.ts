@@ -48,6 +48,14 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN attachments TEXT`); } catch {}
     // Phase 20: agentMode on bindings — which agent leads this room (arima or eliana)
     try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN agentMode TEXT DEFAULT 'arima' NOT NULL`); } catch {}
+    // Phase 22: Eliana BRD documents — full polished BRD as markdown + Google Doc link
+    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdDocument TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdGeneratedAt TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdGoogleDocId TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdGoogleDocUrl TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdGoogleDocSyncedAt TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdStatus TEXT DEFAULT 'captured' NOT NULL`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdError TEXT`); } catch {}
 
     // Create ArimaRequest table if missing
     await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaRequest (

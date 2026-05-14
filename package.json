@@ -28,6 +28,7 @@
     "docxtemplater": "^3.68.4",
     "drizzle-orm": "^0.45.2",
     "encoding": "^0.1.13",
+    "googleapis": "^171.4.0",
     "groq-sdk": "^1.1.2",
     "html-to-docx": "^1.8.0",
     "html-to-image": "^1.11.11",

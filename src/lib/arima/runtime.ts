@@ -1132,6 +1132,26 @@ If you find yourself about to type a tool name in your reply, STOP and ask: "am 
         priority: parsedRequest.priority,
         capturedByUserId: args.userId,
       });
+
+      // Phase 22: if this was a [BRD] capture, fire the document generator
+      // in the background to expand the summary into a full Tarkie-structured
+      // BRD. The /eliana detail modal will show it when ready.
+      if (parsedRequest.category === "brd") {
+        const reqIdForBrd = capturedRequestId;
+        (async () => {
+          try {
+            const { generateBrdDocument } = await import("@/lib/arima/brd-generator");
+            await generateBrdDocument({ requestId: reqIdForBrd });
+            // Try Google Docs export if configured (no-op if not)
+            const { exportBrdToGoogleDocs } = await import("@/lib/arima/google-docs-export");
+            await exportBrdToGoogleDocs({ requestId: reqIdForBrd }).catch(err => {
+              console.warn("[arima/runtime] BRD Google Docs export failed (non-fatal):", err?.message);
+            });
+          } catch (genErr: any) {
+            console.warn("[arima/runtime] BRD document generation failed:", genErr?.message);
+          }
+        })();
+      }
     } catch (reqErr) {
       console.warn("[arima/runtime] failed to insert captured request:", reqErr);
       capturedRequestId = null;

@@ -892,6 +892,15 @@ export const arimaRequests = sqliteTable("ArimaRequest", {
   dueDate:         text("dueDate"),
   resolution:      text("resolution"),                  // notes when marked done
   resolvedAt:      text("resolvedAt"),
+  // Phase 22: Eliana BRD outputs — full polished Tarkie-structured BRD document
+  // (markdown blob), Google Doc id + url after export, generation status.
+  brdDocument:     text("brdDocument"),                  // Markdown blob of the full BRD (populated for category='brd' rows)
+  brdGeneratedAt:  text("brdGeneratedAt"),
+  brdGoogleDocId:  text("brdGoogleDocId"),
+  brdGoogleDocUrl: text("brdGoogleDocUrl"),
+  brdGoogleDocSyncedAt: text("brdGoogleDocSyncedAt"),
+  brdStatus:       text("brdStatus").default("captured").notNull(), // captured | generating | document-ready | exported | regenerating | error
+  brdError:        text("brdError"),
   createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });

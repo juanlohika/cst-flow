@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   ClipboardList, MessageCircle, Boxes, ChevronRight, Loader2, AlertTriangle,
   Crown, RefreshCw, FileText, Briefcase, CheckCircle2, Layers,
-  ArrowUpRight, X,
+  ArrowUpRight, X, Sparkles, RotateCcw, ExternalLink, Upload,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
@@ -232,8 +232,72 @@ function BRDsTab({ brds, onOpen, onReload }: { brds: BRDRequest[]; onOpen: (b: B
   );
 }
 
+interface BRDDetailData {
+  id: string;
+  title: string;
+  description: string | null;
+  priority: string;
+  status: string;
+  clientName: string | null;
+  userName: string | null;
+  createdAt: string;
+  brdDocument: string | null;
+  brdGeneratedAt: string | null;
+  brdGoogleDocId: string | null;
+  brdGoogleDocUrl: string | null;
+  brdGoogleDocSyncedAt: string | null;
+  brdStatus: string;
+  brdError: string | null;
+}
+
 function BRDDetail({ brd, onClose, onReload, router }: { brd: BRDRequest; onClose: () => void; onReload: () => void; router: any }) {
+  const [detail, setDetail] = useState<BRDDetailData | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
   const [promoting, setPromoting] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const loadDetail = async () => {
+    setLoadingDetail(true);
+    try {
+      const res = await fetch(`/api/eliana/brds/${brd.id}`);
+      if (res.ok) setDetail(await res.json());
+    } finally {
+      setLoadingDetail(false);
+    }
+  };
+
+  useEffect(() => { loadDetail(); /* eslint-disable-next-line */ }, [brd.id]);
+
+  const generate = async () => {
+    setGenerating(true);
+    try {
+      const res = await fetch(`/api/eliana/brds/${brd.id}/generate`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data?.error || "Generate failed.");
+      }
+      await loadDetail();
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const exportToDocs = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/eliana/brds/${brd.id}/export`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data?.error || "Export failed. Check admin → Google integration setup.");
+      } else if (data?.docUrl) {
+        window.open(data.docUrl, "_blank");
+      }
+      await loadDetail();
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const promote = async () => {
     if (!confirm(`Promote "${brd.title}" to a new project?`)) return;
@@ -260,15 +324,18 @@ function BRDDetail({ brd, onClose, onReload, router }: { brd: BRDRequest; onClos
     }
   };
 
+  const d = detail;
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-5 space-y-3 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl p-5 space-y-3 max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap mb-1">
               <span className={`text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${statusColor(brd.status)}`}>{brd.status}</span>
               <span className={`text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${priorityColor(brd.priority)}`}>{brd.priority}</span>
               <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600">BRD</span>
+              {d?.brdStatus && <BrdStatusBadge status={d.brdStatus} />}
             </div>
             <h2 className="text-[16px] font-black text-slate-900">{brd.title}</h2>
             {brd.clientName && <p className="text-[11px] text-slate-500 mt-0.5">{brd.clientName}</p>}
@@ -276,29 +343,129 @@ function BRDDetail({ brd, onClose, onReload, router }: { brd: BRDRequest; onClos
           <button onClick={onClose} className="text-slate-300 hover:text-slate-600 shrink-0"><X className="w-4 h-4" /></button>
         </div>
 
+        {/* Captured summary block */}
         {brd.description && (
-          <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 whitespace-pre-wrap text-[12px] text-slate-700 leading-relaxed">
-            {brd.description}
+          <details open className="bg-slate-50 border border-slate-100 rounded-xl p-3">
+            <summary className="text-[10px] font-black text-slate-500 uppercase tracking-widest cursor-pointer mb-1">Eliana's captured summary</summary>
+            <pre className="whitespace-pre-wrap text-[12px] text-slate-700 leading-relaxed font-sans mt-2">{brd.description}</pre>
+          </details>
+        )}
+
+        {/* BRD generation status */}
+        {loadingDetail && (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
           </div>
         )}
 
-        <div className="flex items-center gap-2 pt-2">
+        {!loadingDetail && d?.brdStatus === "error" && d.brdError && (
+          <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-[12px] text-rose-700">
+            <p className="font-bold mb-1">BRD generation error</p>
+            <p>{d.brdError}</p>
+          </div>
+        )}
+
+        {!loadingDetail && d?.brdStatus === "generating" && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[12px] text-amber-700 flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <p>Eliana is generating the full BRD document. This usually takes 10-30 seconds. Refresh in a moment.</p>
+          </div>
+        )}
+
+        {!loadingDetail && d?.brdDocument && (
+          <details open className="bg-white border border-indigo-200 rounded-xl p-3">
+            <summary className="text-[10px] font-black text-indigo-700 uppercase tracking-widest cursor-pointer mb-1">Full Tarkie BRD Document</summary>
+            <div className="prose prose-sm max-w-none mt-3 text-[12.5px]">
+              <pre className="whitespace-pre-wrap font-sans text-slate-800 leading-relaxed">{d.brdDocument}</pre>
+            </div>
+            {d.brdGeneratedAt && (
+              <p className="text-[10px] text-slate-400 mt-2">Generated {new Date(d.brdGeneratedAt).toLocaleString()}</p>
+            )}
+          </details>
+        )}
+
+        {!loadingDetail && !d?.brdDocument && d?.brdStatus !== "generating" && (
+          <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4 text-center">
+            <p className="text-[12px] text-slate-600 mb-2">Full BRD document hasn't been generated yet.</p>
+            <button
+              onClick={generate}
+              disabled={generating}
+              className="px-3 py-1.5 rounded-lg bg-gradient-to-br from-indigo-500 to-blue-600 text-white text-[11px] font-black uppercase tracking-widest shadow-md disabled:opacity-50 inline-flex items-center gap-1.5"
+            >
+              {generating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              Generate full BRD
+            </button>
+          </div>
+        )}
+
+        {/* Action row */}
+        <div className="flex items-center gap-2 pt-2 flex-wrap">
+          {d?.brdDocument && (
+            <button
+              onClick={generate}
+              disabled={generating}
+              className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 text-[11px] font-black uppercase tracking-widest hover:border-indigo-300 disabled:opacity-50 inline-flex items-center gap-1.5"
+              title="Re-generate the BRD document from the captured summary"
+            >
+              {generating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+              Regenerate
+            </button>
+          )}
+
+          {d?.brdDocument && (
+            d?.brdGoogleDocUrl ? (
+              <a
+                href={d.brdGoogleDocUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-2 rounded-xl bg-white border border-emerald-200 text-emerald-700 text-[11px] font-black uppercase tracking-widest hover:bg-emerald-50 inline-flex items-center gap-1.5"
+              >
+                <ExternalLink className="w-3 h-3" />
+                Open Google Doc
+              </a>
+            ) : (
+              <button
+                onClick={exportToDocs}
+                disabled={exporting}
+                className="px-3 py-2 rounded-xl bg-white border border-emerald-200 text-emerald-700 text-[11px] font-black uppercase tracking-widest hover:bg-emerald-50 disabled:opacity-50 inline-flex items-center gap-1.5"
+              >
+                {exporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                Export to Google Docs
+              </button>
+            )
+          )}
+
           <button
             onClick={promote}
             disabled={promoting}
-            className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 text-white text-[12px] font-black uppercase tracking-widest shadow-md disabled:opacity-50"
+            className="ml-auto flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 text-white text-[11px] font-black uppercase tracking-widest shadow-md disabled:opacity-50"
           >
             {promoting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpRight className="w-3.5 h-3.5" />}
             Promote to project
           </button>
         </div>
-        <p className="text-[10px] text-slate-400 text-center">
-          Created {new Date(brd.createdAt).toLocaleString()}
-          {brd.ownerName ? ` · Captured by ${brd.ownerName}` : ""}
+
+        <p className="text-[10px] text-slate-400 text-center pt-1">
+          Captured {new Date(brd.createdAt).toLocaleString()}
+          {brd.ownerName ? ` · by ${brd.ownerName}` : ""}
+          {d?.brdGoogleDocSyncedAt && ` · synced to Google Docs ${new Date(d.brdGoogleDocSyncedAt).toLocaleString()}`}
         </p>
       </div>
     </div>
   );
+}
+
+function BrdStatusBadge({ status }: { status: string }) {
+  const map: Record<string, { label: string; color: string }> = {
+    captured: { label: "Summary only", color: "bg-slate-100 text-slate-500" },
+    generating: { label: "Generating…", color: "bg-amber-50 text-amber-700" },
+    "document-ready": { label: "Document ready", color: "bg-indigo-50 text-indigo-700" },
+    exported: { label: "Synced to Google Docs", color: "bg-emerald-50 text-emerald-700" },
+    regenerating: { label: "Regenerating…", color: "bg-amber-50 text-amber-700" },
+    error: { label: "Error", color: "bg-rose-50 text-rose-700" },
+  };
+  const m = map[status] || { label: status, color: "bg-slate-100 text-slate-500" };
+  return <span className={`text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${m.color}`}>{m.label}</span>;
 }
 
 // ─── Modules tab ────────────────────────────────────────────────
