@@ -326,6 +326,20 @@ export async function GET() {
       console.warn("[migrator] guardrails seed warn:", guardErr?.message);
     }
 
+    // 8. PHASE 20.1 + 21 SKILL SYNC — one-shot idempotent migration that
+    //    archives legacy BRD skills and force-inserts the new playbook +
+    //    Eliana skill. Runs every time the migrator runs but only writes
+    //    when the DB state doesn't match the code's expected state.
+    try {
+      const { syncCodeSeededSkills } = await import("@/lib/arima/skill-sync");
+      const result = await syncCodeSeededSkills();
+      if (result.inserted > 0) migrations.push(`Inserted ${result.inserted} code-seeded skill(s): ${result.insertedSlugs.join(", ")}.`);
+      if (result.archived > 0) migrations.push(`Archived ${result.archived} legacy skill(s): ${result.archivedSlugs.join(", ")}.`);
+      if (result.refreshed > 0) migrations.push(`Refreshed ${result.refreshed} skill content(s): ${result.refreshedSlugs.join(", ")}.`);
+    } catch (skillSyncErr: any) {
+      console.warn("[migrator] skill sync warn:", skillSyncErr?.message);
+    }
+
     dbStatus = true;
 
   } catch (err: any) {
