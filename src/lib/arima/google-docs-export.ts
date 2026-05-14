@@ -106,6 +106,34 @@ export async function exportBrdToGoogleDocs(args: { requestId: string }): Promis
     let docUrl = (row as any).brdGoogleDocUrl as string | null || "";
 
     if (!docId) {
+      // Verify the service account can actually see the configured folder.
+      // Without this, drive.files.create returns "File not found: <folderId>"
+      // which is misleading — the folder exists, the service account just
+      // lacks permission on it.
+      try {
+        await drive.files.get({
+          fileId: cfg.driveFolderId,
+          fields: "id, name, mimeType",
+          supportsAllDrives: true,
+        });
+      } catch (folderErr: any) {
+        const code = folderErr?.code || folderErr?.status;
+        if (code === 404) {
+          throw new Error(
+            `Service account can't see the configured Drive folder (${cfg.driveFolderId}). ` +
+            `Open the folder in Google Drive → right-click → Share → add the service account email (${credentials.client_email}) as Editor. ` +
+            `Then try export again.`
+          );
+        }
+        if (code === 403) {
+          throw new Error(
+            `Service account doesn't have Editor permission on the configured Drive folder. ` +
+            `Open the folder → Share → find the service account (${credentials.client_email}) → change role to Editor.`
+          );
+        }
+        throw folderErr;
+      }
+
       // Create a new doc in the configured folder
       const created = await drive.files.create({
         requestBody: {
@@ -114,6 +142,7 @@ export async function exportBrdToGoogleDocs(args: { requestId: string }): Promis
           parents: [cfg.driveFolderId],
         },
         fields: "id, webViewLink",
+        supportsAllDrives: true,
       });
       docId = created.data.id || "";
       docUrl = created.data.webViewLink || `https://docs.google.com/document/d/${docId}/edit`;
