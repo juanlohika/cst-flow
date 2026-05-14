@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
+import BrdMarkdownViewer from "@/components/eliana/BrdMarkdownViewer";
 
 type Tab = "sessions" | "brds" | "modules";
 
@@ -390,8 +391,8 @@ function BRDDetail({ brd, onClose, onReload, router }: { brd: BRDRequest; onClos
         {!loadingDetail && d?.brdDocument && (
           <details open className="bg-white border border-indigo-200 rounded-xl p-3">
             <summary className="text-[10px] font-black text-indigo-700 uppercase tracking-widest cursor-pointer mb-1">Full Tarkie BRD Document</summary>
-            <div className="prose prose-sm max-w-none mt-3 text-[12.5px]">
-              <pre className="whitespace-pre-wrap font-sans text-slate-800 leading-relaxed">{d.brdDocument}</pre>
+            <div className="mt-3">
+              <BrdMarkdownViewer markdown={d.brdDocument} />
             </div>
             {d.brdGeneratedAt && (
               <p className="text-[10px] text-slate-400 mt-2">Generated {new Date(d.brdGeneratedAt).toLocaleString()}</p>
