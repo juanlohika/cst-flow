@@ -749,7 +749,10 @@ function scrubForDisplay(text: string): string {
   out = out.replace(new RegExp(`\\b(?:using|via|through|with) (?:the )?${toolToken}(?: tool)?\\b`, "gi"), "");
   out = out.replace(new RegExp(`\\bI(?:'ll)? need to (?:use|call|invoke|run) (?:the )?${toolToken}(?: tool)?\\b`, "gi"), "Let me check");
   out = out.replace(new RegExp(`\\b(?:the )?\`(?:${escaped.join("|")})\`(?: tool)?`, "gi"), "");
+  // Parenthesized tool names: "(create_request)", "(get_client_profile)"
+  out = out.replace(new RegExp(`\\((?:${escaped.join("|")})\\)`, "gi"), "");
   out = out.replace(/`[a-z][a-z0-9_]*_[a-z0-9_]+`/g, "");
+  out = out.replace(/\(\s*[a-z][a-z0-9_]*_[a-z0-9_]+\s*\)/g, "");
   // Filler lines
   const filler = [
     /^\s*I'?ll (now )?(?:use|invoke|call|fetch.*using|attempt to call|check via|need to)\b.*$/gim,

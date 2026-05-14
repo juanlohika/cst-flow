@@ -27,7 +27,7 @@ import {
   createBinding,
   revokeBinding,
 } from "@/lib/telegram/binding";
-import { runArima, shouldArimaRespond, type MessageAttachment, type MentionRef } from "@/lib/arima/runtime";
+import { runArima, shouldArimaRespond, shouldElianaRespond, type MessageAttachment, type MentionRef } from "@/lib/arima/runtime";
 import { ensureAccessSchema } from "@/lib/access/accounts";
 import { resolveTelegramMentions } from "@/lib/arima/mentions";
 import { broadcastToClient } from "@/lib/portal/stream";
@@ -442,22 +442,6 @@ async function handleArimaChat(args: {
   }
 
   const hasArimaMention = mentions.some(m => m.type === "arima");
-  // Phase 20: in Eliana mode (BA discovery room), the agent ALWAYS replies —
-  // she's proactive, leading the conversation, not waiting to be @mentioned.
-  const shouldReply = args.agentMode === "eliana"
-    ? true
-    : shouldArimaRespond({
-        senderChannel: "telegram",
-        isGroup: args.isGroup,
-        text: args.userMessage,
-        mentions,
-        hasAttachments: attachments.length > 0,
-      });
-
-  // Show "typing" only if we'll actually reply
-  if (shouldReply) {
-    try { await tgSendChatAction(args.botToken, args.chatId, "typing"); } catch {}
-  }
 
   // Find or create a conversation for this Telegram chat.
   const externalKey = `tg:${args.chatId}`;
@@ -510,6 +494,33 @@ async function handleArimaChat(args: {
     role: m.role === "assistant" ? "model" as const : "user" as const,
     parts: [{ text: m.senderName ? `[${m.senderName}]: ${m.content}` : m.content }],
   }));
+
+  // Decide whether to reply. Different gates per agent mode.
+  const isFirstMessageInConvo = history.length === 0;
+  // Look at the most recent assistant message to know if Eliana spoke last
+  const lastAssistant = [...history].reverse().find(m => m.role === "assistant");
+  const lastBotWasEliana = (lastAssistant?.senderName || "").toLowerCase().startsWith("eli");
+
+  const shouldReply = args.agentMode === "eliana"
+    ? shouldElianaRespond({
+        isGroup: args.isGroup,
+        text: args.userMessage,
+        mentions,
+        isFirstMessageInConvo,
+        lastBotWasEliana,
+      })
+    : shouldArimaRespond({
+        senderChannel: "telegram",
+        isGroup: args.isGroup,
+        text: args.userMessage,
+        mentions,
+        hasAttachments: attachments.length > 0,
+      });
+
+  // Show "typing" only if we'll actually reply
+  if (shouldReply) {
+    try { await tgSendChatAction(args.botToken, args.chatId, "typing"); } catch {}
+  }
 
   try {
     const result = await runArima({

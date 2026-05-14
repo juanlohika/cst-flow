@@ -138,6 +138,101 @@ export function shouldArimaRespond(args: {
   return false;
 }
 
+// Helper: ES5-safe check for "this string is just emoji/symbols, no real text".
+// Strips ASCII printable + whitespace; if nothing visible-and-non-emoji remains,
+// the original was emoji-only.
+function isEmojiOnly(s: string): boolean {
+  const stripped = (s || "").replace(/[\x20-\x7E\s]/g, "");
+  if (!stripped) return false; // pure ASCII text → not emoji-only
+  // Anything left that's not ASCII could be emoji; treat as emoji-only when
+  // there were no ASCII letters/digits in the original
+  return !/[a-zA-Z0-9]/.test(s);
+}
+
+/**
+ * Decide whether Eliana should reply in a group chat. She's more proactive
+ * than ARIMA — she leads discovery — but she must NOT reply when humans are
+ * clearly talking to each other or ABOUT her in 3rd person.
+ *
+ * Reply when:
+ *  - @eliana / @eli / @arima present
+ *  - "Eliana," / "Eli," at start of message (direct address)
+ *  - Message ends with "?" AND her last reply was the most recent bot message
+ *    (i.e., she asked a question; current message is an answer to it)
+ *  - First-ever message in the conversation (cold-start greeting)
+ *  - hasAttachments + the message clearly references the screenshot (rare)
+ *
+ * Stay quiet when:
+ *  - Message addresses someone else ("Hi Ms. Abigail...", "Hi @Lester ...")
+ *  - 3rd-person reference about her ("Eliana references...", "si Eliana ang...",
+ *    "let Eliana know", "ask Eliana to")
+ *  - Pure inter-human commentary ("yun lang makulit si X", "ok lang", "ay sige")
+ *  - Single-emoji reactions
+ */
+export function shouldElianaRespond(args: {
+  isGroup: boolean;
+  text: string;
+  mentions?: MentionRef[];
+  isFirstMessageInConvo: boolean;
+  lastBotWasEliana: boolean;
+}): boolean {
+  // In a 1:1 / DM context, always reply
+  if (!args.isGroup) return true;
+
+  const raw = (args.text || "").trim();
+  if (!raw) return false;
+  const lower = raw.toLowerCase();
+
+  // First-ever message in this discovery convo → greet
+  if (args.isFirstMessageInConvo) return true;
+
+  // Explicit @mentions of the agent (any spelling)
+  if (lower.includes("@eliana") || lower.includes("@eli ") || lower.endsWith("@eli")) return true;
+  if (lower.includes("@arima")) return true;
+  if ((args.mentions || []).some(m => m.type === "arima")) return true;
+
+  // 3rd-person references — STAY QUIET even though "eliana" appears in the text
+  const thirdPersonPatterns = [
+    /\beliana (references|uses|reads|has|asks|will|can|cannot|won't|does|doesn't|is|isn't|was|wasn't|references?|recommends?)\b/i,
+    /\b(let|tell|ask|inform|notify|update|alert|cc|loop in) eliana\b/i,
+    /\bsi eliana (ay|ang|si|ng|para|na)\b/i,                  // Tagalog: "si Eliana ay/ang/si/ng/para/na ..."
+    /\bask eliana (to|about|for|if)\b/i,
+    /\bsa eliana\b/i,                                          // Tagalog: "sa Eliana"
+    /\b(makulit|kausap|tahimik|natulog) (si )?(arima|eliana|eli)\b/i, // "makulit si Arima", "hindi kausap si Eliana"
+    /\b(arima|eliana|eli) (is|was|ay) (just|lang|talaga|kasi)\b/i,
+  ];
+  if (thirdPersonPatterns.some(re => re.test(raw))) return false;
+
+  // Direct address at the start: "Eliana, ..." / "Eli, ..." / "Ate Eliana..."
+  if (/^(eliana|eli|hi eliana|hey eliana|@eliana|ate eliana|sir eliana|ma'am eliana)[\s,:!?-]/i.test(raw)) return true;
+
+  // Message clearly addresses a non-Eliana person: "Hi Ms. X" / "Hi @user" / "@John ..."
+  // (must be the FIRST recognizable address — not a later sentence about Eliana)
+  if (/^(hi|hello|hey|kumusta|pre|sir|ma'?am|sis|tito|ate)\s+(ms\.?|mr\.?|mrs\.?|dr\.?|@?[A-Z][a-zA-Z]+)/i.test(raw)) {
+    // The greeting targets someone — only respond if that someone is Eliana
+    if (!/^(hi|hello|hey|kumusta|pre|sir|ma'?am|sis|tito|ate)\s+(eliana|eli|@eliana)\b/i.test(raw)) {
+      return false;
+    }
+  }
+
+  // Question follow-up: if Eliana just asked something, treat any reasonable
+  // text response as an answer to her question
+  if (args.lastBotWasEliana && raw.length > 2 && !isEmojiOnly(raw)) {
+    return true;
+  }
+
+  // Single-emoji reactions ("👍", "✅", "🙏") — stay quiet
+  if (isEmojiOnly(raw)) return false;
+
+  // Very short reactions ("ok", "sige", "ayos", "thanks") — stay quiet unless
+  // they followed an Eliana question (handled above)
+  if (raw.length < 8 && /^(ok(ay)?|sige|ayos|thanks?|salamat|noted|got it|👍|✅)[\s.!?]*$/i.test(raw)) return false;
+
+  // Default for ambiguous cases in group: stay quiet. Discovery moves through
+  // explicit engagement, not on every passing human comment.
+  return false;
+}
+
 /**
  * Pull out function-call structures from a Gemini response (or any adapter that
  * passes them through). Returns [] for non-tool responses (e.g. Claude, plain text).
@@ -241,9 +336,14 @@ export function scrubToolNarration(text: string, toolDefs?: any, knownToolNames?
     out = out.replace(new RegExp(`\\bI(?:'ll)? need to (?:use|call|invoke|run) (?:the )?${toolToken}(?: tool)?\\b`, "gi"), "Let me check");
     // Bare backtick references — "the `foo` tool", "the `foo`"
     out = out.replace(new RegExp(`\\b(?:the )?\`(?:${escaped.join("|")})\`(?: tool)?`, "gi"), "");
+    // Phase 20.2 hotfix: PARENTHESIZED tool names — "(create_request)", "(get_client_profile)"
+    // These leak as standalone lines or inline plumbing notes the model emits to "show its work".
+    out = out.replace(new RegExp(`\\((?:${escaped.join("|")})\\)`, "gi"), "");
   }
   // Generic backticked snake_case looking like a tool name (anything_with_underscores)
   out = out.replace(/`[a-z][a-z0-9_]*_[a-z0-9_]+`/g, "");
+  // Generic parenthesized snake_case — "(some_tool_name)" as a whole token
+  out = out.replace(/\(\s*[a-z][a-z0-9_]*_[a-z0-9_]+\s*\)/g, "");
 
   // 3) Whole filler lines / phrases.
   const fillerLines = [
@@ -472,6 +572,13 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     console.warn("[arima/runtime] knowledge context load failed:", e);
   }
 
+  // Phase 20.2 hotfix: enforce the agent's persona name in the prompt. Without
+  // this, the model sometimes introduces itself as "ARIMA" even when the BA
+  // skill is loaded (because every prior session example mentions ARIMA by
+  // name and the model defaults to that label).
+  const personaName = agentMode === "eliana" ? "Eliana" : "ARIMA";
+  baseInstruction += `\n\n---\n\n## YOUR NAME IS ${personaName.toUpperCase()}\n\nYou are **${personaName}**. Always introduce yourself as ${personaName}, never as the other name. When greeting someone for the first time, say "I'm ${personaName}". Never refer to yourself as the other agent (ARIMA or Eliana) — they are separate teammates. If someone asks who you are, the answer is "${personaName}".`;
+
   // 3) Load client profile if requested
   let clientProfile: any = null;
   if (args.clientProfileId) {
@@ -554,7 +661,7 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
       content: refusal,
       provider: "guardrail",
       senderType: "arima",
-      senderName: "ARIMA",
+      senderName: personaName,
       senderChannel: args.senderChannel || "web",
       createdAt: new Date().toISOString(),
     });
@@ -695,7 +802,7 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     content: replyText,
     provider: providerLabel,
     senderType: "arima",
-    senderName: "ARIMA",
+    senderName: personaName,
     senderChannel: args.senderChannel || "web",
     createdAt: replyAt,
   });
