@@ -287,6 +287,101 @@ function safeExtractText(modelResult: any): string {
  * mirrors this logic via a shared regex pack), so even legacy messages stored
  * before Phase 17 display cleanly without us having to mutate the DB.
  */
+/**
+ * Defense layer #3 against phantom actions. The system prompt forbids the
+ * model from claiming actions it didn't take, and the scrubber removes tool
+ * names, but neither catches cases like:
+ *   "I've notified the team" (when no notify_internal_team tool ran)
+ *   "I've logged your request" (when no create_request tool ran)
+ *
+ * This guard inspects the visible reply for action claims and verifies that
+ * a matching tool ran successfully this turn. If not, the claim is rewritten
+ * into something honest. Side benefit: catches hallucinated email/Zoom/SMS
+ * sends too.
+ */
+export function guardPhantomClaims(text: string, successfulTools: Set<string>): string {
+  if (!text) return text;
+  let out = text;
+
+  // Map of claim patterns → required tool that must have run for the claim to be honest
+  type Guard = { pattern: RegExp; requiredTools: string[]; replacement: string };
+  const guards: Guard[] = [
+    {
+      pattern: /\bI've?\s+(?:also\s+)?(?:notif(?:y|ied)|alerted|pinged|messaged)\s+(?:the\s+)?(?:internal\s+)?team\b[^.!?]*[.!?]?/gi,
+      requiredTools: ["notify_internal_team"],
+      replacement: "I've flagged this with the team — they'll see it on their end.",
+    },
+    {
+      pattern: /\bI(?:'ll|\s+will)\s+(?:now\s+|also\s+)?(?:notify|alert|ping|message)\s+(?:the\s+)?(?:internal\s+)?team\b[^.!?]*[.!?]?/gi,
+      requiredTools: ["notify_internal_team"],
+      replacement: "The team will see this request on their dashboard.",
+    },
+    {
+      pattern: /\bI've?\s+(?:logged|captured|recorded|saved|filed)\s+(?:your|this|the)\s+request\b[^.!?]*[.!?]?/gi,
+      requiredTools: ["create_request"],
+      replacement: "Noted — the team will follow up on this shortly.",
+    },
+    {
+      pattern: /\b(?:Your|This|The)\s+request\s+(?:has\s+been|was)\s+(?:notified|sent|logged|captured|recorded)\b[^.!?]*[.!?]?/gi,
+      requiredTools: ["create_request", "notify_internal_team"],
+      replacement: "The team will follow up on this.",
+    },
+    {
+      pattern: /\bI've?\s+(?:scheduled|booked)\s+(?:the\s+|a\s+|your\s+)?(?:meeting|call|appointment)\b[^.!?]*[.!?]?/gi,
+      requiredTools: ["schedule_meeting"],
+      replacement: "I've logged your meeting request — someone from the team will confirm a time and send the calendar invite shortly.",
+    },
+    {
+      pattern: /\bI've?\s+(?:sent|emailed|delivered)\s+(?:the\s+|an?\s+)?(?:email|invite|calendar\s+invite|notification)\b[^.!?]*[.!?]?/gi,
+      requiredTools: ["schedule_meeting", "send_check_in"],
+      replacement: "The team will follow up with the details directly.",
+    },
+    {
+      pattern: /\bI've?\s+(?:sent|delivered)\s+(?:you|the\s+client)?\s*a?\s*check[- ]?in\b[^.!?]*[.!?]?/gi,
+      requiredTools: ["send_check_in"],
+      replacement: "I've logged a check-in for the team to send.",
+    },
+  ];
+
+  for (const g of guards) {
+    out = out.replace(g.pattern, (match) => {
+      // If ANY of the acceptable tools actually ran, leave the claim intact
+      if (g.requiredTools.some(t => successfulTools.has(t))) return match;
+      // Otherwise replace with honest version
+      return g.replacement;
+    });
+  }
+
+  // Collapse extra whitespace introduced by replacements
+  out = out.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  return out;
+}
+
+/**
+ * Strip a leading self-prefix the model sometimes adds because it mimics the
+ * "[Name]: <text>" pattern we use in the multi-party conversation history.
+ * Removes ANY leading "[Word]:" or "Word:" up to 3 times (catches doubled
+ * leaks like "[ARIMA]: [ARIMA]: ...").
+ */
+export function stripSelfPrefix(text: string, personaName?: string): string {
+  if (!text) return text;
+  let out = text.trimStart();
+  for (let i = 0; i < 3; i++) {
+    const before = out;
+    // [NAME]: with optional whitespace
+    out = out.replace(/^\[[A-Za-z][A-Za-z0-9 _.-]{0,40}\]\s*:\s*/i, "");
+    // NAME: at very start (only if it looks like an agent/role label, not natural prose)
+    out = out.replace(/^([A-Z][A-Za-z]{1,20})\s*:\s+/, (m, name) => {
+      // Only strip if it matches the persona, or if it's all uppercase agent style
+      if (personaName && name.toLowerCase() === personaName.toLowerCase()) return "";
+      if (name === name.toUpperCase() && name.length >= 3) return "";
+      return m;
+    });
+    if (out === before) break;
+  }
+  return out;
+}
+
 export function scrubToolNarration(text: string, toolDefs?: any, knownToolNames?: string[]): string {
   if (!text) return text;
   let out = text;
@@ -635,7 +730,47 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     const list = toolDefs[0].functionDeclarations.map((t: any) =>
       `- ${t.name}: ${t.description}`
     ).join("\n");
-    toolPreamble = `\n\n---\n\n## AVAILABLE TOOLS\n\nYou have these callable functions. When the user requests an action that matches one of these, CALL IT — do not just talk about doing it. After the tool returns, report what actually happened. If a tool returns ok:false with "awaitingApproval", DO NOT claim the action succeeded — tell the user it's been queued/logged for the team to confirm.\n\n${list}\n\nIf none of these match what the user is asking for an action, call \`create_request\` with an appropriate category so the human team is notified. NEVER claim to have scheduled, booked, sent, or completed anything unless a tool actually returned success.`;
+    toolPreamble = `\n\n---\n\n## AVAILABLE TOOLS — HOW TO ACTUALLY CALL THEM
+
+You have these callable functions:
+
+${list}
+
+**CRITICAL — what is and isn't a tool call:**
+
+A tool call ONLY counts when you emit a proper function-call structure (the system handles that automatically when you decide to invoke a function). Writing a tool name in your visible reply text is NOT a tool call. The following are ALL FAKE — they do nothing:
+
+- Writing \`(create_request)\` or \`(notify_internal_team)\` in your message
+- Typing "I'll call create_request" or "Using notify_internal_team"
+- Listing a tool name in parentheses to "show your work"
+- Putting tool names in code blocks like \`\`\`create_request\`\`\`
+
+If you do any of these, the action did NOT happen. The user will be misled. Trust will break.
+
+**The correct flow:**
+
+1. User asks for an action
+2. You decide whether a tool matches → either call it (real function call) or capture as a request
+3. The tool either succeeds or fails — you get the result back
+4. ONLY THEN can you confirm what happened in plain language
+
+**FORBIDDEN claims unless the corresponding tool actually returned success this turn:**
+
+- "I've logged your request" — only OK if create_request succeeded
+- "I've notified the team" / "I'll notify the team" — only OK if notify_internal_team succeeded
+- "I've scheduled the meeting" — only OK if schedule_meeting succeeded
+- "I've sent the email/invite" — only OK if a real send tool ran
+- "Your request has been notified to our internal team" — only OK if notify_internal_team succeeded
+
+**If you cannot call a tool (it's disabled, requires approval, or doesn't exist):**
+
+Do NOT type its name. Do NOT claim it ran. Say honestly: "I've flagged this for the team — they'll follow up shortly." Then call \`create_request\` to actually create the record.
+
+**For an action that requires structured capture (BRD, feature request, bug, etc.):**
+
+Call \`create_request\` with the right category. The tool MUST be invoked through the function-call mechanism, not by typing its name. After it returns success, you may say "Noted — the team will follow up."
+
+If you find yourself about to type a tool name in your reply, STOP and ask: "am I actually invoking this tool through the function-call mechanism?" If the answer is no, do not type the name and do not describe the action as having happened.`;
   }
 
   // Build guardrails block (forbidden phrases, required disclosures, forbidden topics)
@@ -731,6 +866,10 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
   // Tool-call loop: if the model wants to call functions, execute and feed back.
   // Capped at 4 iterations to prevent runaway loops.
   let rawReply = "";
+  // Track which tools actually succeeded this turn so we can verify the
+  // model's claims after the loop (catches "I've notified the team" when no
+  // notify_internal_team call actually happened).
+  const successfulToolNames = new Set<string>();
   for (let iter = 0; iter < 4; iter++) {
     const fnCalls = extractFunctionCalls(result);
     if (fnCalls.length === 0) {
@@ -747,6 +886,7 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
           input: call.args || {},
           context: toolCtx,
         });
+        if (exec.ok) successfulToolNames.add(call.name);
         fnResponses.push({
           name: call.name,
           response: exec.ok ? exec.data || { ok: true, summary: exec.summary } : { ok: false, error: exec.error },
@@ -777,11 +917,21 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
 
   let { cleanText: replyText, request: parsedRequest } = parseRequestBlock(rawReply);
 
+  // Strip self-prefix the model sometimes adds ("[ARIMA]: ...", "ARIMA: ...")
+  // because it mimics the "[Name]:" speaker labels we use in conversation history.
+  replyText = stripSelfPrefix(replyText, personaName);
+
   // Post-process safety net: strip tool-call narration even if the model ignores
   // the system-prompt rule. Removes triple-backtick blocks whose label is a known
   // tool name, and common filler phrases like "I'll now use X" / "Let me check
   // the result". This is plumbing — the client never needs to see it.
   replyText = scrubToolNarration(replyText, toolDefs);
+
+  // PHANTOM-ACTION GUARD: catch the model claiming actions it did NOT actually
+  // perform. If the visible reply asserts "I've logged/notified/scheduled/sent"
+  // but no corresponding tool actually succeeded this turn, rewrite the claim
+  // honestly. This is the third defense layer (after prompt + scrubbing).
+  replyText = guardPhantomClaims(replyText, successfulToolNames);
 
   // SAFETY NET: never let an empty reply slip through. If the AI returned
   // nothing (safety-filter block, token limit, etc.), substitute a plain refusal
