@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { knowledgeDocuments } from "@/db/schema";
 import { asc, eq } from "drizzle-orm";
 import { ensureAccessSchema } from "@/lib/access/accounts";
-import { upsertKnowledgeDocument } from "@/lib/knowledge";
+import { ensurePlaybookSeed, upsertKnowledgeDocument } from "@/lib/knowledge";
 import { extractTextFromPdf } from "@/lib/knowledge/pdf";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +22,7 @@ export async function GET() {
     const gate = requireAdmin(session);
     if ("error" in gate) return NextResponse.json({ error: gate.error.message }, { status: gate.error.status });
     await ensureAccessSchema();
+    await ensurePlaybookSeed();
 
     const rows = await db
       .select({

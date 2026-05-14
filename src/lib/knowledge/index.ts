@@ -46,7 +46,42 @@ function audienceFilterForAgent(agentId: AgentId): Audience[] {
  *   - Any other "active" documents tagged for this agent (referenced by title,
  *     full content fetched lazily by an explicit lookup tool — Phase 21)
  */
+/**
+ * One-time auto-seed of the Tarkie Identity Playbook on first knowledge
+ * request. Idempotent — if the document with slug 'tarkie-playbook' already
+ * exists, we don't touch it. Subsequent admin uploads will create v2 etc.
+ */
+let _playbookSeeded = false;
+export async function ensurePlaybookSeed(): Promise<void> {
+  if (_playbookSeeded) return;
+  try {
+    const existing = await db
+      .select({ id: knowledgeDocuments.id })
+      .from(knowledgeDocuments)
+      .where(eq(knowledgeDocuments.slug, "tarkie-playbook"))
+      .limit(1);
+    if (existing.length === 0) {
+      const { TARKIE_PLAYBOOK_V1_MARKDOWN } = await import("./seed-playbook");
+      await upsertKnowledgeDocument({
+        slug: "tarkie-playbook",
+        title: "Tarkie Identity Playbook (v1)",
+        category: "playbook",
+        content: TARKIE_PLAYBOOK_V1_MARKDOWN,
+        sourceMime: "text/markdown",
+        sourceBytes: TARKIE_PLAYBOOK_V1_MARKDOWN.length,
+        audience: "all",
+        changeNote: "Auto-seeded Tarkie Identity Playbook v1 on first deploy.",
+        userId: null,
+      });
+    }
+    _playbookSeeded = true;
+  } catch (e) {
+    console.warn("[knowledge] auto-seed Tarkie playbook failed (non-fatal):", e);
+  }
+}
+
 export async function buildAgentKnowledgeContext(agentId: AgentId): Promise<string> {
+  await ensurePlaybookSeed();
   const allowedAudience = audienceFilterForAgent(agentId);
 
   const lines: string[] = [];

@@ -13,6 +13,7 @@ const DEFAULT_APPS = [
   { name: "Mockup Builder", slug: "mockup", description: "Build and preview UI prototypes.", icon: "Paintbrush", href: "/mockup", isActive: 1, sortOrder: 3 },
   { name: "Meetings Hub", slug: "meetings", description: "Centralized meeting and transcription management.", icon: "Users", href: "/meetings", isActive: 1, sortOrder: 5 },
   { name: "ARIMA", slug: "arima", description: "AI-powered Relationship Manager for client check-ins and requirement capture.", icon: "Heart", href: "/arima", isActive: 1, sortOrder: 6 },
+  { name: "Eliana", slug: "eliana", description: "AI Business Analyst for discovery and requirements elicitation. Captures structured BRDs from client conversations.", icon: "ClipboardList", href: "/eliana", isActive: 1, sortOrder: 7 },
 ];
 
 export async function GET() {

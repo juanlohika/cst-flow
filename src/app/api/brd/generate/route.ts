@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getClaudeModel, getModelForApp, generateWithRetry } from "@/lib/ai";
 import { db } from "@/db";
 import { skills as skillsTable } from "@/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, asc } from "drizzle-orm";
 import mammoth from "mammoth";
 
 interface Attachment {
@@ -11,35 +11,34 @@ interface Attachment {
   data: string; // base64
 }
 
-const DOCUMENT_STANDARDS = `
-DOCUMENT STANDARDS (MANDATORY):
-1. HEADER: The title must ALWAYS be the COMPLETE project title as an H1 (# Title).
-2. REVISION HISTORY: Add a "Revision History" table immediately after the title but before the Executive Summary.
-   Columns: Revision | Date | Description | Status
-   Fill with "Revision 0 | [CURRENT_DATE] | Initial BRD draft based on requirements | Issued"
-3. TARKIE ECOSYSTEM: Always segment requirements for "Field App", "Dashboard", and "Manager App".
-4. DATES: Use the provided current date for any date fields.
-`.trim();
-
-const CONVERSATION_GUARDRAIL = `
-CRITICAL BEHAVIOR RULE: 
-- If this is the start of a project or a new feature request, DO NOT generate a full BRD yet.
-- Instead, perform STEP 1 (Project Setup) or STEP 2 (Deep Dive) of your discovery process.
-- Ask the user the numbered questions required by your mission.
-- Only generate the "STEP 5 — GENERATE BRD DRAFT" once you have enough details about the Field App, Dashboard, and Manager App capabilities.
-`.trim();
-
-const TAGLISH_RULE = `
-SUPPORTED LANGUAGE (TAGLISH): The input transcript or conversation may contain a mix of English and Filipino (Taglish). You must comprehend the meaning in both languages and ensure the final BRD content is written in formal, professional English.
-`;
-
+/**
+ * BRD Generation Route — Phase 20.1 rewrite
+ *
+ * Previously: loaded ONE skill (most recently updated), then unconditionally
+ * appended three hardcoded prompt blocks (DOCUMENT_STANDARDS, TAGLISH_RULE,
+ * CONVERSATION_GUARDRAIL). This meant edits in /admin/skills were partially
+ * ignored because the hardcoded blocks came LAST in the prompt — and LLMs
+ * weight later instructions more heavily.
+ *
+ * Now: loads ALL active skills with category="brd", concatenated in sortOrder
+ * (ascending — lower sortOrder = higher priority, comes first). No hardcoded
+ * prompt content. The skill table is the single source of truth.
+ *
+ * The previously-hardcoded blocks have been promoted to seedable skills:
+ *   - brd-document-standards (sortOrder 10)
+ *   - brd-taglish-rule       (sortOrder 20)
+ *   - brd-conversation-guardrail (sortOrder 30)
+ *
+ * The main playbook lives in `brd-default` at sortOrder 0 so it always
+ * leads the prompt.
+ */
 export async function POST(req: Request) {
   try {
     const { prompt, messages, systemInstruction, attachments } = await req.json();
-    const currentDate = new Date().toLocaleDateString("en-US", { 
-      day: 'numeric', 
-      month: 'long', 
-      year: 'numeric' 
+    const currentDate = new Date().toLocaleDateString("en-US", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
     });
 
     if (!prompt && (!messages || messages.length === 0)) {
@@ -53,44 +52,48 @@ export async function POST(req: Request) {
       return getClaudeModel();
     });
 
-    let dbSkill = "";
+    // Load ALL active BRD skills, concatenated in priority order.
+    // Lower sortOrder = appears first (= higher priority in the prompt).
+    let baseInstruction = "";
+    let skillCount = 0;
     try {
-      const skills = await db.select()
+      const rows = await db
+        .select()
         .from(skillsTable)
         .where(and(eq(skillsTable.category, "brd"), eq(skillsTable.isActive, true)))
-        .orderBy(desc(skillsTable.updatedAt))
-        .limit(1);
-      
-      if (skills.length > 0) dbSkill = skills[0].content;
-    } catch (dbErr) {
-      console.error("Failed to fetch BRD skill:", dbErr);
+        .orderBy(asc(skillsTable.sortOrder), asc(skillsTable.name));
+
+      skillCount = rows.length;
+      if (rows.length > 0) {
+        baseInstruction = rows.map(s => s.content.trim()).join("\n\n---\n\n");
+      }
+    } catch (dbErr: any) {
+      console.error("[brd/generate] Failed to fetch BRD skills:", dbErr);
+      return NextResponse.json({
+        error: "BRD Maker is misconfigured — could not load BRD skills from the admin console. Please contact your admin.",
+        diagnostic: dbErr?.message,
+      }, { status: 500 });
     }
 
-    const fallbackInstruction = `You are a professional Business Analyst. Use the Tarkie Standard BRD Framework to elicit requirements (Field App, Dashboard, Manager App) and generate drafts only when Steps 1-3 are complete.`;
-    const baseInstruction = dbSkill || systemInstruction || fallbackInstruction;
-    
-    // Inject the new document standards and real-time date
-    const finalSystemInstruction = `
-${baseInstruction}
+    // Loud failure if nothing was loaded — previously this silently fell
+    // back to a generic instruction, which made the BRD output look "off"
+    // with no visible reason why.
+    if (!baseInstruction) {
+      // Caller might have sent a systemInstruction override (rare; legacy).
+      // Honor it but warn.
+      if (systemInstruction) {
+        console.warn("[brd/generate] No active BRD skills in DB — falling back to caller-provided systemInstruction.");
+        baseInstruction = String(systemInstruction);
+      } else {
+        return NextResponse.json({
+          error: "BRD Maker has no active skills configured. Go to /admin/skills and ensure at least one skill with category='brd' is active.",
+        }, { status: 500 });
+      }
+    }
 
-CURRENT DATE: ${currentDate}
+    const finalSystemInstruction = `${baseInstruction}\n\n---\n\nCURRENT DATE: ${currentDate}`;
 
----
-${TAGLISH_RULE}
-
----
-${DOCUMENT_STANDARDS}
-
----
-${CONVERSATION_GUARDRAIL}
-
----
-ADDITIONAL INSTRUCTIONS:
-- If the user asks for a BRD but hasn't provided Step 1 (Overview) or Step 2 (Process Flow) details, you MUST pause and ask the specific questions from those steps.
-- Do NOT hallucinate names or objectives.
-- Be concise but thorough.
-`.trim();
-
+    // ─── Build the content + handle attachments ─────────────────────
     const attachmentList: Attachment[] = Array.isArray(attachments) ? attachments : [];
     const docTexts: string[] = [];
     for (const att of attachmentList) {
@@ -113,7 +116,6 @@ ADDITIONAL INSTRUCTIONS:
         const m = messages[i];
         const isLast = i === messages.length - 1;
         const parts: any[] = [{ text: m.content }];
-
         if (isLast && m.role === "user") {
           if (docTexts.length > 0) parts[0].text += "\n\n" + docTexts.join("\n\n");
           for (const att of inlineAttachments) {
@@ -136,7 +138,10 @@ ADDITIONAL INSTRUCTIONS:
       systemInstruction: { role: "system", parts: [{ text: finalSystemInstruction }] },
     });
 
-    return NextResponse.json({ content: result.response.text() });
+    return NextResponse.json({
+      content: result.response.text(),
+      meta: { skillsLoaded: skillCount },
+    });
   } catch (error: any) {
     console.error("BRD Generation error:", error);
     const isOverloaded = error?.status === 503 || error?.message?.toLowerCase().includes("overload");
