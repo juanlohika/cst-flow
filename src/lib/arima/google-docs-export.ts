@@ -138,9 +138,18 @@ export async function exportBrdToGoogleDocs(args: { requestId: string }): Promis
       await clearDocBody(docs, docId);
     }
 
-    // Parse markdown into blocks and stream them into the doc
+    // Parse markdown into blocks and stream them into the doc, capturing
+    // a per-block diagnostic so admins can see what happened on the live deploy.
     const blocks = parseMarkdownToBlocks(markdown);
-    await streamBlocksIntoDoc(docs, docId, blocks);
+    const exportLog = await streamBlocksIntoDoc(docs, docId, blocks);
+    const summary = {
+      docId,
+      totalBlocks: blocks.length,
+      kinds: blocks.reduce((acc, b) => { acc[b.kind] = (acc[b.kind] || 0) + 1; return acc; }, {} as Record<string, number>),
+      perBlock: exportLog,
+      markdownLength: markdown.length,
+      timestamp: new Date().toISOString(),
+    };
 
     const finalUrl = docUrl || `https://docs.google.com/document/d/${docId}/edit`;
     const now = new Date().toISOString();
@@ -150,6 +159,7 @@ export async function exportBrdToGoogleDocs(args: { requestId: string }): Promis
         brdGoogleDocUrl: finalUrl,
         brdGoogleDocSyncedAt: now,
         brdStatus: "exported",
+        brdExportLog: JSON.stringify(summary).slice(0, 30_000),
         updatedAt: now,
       } as any)
       .where(eq(arimaRequests.id, row.id));
@@ -169,22 +179,59 @@ export async function exportBrdToGoogleDocs(args: { requestId: string }): Promis
 
 // ─── Doc helpers ──────────────────────────────────────────────────────
 
+/**
+ * Clear all body content from a Google Doc. The naive deleteContentRange
+ * over [1, endIndex-1] FAILS or partially works when the body contains
+ * structural elements like tables — Google's API requires those to be
+ * cleared separately. We do a two-pass: first delete every table, THEN
+ * delete the remaining text content.
+ */
 async function clearDocBody(docs: any, docId: string): Promise<void> {
-  const existing = await docs.documents.get({ documentId: docId });
-  const endIndex = (existing.data.body?.content || []).reduce((acc: number, el: any) => {
+  // Pass 1: find and delete every table individually
+  let safetyCounter = 0;
+  while (safetyCounter++ < 20) {
+    const doc = await docs.documents.get({ documentId: docId });
+    const elements = doc.data.body?.content || [];
+    const firstTable = elements.find((el: any) => el.table);
+    if (!firstTable) break;
+    if (typeof firstTable.startIndex !== "number" || typeof firstTable.endIndex !== "number") break;
+    try {
+      await docs.documents.batchUpdate({
+        documentId: docId,
+        requestBody: {
+          requests: [{
+            deleteContentRange: {
+              range: { startIndex: firstTable.startIndex, endIndex: firstTable.endIndex - 1 },
+            },
+          }],
+        },
+      });
+    } catch (e: any) {
+      console.warn("[google-docs-export] table delete failed during clear:", e?.message);
+      break;
+    }
+  }
+
+  // Pass 2: delete remaining text content
+  const after = await docs.documents.get({ documentId: docId });
+  const endIndex = (after.data.body?.content || []).reduce((acc: number, el: any) => {
     return Math.max(acc, (el.endIndex || 1));
   }, 1);
   if (endIndex > 2) {
-    await docs.documents.batchUpdate({
-      documentId: docId,
-      requestBody: {
-        requests: [{
-          deleteContentRange: {
-            range: { startIndex: 1, endIndex: endIndex - 1 },
-          },
-        }],
-      },
-    });
+    try {
+      await docs.documents.batchUpdate({
+        documentId: docId,
+        requestBody: {
+          requests: [{
+            deleteContentRange: {
+              range: { startIndex: 1, endIndex: endIndex - 1 },
+            },
+          }],
+        },
+      });
+    } catch (e: any) {
+      console.warn("[google-docs-export] residual delete failed:", e?.message);
+    }
   }
 }
 
@@ -338,18 +385,23 @@ function stripInlineMarkdown(s: string): string {
 
 // ─── Streaming blocks into a Google Doc ──────────────────────────────
 
-async function streamBlocksIntoDoc(docs: any, docId: string, blocks: Block[]): Promise<void> {
-  for (const block of blocks) {
+async function streamBlocksIntoDoc(docs: any, docId: string, blocks: Block[]): Promise<Array<{ idx: number; kind: string; ok: boolean; error?: string; note?: string }>> {
+  const log: Array<{ idx: number; kind: string; ok: boolean; error?: string; note?: string }> = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
     try {
-      await insertBlock(docs, docId, block);
+      const note = await insertBlock(docs, docId, block);
+      log.push({ idx: i, kind: block.kind, ok: true, note: note || undefined });
     } catch (e: any) {
-      // Best-effort: never fail the whole export on one bad block. Log and continue.
-      console.warn("[google-docs-export] block insert failed (continuing):", e?.message || e);
+      const errStr = e?.message || String(e);
+      console.warn(`[google-docs-export] block #${i} (${block.kind}) failed:`, errStr);
+      log.push({ idx: i, kind: block.kind, ok: false, error: errStr.slice(0, 500) });
     }
   }
+  return log;
 }
 
-async function insertBlock(docs: any, docId: string, block: Block): Promise<void> {
+async function insertBlock(docs: any, docId: string, block: Block): Promise<string | void> {
   const cursor = await getEndIndex(docs, docId);
 
   if (block.kind === "heading") {
@@ -462,9 +514,10 @@ async function insertBlock(docs: any, docId: string, block: Block): Promise<void
           ],
         },
       });
-      return;
+      return `image-embedded`;
     } catch (imgErr: any) {
-      console.warn("[google-docs-export] mermaid image embed failed; falling back to code:", imgErr?.message);
+      const errMsg = imgErr?.message || String(imgErr);
+      console.warn("[google-docs-export] mermaid image embed failed; falling back to code:", errMsg);
       const fallbackText = "[Mermaid diagram — open in mermaid.live to view]\n" + block.code + "\n";
       await docs.documents.batchUpdate({
         documentId: docId,
@@ -481,7 +534,7 @@ async function insertBlock(docs: any, docId: string, block: Block): Promise<void
           ],
         },
       });
-      return;
+      return `fallback-text:${errMsg.slice(0, 100)}`;
     }
   }
 
@@ -489,7 +542,7 @@ async function insertBlock(docs: any, docId: string, block: Block): Promise<void
     // 1) Insert an empty native table of the right dimensions
     const numRows = 1 + block.rows.length; // +1 for header row
     const numCols = Math.max(block.headers.length, ...block.rows.map(r => r.length));
-    if (numCols === 0) return;
+    if (numCols === 0) return "skipped-no-columns";
     await docs.documents.batchUpdate({
       documentId: docId,
       requestBody: {
@@ -585,7 +638,7 @@ async function insertBlock(docs: any, docId: string, block: Block): Promise<void
         }
       } catch {}
     }
-    return;
+    return `table:${numRows}x${numCols},cells:${cellInserts.length}`;
   }
 }
 

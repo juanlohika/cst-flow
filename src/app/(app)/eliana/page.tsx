@@ -248,6 +248,7 @@ interface BRDDetailData {
   brdGoogleDocSyncedAt: string | null;
   brdStatus: string;
   brdError: string | null;
+  brdExportLog: string | null;
 }
 
 function BRDDetail({ brd, onClose, onReload, router }: { brd: BRDRequest; onClose: () => void; onReload: () => void; router: any }) {
@@ -363,6 +364,20 @@ function BRDDetail({ brd, onClose, onReload, router }: { brd: BRDRequest; onClos
             <p className="font-bold mb-1">BRD generation error</p>
             <p>{d.brdError}</p>
           </div>
+        )}
+
+        {!loadingDetail && d?.brdExportLog && (
+          <details className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <summary className="text-[10px] font-black text-slate-500 uppercase tracking-widest cursor-pointer">
+              Google Docs export diagnostic (last attempt)
+            </summary>
+            <pre className="text-[10.5px] text-slate-700 mt-2 whitespace-pre-wrap font-mono max-h-72 overflow-auto">
+              {(() => {
+                try { return JSON.stringify(JSON.parse(d.brdExportLog), null, 2); }
+                catch { return d.brdExportLog; }
+              })()}
+            </pre>
+          </details>
         )}
 
         {!loadingDetail && d?.brdStatus === "generating" && (

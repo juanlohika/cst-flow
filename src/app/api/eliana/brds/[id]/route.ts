@@ -39,6 +39,7 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
         brdGoogleDocSyncedAt: arimaRequests.brdGoogleDocSyncedAt,
         brdStatus: arimaRequests.brdStatus,
         brdError: arimaRequests.brdError,
+        brdExportLog: arimaRequests.brdExportLog,
       })
       .from(arimaRequests)
       .leftJoin(clientProfilesTable, eq(clientProfilesTable.id, arimaRequests.clientProfileId))

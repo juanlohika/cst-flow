@@ -901,6 +901,7 @@ export const arimaRequests = sqliteTable("ArimaRequest", {
   brdGoogleDocSyncedAt: text("brdGoogleDocSyncedAt"),
   brdStatus:       text("brdStatus").default("captured").notNull(), // captured | generating | document-ready | exported | regenerating | error
   brdError:        text("brdError"),
+  brdExportLog:    text("brdExportLog"),                // JSON diagnostic of last export attempt (block count by kind, per-block insert outcome)
   createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });

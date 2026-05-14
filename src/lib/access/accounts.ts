@@ -56,6 +56,7 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdGoogleDocSyncedAt TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdStatus TEXT DEFAULT 'captured' NOT NULL`); } catch {}
     try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdError TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdExportLog TEXT`); } catch {}
 
     // Create ArimaRequest table if missing
     await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaRequest (
