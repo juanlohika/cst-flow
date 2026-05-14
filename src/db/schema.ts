@@ -940,3 +940,50 @@ export const coordinatorRelays = sqliteTable("CoordinatorRelay", {
   relayedBackAt:         text("relayedBackAt"),
   expiresAt:             text("expiresAt"),                                // consent links auto-expire (7 days)
 });
+
+// ─── Phase 21.1: Diagnostic / debug log for runArima ──────────────────
+//
+// Captures the raw IO per agent turn so admins can see exactly what the
+// model was told, what it produced before scrubbing, what function calls
+// it attempted, and what we sent back to the user. Without this we're
+// patching symptoms blind.
+//
+// Cleaned up via a 30-day TTL (cron job — Phase 22). For now rows persist
+// indefinitely; cheap enough.
+export const arimaRunLogs = sqliteTable("ArimaRunLog", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  conversationId:    text("conversationId").notNull(),
+  agentMode:         text("agentMode").default("arima").notNull(),
+  senderName:        text("senderName"),
+  senderChannel:     text("senderChannel"),
+  clientProfileId:   text("clientProfileId"),
+  /** What the user actually typed (before any scrubbing). */
+  userMessage:       text("userMessage").notNull(),
+  /** Full system prompt the model received (truncated to 64KB). */
+  systemPrompt:      text("systemPrompt"),
+  /** Whether the runtime decided to call the model at all. */
+  modelCalled:       integer("modelCalled", { mode: "boolean" }).default(true).notNull(),
+  skipReason:        text("skipReason"),
+  /** Raw text response from the model, BEFORE scrubbing / phantom-guard. */
+  rawModelOutput:    text("rawModelOutput"),
+  /** Final reply we sent to the user (after self-prefix strip, scrubber, phantom-guard). */
+  finalReply:        text("finalReply"),
+  /** JSON array of function calls the model emitted (with name + args). */
+  functionCalls:     text("functionCalls"),
+  /** JSON array of tool execution outcomes (success/failure + summaries). */
+  toolResults:       text("toolResults"),
+  /** Whether a [BRD] block was parsed out of the reply. */
+  brdEmitted:        integer("brdEmitted", { mode: "boolean" }).default(false).notNull(),
+  /** Whether a [REQUEST] block was parsed out of the reply. */
+  requestEmitted:    integer("requestEmitted", { mode: "boolean" }).default(false).notNull(),
+  /** Captured-request id if one was stored in arimaRequests. */
+  capturedRequestId: text("capturedRequestId"),
+  /** Model provider label (gemini, claude, etc.). */
+  provider:          text("provider"),
+  /** How long the model call took. */
+  durationMs:        integer("durationMs"),
+  /** Number of tool-loop iterations consumed. */
+  toolIterations:    integer("toolIterations").default(0).notNull(),
+  errorMessage:      text("errorMessage"),
+  createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});

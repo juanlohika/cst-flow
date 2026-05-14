@@ -345,6 +345,30 @@ export async function ensureAccessSchema(): Promise<void> {
       grantedVia TEXT DEFAULT 'button' NOT NULL,
       status TEXT DEFAULT 'active' NOT NULL
     )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaRunLog (
+      id TEXT PRIMARY KEY,
+      conversationId TEXT NOT NULL,
+      agentMode TEXT DEFAULT 'arima' NOT NULL,
+      senderName TEXT,
+      senderChannel TEXT,
+      clientProfileId TEXT,
+      userMessage TEXT NOT NULL,
+      systemPrompt TEXT,
+      modelCalled INTEGER DEFAULT 1 NOT NULL,
+      skipReason TEXT,
+      rawModelOutput TEXT,
+      finalReply TEXT,
+      functionCalls TEXT,
+      toolResults TEXT,
+      brdEmitted INTEGER DEFAULT 0 NOT NULL,
+      requestEmitted INTEGER DEFAULT 0 NOT NULL,
+      capturedRequestId TEXT,
+      provider TEXT,
+      durationMs INTEGER,
+      toolIterations INTEGER DEFAULT 0 NOT NULL,
+      errorMessage TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
     await db.run(sql`CREATE TABLE IF NOT EXISTS CoordinatorRelay (
       id TEXT PRIMARY KEY,
       conversationId TEXT NOT NULL,

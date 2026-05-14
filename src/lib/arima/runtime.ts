@@ -621,6 +621,29 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
 
   // Phase 13 silent-listener mode: persist the message and exit without calling the model.
   if (args.skipModelCall) {
+    // Still log the silent decision so diagnostics show why nothing happened
+    persistRunLog({
+      conversationId: args.conversationId,
+      agentMode: args.agentMode || "arima",
+      senderName: args.senderName || null,
+      senderChannel: args.senderChannel || null,
+      clientProfileId: args.clientProfileId || null,
+      userMessage: args.userMessage || "",
+      systemPrompt: null,
+      modelCalled: false,
+      skipReason: "should-not-respond gate (humans-to-humans / 3rd-person / direct address to someone else)",
+      rawModelOutput: null,
+      finalReply: null,
+      functionCalls: null,
+      toolResults: null,
+      brdEmitted: false,
+      requestEmitted: false,
+      capturedRequestId: null,
+      provider: "silent",
+      durationMs: null,
+      toolIterations: 0,
+      errorMessage: null,
+    }).catch(() => {});
     return {
       replyText: "",
       capturedRequestId: null,
@@ -918,11 +941,18 @@ If you find yourself about to type a tool name in your reply, STOP and ask: "am 
   // Tool-call loop: if the model wants to call functions, execute and feed back.
   // Capped at 4 iterations to prevent runaway loops.
   let rawReply = "";
+  // Phase 21.1: diagnostic — capture every function call we see + every tool
+  // execution outcome so the debug page can show admins what actually happened.
+  const debugFunctionCalls: Array<{ name: string; args: any }> = [];
+  const debugToolResults: Array<{ name: string; ok: boolean; data?: any; error?: string; summary?: string }> = [];
+  const runStartedAt = Date.now();
+  let toolIterations = 0;
   // Track which tools actually succeeded this turn so we can verify the
   // model's claims after the loop (catches "I've notified the team" when no
   // notify_internal_team call actually happened).
   const successfulToolNames = new Set<string>();
   for (let iter = 0; iter < 4; iter++) {
+    toolIterations = iter + 1;
     const fnCalls = extractFunctionCalls(result);
     if (fnCalls.length === 0) {
       rawReply = safeExtractText(result);
@@ -932,6 +962,8 @@ If you find yourself about to type a tool name in your reply, STOP and ask: "am 
     // Execute each function call
     const fnResponses: Array<{ name: string; response: any }> = [];
     for (const call of fnCalls) {
+      // Capture for diagnostics
+      debugFunctionCalls.push({ name: call.name, args: call.args || {} });
       try {
         const exec = await executeTool({
           name: call.name,
@@ -939,11 +971,19 @@ If you find yourself about to type a tool name in your reply, STOP and ask: "am 
           context: toolCtx,
         });
         if (exec.ok) successfulToolNames.add(call.name);
+        debugToolResults.push({
+          name: call.name,
+          ok: exec.ok,
+          data: exec.ok ? (exec.data || null) : null,
+          error: exec.ok ? undefined : exec.error,
+          summary: exec.summary,
+        });
         fnResponses.push({
           name: call.name,
           response: exec.ok ? exec.data || { ok: true, summary: exec.summary } : { ok: false, error: exec.error },
         });
       } catch (e: any) {
+        debugToolResults.push({ name: call.name, ok: false, error: e?.message || "Tool error" });
         fnResponses.push({ name: call.name, response: { ok: false, error: e?.message || "Tool error" } });
       }
     }
@@ -1054,6 +1094,33 @@ If you find yourself about to type a tool name in your reply, STOP and ask: "am 
     })
     .where(eq(arimaConversations.id, args.conversationId));
 
+  // Phase 21.1: write diagnostic run log. Fire-and-forget — never blocks the
+  // reply path.
+  const brdEmitted = !!(parsedRequest && parsedRequest.category === "brd");
+  const requestEmitted = !!(parsedRequest && parsedRequest.category !== "brd");
+  persistRunLog({
+    conversationId: args.conversationId,
+    agentMode,
+    senderName: args.senderName || null,
+    senderChannel: args.senderChannel || null,
+    clientProfileId: args.clientProfileId || null,
+    userMessage: args.userMessage || "",
+    systemPrompt: systemInstruction.slice(0, 64_000),
+    modelCalled: true,
+    skipReason: null,
+    rawModelOutput: rawReply.slice(0, 64_000),
+    finalReply: replyText.slice(0, 64_000),
+    functionCalls: debugFunctionCalls.length > 0 ? JSON.stringify(debugFunctionCalls) : null,
+    toolResults: debugToolResults.length > 0 ? JSON.stringify(debugToolResults) : null,
+    brdEmitted,
+    requestEmitted,
+    capturedRequestId,
+    provider: providerLabel,
+    durationMs: Date.now() - runStartedAt,
+    toolIterations,
+    errorMessage: null,
+  }).catch(() => {});
+
   return {
     replyText,
     capturedRequestId,
@@ -1061,6 +1128,63 @@ If you find yourself about to type a tool name in your reply, STOP and ask: "am 
     provider: providerLabel,
     assistantMessageId: assistantMsgId,
   };
+}
+
+/**
+ * Phase 21.1: Persist a diagnostic log row for one runArima invocation.
+ * Best-effort — failures here never block the reply path.
+ */
+async function persistRunLog(row: {
+  conversationId: string;
+  agentMode: string;
+  senderName: string | null;
+  senderChannel: string | null;
+  clientProfileId: string | null;
+  userMessage: string;
+  systemPrompt: string | null;
+  modelCalled: boolean;
+  skipReason: string | null;
+  rawModelOutput: string | null;
+  finalReply: string | null;
+  functionCalls: string | null;
+  toolResults: string | null;
+  brdEmitted: boolean;
+  requestEmitted: boolean;
+  capturedRequestId: string | null;
+  provider: string | null;
+  durationMs: number | null;
+  toolIterations: number;
+  errorMessage: string | null;
+}): Promise<void> {
+  try {
+    const { arimaRunLogs } = await import("@/db/schema");
+    await db.insert(arimaRunLogs).values({
+      id: `runlog_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+      conversationId: row.conversationId,
+      agentMode: row.agentMode,
+      senderName: row.senderName,
+      senderChannel: row.senderChannel,
+      clientProfileId: row.clientProfileId,
+      userMessage: row.userMessage,
+      systemPrompt: row.systemPrompt,
+      modelCalled: row.modelCalled,
+      skipReason: row.skipReason,
+      rawModelOutput: row.rawModelOutput,
+      finalReply: row.finalReply,
+      functionCalls: row.functionCalls,
+      toolResults: row.toolResults,
+      brdEmitted: row.brdEmitted,
+      requestEmitted: row.requestEmitted,
+      capturedRequestId: row.capturedRequestId,
+      provider: row.provider,
+      durationMs: row.durationMs,
+      toolIterations: row.toolIterations,
+      errorMessage: row.errorMessage,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.warn("[arima/runtime] persistRunLog failed (non-fatal):", e);
+  }
 }
 
 /**
