@@ -62,7 +62,15 @@ export default function ElianaPage() {
     try {
       const [bindingsRes, brdsRes, modulesRes] = await Promise.all([
         fetch("/api/telegram/bindings").then(r => r.ok ? r.json() : []).catch(() => []),
-        fetch("/api/arima/requests?category=brd").then(r => r.ok ? r.json() : []).catch(() => []),
+        // BRDs are org-wide artifacts (not per-user), so we always request
+        // scope=team. The requests endpoint allows admins; non-admins fall
+        // back to their accessible clients automatically.
+        fetch("/api/arima/requests?category=brd&scope=team").then(async r => {
+          if (r.ok) return r.json();
+          // Non-admins get 403 on scope=team. Try the default (mine) scope as a fallback.
+          const fallback = await fetch("/api/arima/requests?category=brd");
+          return fallback.ok ? fallback.json() : [];
+        }).catch(() => []),
         fetch("/api/admin/knowledge/modules").then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
       // Only Eliana-mode bindings show in the Sessions tab

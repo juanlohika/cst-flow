@@ -46,7 +46,11 @@ export async function GET(req: Request) {
     const filterClientId = searchParams.get("clientProfileId");
     const search = searchParams.get("search");
 
-    if (scope === "team" && !isAdmin) {
+    // BRDs are special: any team member can see BRDs scoped to clients they
+    // have access to (they're org-wide artifacts captured by Eliana, not
+    // personal requests). Other categories: scope=team remains admin-only.
+    const isBrdScope = category === "brd";
+    if (scope === "team" && !isAdmin && !isBrdScope) {
       return NextResponse.json({ error: "Admin only" }, { status: 403 });
     }
 
@@ -67,9 +71,19 @@ export async function GET(req: Request) {
     if (scope === "mine") {
       // mine = requests the user captured personally
       conditions.push(eq(arimaRequests.userId, userId));
-    } else if (!isAdmin) {
-      // team scope but non-admin shouldn't reach here (rejected above) — defense in depth
+    } else if (!isAdmin && !isBrdScope) {
+      // team scope but non-admin and not a BRD lookup — defense in depth
       return NextResponse.json({ error: "Admin only" }, { status: 403 });
+    } else if (!isAdmin && isBrdScope) {
+      // BRD team-scope for non-admins: restrict to accessible clients
+      const allowed = await listAccessibleClientIds({ userId, isAdmin });
+      if (allowed === null) {
+        // Admins (shouldn't reach here, but defense)
+      } else if (allowed.length === 0) {
+        return NextResponse.json([]);
+      } else {
+        conditions.push(inArray(arimaRequests.clientProfileId, allowed));
+      }
     }
 
     // Client filter (optional)

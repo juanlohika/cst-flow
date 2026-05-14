@@ -349,6 +349,39 @@ export function guardPhantomClaims(text: string, successfulTools: Set<string>): 
       requiredTools: ["send_check_in"],
       replacement: "I've logged a check-in for the team to send.",
     },
+    // ─── BRD-specific patterns (Phase 21.2 hotfix) ───────────────────
+    {
+      // "The BRD has been successfully created and recorded in the system."
+      pattern: /\b(?:the\s+)?BRD\s+(?:has\s+been|was)\s+(?:successfully\s+)?(?:created|captured|recorded|saved|logged|filed)\b[^.!?]*[.!?]?/gi,
+      requiredTools: ["create_request"],
+      replacement: "The BRD will be reviewed by the team.",
+    },
+    {
+      // "I've created the BRD" / "I've captured the BRD"
+      pattern: /\bI've?\s+(?:successfully\s+)?(?:created|captured|recorded|saved|logged|filed)\s+(?:a\s+|the\s+|this\s+|your\s+)?BRD\b[^.!?]*[.!?]?/gi,
+      requiredTools: ["create_request"],
+      replacement: "Noted — the team will follow up on this BRD.",
+    },
+    {
+      // The mangled "I've used to capture..." — model omitted the tool name
+      // and left a dangling verb. Catches "I've used to [verb]..." patterns.
+      pattern: /\bI've?\s+used\s+to\s+(?:capture|create|log|record|file|save)\b[^.!?]*[.!?]?/gi,
+      requiredTools: ["create_request"],
+      replacement: "Noted — the team will follow up shortly.",
+    },
+    {
+      // Tool-result theater: "result: BRD created and recorded in the system."
+      // Also catches "Result: ..." at line start with similar phrasing.
+      pattern: /^\s*result\s*:\s*[^\n]*?(?:created|captured|recorded|saved|logged|filed|notified|sent|delivered)[^\n]*$/gim,
+      requiredTools: [],   // there's no legitimate reason to print "result:" lines — always strip
+      replacement: "",
+    },
+    {
+      // "ensure[d] it's properly recorded in the system" / "ensure that it's properly recorded"
+      pattern: /\b(?:and\s+)?ensure[ds]?\s+(?:that\s+)?(?:it|the\s+(?:BRD|request))(?:'s|\s+is)\s+(?:properly\s+)?(?:recorded|captured|saved|logged|filed|stored)\s+(?:in\s+the\s+system)?[^.!?]*[.!?]?/gi,
+      requiredTools: ["create_request"],
+      replacement: "",
+    },
   ];
 
   for (const g of guards) {
@@ -590,8 +623,29 @@ function buildClientContext(profile: any): string {
  * - Persists the assistant reply + any captured request.
  * - Updates conversation aggregates.
  */
+// Module-level cache: only run the skill sync once per process boot. Re-runs
+// on the next deploy. Idempotent so this is just a no-op optimization.
+let _skillsSynced = false;
+
 export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
   const now = new Date().toISOString();
+
+  // Phase 21.2 hotfix: lazily run the canonical skill sync so we don't depend
+  // on an admin hitting /api/auth/config. Fire-and-forget — never blocks the
+  // user's request.
+  if (!_skillsSynced) {
+    _skillsSynced = true;
+    (async () => {
+      try {
+        const { syncCodeSeededSkills } = await import("@/lib/arima/skill-sync");
+        await syncCodeSeededSkills();
+      } catch (e) {
+        console.warn("[arima/runtime] lazy skill sync failed (non-fatal):", e);
+        // Reset so we retry on next call
+        _skillsSynced = false;
+      }
+    })();
+  }
 
   // 1) Persist user message (with full Phase 13 attribution)
   const userMsgId = `msg_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
