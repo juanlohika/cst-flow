@@ -1,32 +1,29 @@
 /**
- * Phase 22.2 — Markdown → HTML renderer for BRD export.
+ * Phase 22.2 — Markdown → HTML renderer for BRD export (lightweight version).
  *
  * Converts a BRD Markdown document into a single self-contained HTML string
  * that Google Drive's import endpoint can convert into a proper Google Doc.
  *
- * Mermaid handling:
- *   - We extract all ```mermaid fenced blocks first
- *   - Render each one to PNG via @mermaid-js/mermaid-cli (Chromium-backed)
- *   - Base64-encode the PNG bytes and inline as `<img src="data:image/png;base64,...">`
- *   - This avoids any external URL dependency (no mermaid.ink) — Drive's
- *     importer reliably embeds inline base64 images.
- *   - If Mermaid rendering fails (no Chromium, etc.), the diagram source
- *     stays in the doc as a styled <pre> code block so nothing is lost.
+ * Mermaid handling (no Puppeteer):
+ *   - Extract all ```mermaid fenced blocks
+ *   - Render each one to SVG using the `mermaid` library running inside a
+ *     JSDOM-provided fake DOM
+ *   - Inline the SVG directly into the HTML
+ *   - Drive's HTML importer handles inline SVG well — diagrams come through
+ *     as embedded images in the resulting Google Doc
+ *   - If Mermaid rendering fails, the diagram source stays in the doc as a
+ *     styled <pre> code block so nothing is lost
  *
- * Other Markdown features:
- *   - Headings (#, ##, ###, ####) → <h1>..<h4> with inline CSS styles
- *   - Tables → real <table>/<thead>/<tbody>/<tr>/<th>/<td> with borders
- *   - Lists → <ul>/<ol>/<li>
- *   - Inline **bold** / *italic* / `code` / [text](url) — all preserved
- *   - Code blocks → <pre><code> monospace
- *   - Blockquotes → <blockquote> with left border
+ * Why this approach (vs Puppeteer):
+ *   - No 170MB Chromium download — Firebase build stays fast
+ *   - No browser cold-start latency on every export
+ *   - SVG renders crisper than PNG in Google Docs
+ *   - Trade-off: very advanced Mermaid features that require a real browser
+ *     (custom icons, certain layouts) may not work. For BRD use cases —
+ *     sequenceDiagrams, flowcharts, ER diagrams — this is plenty.
  */
 
 import { marked } from "marked";
-import { promises as fsPromises } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
-import { randomBytes } from "crypto";
 
 const MERMAID_FENCE_RE = /```mermaid\s*\n([\s\S]*?)\n```/g;
 
@@ -41,8 +38,8 @@ export interface RenderResult {
 }
 
 export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderResult> {
-  // Step 1: extract Mermaid blocks and render each to a base64 PNG (or fallback).
-  const mermaidBlocks: Array<{ code: string; placeholder: string; renderedImg?: string; error?: string }> = [];
+  // Step 1: extract Mermaid blocks and render each to SVG (or fallback).
+  const mermaidBlocks: Array<{ code: string; placeholder: string; renderedSvg?: string; error?: string }> = [];
   let blockIdx = 0;
 
   const mdWithPlaceholders = markdown.replace(MERMAID_FENCE_RE, (_full, code) => {
@@ -52,13 +49,12 @@ export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderR
     return placeholder;
   });
 
-  // Render each Mermaid block (best-effort, sequential to avoid spawning many
-  // Chromium instances at once)
+  // Render each Mermaid block sequentially (the mermaid lib isn't safe under
+  // concurrent renders inside one JSDOM)
   for (let i = 0; i < mermaidBlocks.length; i++) {
     try {
-      const png = await renderMermaidToPng(mermaidBlocks[i].code);
-      const base64 = png.toString("base64");
-      mermaidBlocks[i].renderedImg = `<img src="data:image/png;base64,${base64}" alt="Mermaid diagram" style="max-width: 100%; height: auto; display: block; margin: 16px 0;" />`;
+      const svg = await renderMermaidToSvg(mermaidBlocks[i].code, i);
+      mermaidBlocks[i].renderedSvg = svg;
     } catch (e: any) {
       mermaidBlocks[i].error = e?.message || String(e);
     }
@@ -66,29 +62,25 @@ export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderR
 
   // Step 2: render the rest of the Markdown to HTML.
   marked.setOptions({
-    gfm: true,            // tables, fenced code, strikethrough, autolinks
+    gfm: true,        // tables, fenced code, strikethrough, autolinks
     breaks: false,
     pedantic: false,
   });
 
   let html = await marked.parse(mdWithPlaceholders, { async: true });
 
-  // Step 3: replace the Mermaid placeholders with rendered images (or fallback code).
+  // Step 3: replace the Mermaid placeholders with rendered SVGs (or fallback code).
   for (let i = 0; i < mermaidBlocks.length; i++) {
     const block = mermaidBlocks[i];
-    // The placeholder ends up as <p><!--MERMAID_BLOCK_X--></p> after marked parses it,
-    // or as a standalone comment depending on context. Replace both forms.
-    const replacementHtml = block.renderedImg
-      ? block.renderedImg
+    const replacementHtml = block.renderedSvg
+      ? `<div style="margin: 16px 0; text-align: center;">${block.renderedSvg}</div>`
       : `<pre style="background:#f5f7fa;padding:12px;border:1px solid #e5e7eb;border-radius:6px;font-family:'Courier New',monospace;font-size:11pt;white-space:pre-wrap;">[Mermaid diagram — paste into mermaid.live to view]\n${escapeHtml(block.code)}</pre>`;
     const commentRe = new RegExp(`<p>\\s*<!--MERMAID_BLOCK_${i}-->\\s*</p>`, "g");
     const bareCommentRe = new RegExp(`<!--MERMAID_BLOCK_${i}-->`, "g");
     html = html.replace(commentRe, replacementHtml).replace(bareCommentRe, replacementHtml);
   }
 
-  // Step 4: wrap in a full HTML document with styles. Inline styles are
-  // necessary because Drive's importer is conservative — external CSS or
-  // most style elements are stripped during conversion.
+  // Step 4: wrap in a full HTML document with inline styles.
   const wrapped = wrapHtmlForDriveImport(html);
 
   return {
@@ -96,7 +88,7 @@ export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderR
     diagnostics: {
       totalLength: wrapped.length,
       mermaidBlocks: mermaidBlocks.length,
-      mermaidRendered: mermaidBlocks.filter(b => !!b.renderedImg).length,
+      mermaidRendered: mermaidBlocks.filter(b => !!b.renderedSvg).length,
       mermaidFailed: mermaidBlocks
         .map((b, i) => b.error ? { index: i, error: b.error.slice(0, 200) } : null)
         .filter((x): x is { index: number; error: string } => !!x),
@@ -105,47 +97,69 @@ export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderR
 }
 
 /**
- * Render a Mermaid graph to PNG bytes using @mermaid-js/mermaid-cli, which
- * launches a headless Chromium under the hood.
- *
- * We write the graph to a temp file, invoke `mmdc` programmatically, read the
- * output PNG, clean up. The whole thing is sequential per block to avoid
- * spawning many browsers at once.
+ * Render a single Mermaid block to SVG using the `mermaid` library inside a
+ * JSDOM-provided fake DOM. Lazy-imports both libraries so the cold start
+ * doesn't pay the cost when no export is happening.
  */
-async function renderMermaidToPng(code: string): Promise<Buffer> {
-  const id = randomBytes(8).toString("hex");
-  const inputPath = join(tmpdir(), `mermaid-${id}.mmd`);
-  const outputPath = join(tmpdir(), `mermaid-${id}.png`);
+async function renderMermaidToSvg(code: string, blockIndex: number): Promise<string> {
+  // Lazy imports
+  const { JSDOM } = await import("jsdom");
+  const dom = new JSDOM(
+    `<!DOCTYPE html><html><head></head><body><div id="render-target"></div></body></html>`,
+    { pretendToBeVisual: true, runScripts: "outside-only" }
+  );
+
+  // Mermaid checks for window/document/navigator — wire up JSDOM as the globals
+  // for this render.
+  const prevWindow = (globalThis as any).window;
+  const prevDocument = (globalThis as any).document;
+  const prevNavigator = (globalThis as any).navigator;
+
+  (globalThis as any).window = dom.window as any;
+  (globalThis as any).document = dom.window.document as any;
+  (globalThis as any).navigator = dom.window.navigator as any;
+  (globalThis as any).HTMLElement = dom.window.HTMLElement as any;
+  (globalThis as any).SVGElement = (dom.window as any).SVGElement;
+  (globalThis as any).Element = dom.window.Element as any;
+  (globalThis as any).Node = dom.window.Node as any;
 
   try {
-    await fsPromises.writeFile(inputPath, code, "utf-8");
+    const mermaidMod: any = await import("mermaid");
+    const mermaid = mermaidMod.default || mermaidMod;
 
-    // Use the mermaid-cli's run function. We import it lazily so the cold-start
-    // doesn't load Chromium when not exporting.
-    const mod: any = await import("@mermaid-js/mermaid-cli");
-    if (typeof mod.run !== "function") {
-      throw new Error("mermaid-cli has no run() export");
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: "default",
+      securityLevel: "loose",
+      flowchart: { useMaxWidth: false, htmlLabels: true },
+      sequence: { useMaxWidth: false, mirrorActors: false },
+    });
+
+    const id = `mermaid-export-${blockIndex}-${Date.now()}`;
+    const result = await mermaid.render(id, code);
+    // mermaid.render returns { svg, ... } on v10+, or just the svg string on older versions
+    const svg = typeof result === "string" ? result : result?.svg;
+    if (!svg) throw new Error("Mermaid render returned no SVG");
+
+    // Strip the explicit width/height so Drive sizes the image responsively.
+    // Also strip any <foreignObject> elements — Drive's HTML importer strips
+    // them anyway and they cause rendering noise in the doc.
+    let cleaned = String(svg)
+      .replace(/<foreignObject[\s\S]*?<\/foreignObject>/g, "")
+      .replace(/\swidth="[^"]+"/i, ' width="600"')
+      .replace(/\sheight="[^"]+"/i, "");
+
+    // Ensure xmlns is present (some Mermaid versions omit it on the root)
+    if (!/<svg[^>]*xmlns=/.test(cleaned)) {
+      cleaned = cleaned.replace(/<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
     }
 
-    await mod.run(inputPath, outputPath, {
-      // Force a wider viewport so diagrams render at a reasonable size
-      puppeteerConfig: {
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-        ],
-      },
-      outputFormat: "png",
-      backgroundColor: "white",
-    } as any);
-
-    const png = await fsPromises.readFile(outputPath);
-    return png;
+    return cleaned;
   } finally {
-    // Best-effort cleanup
-    fsPromises.unlink(inputPath).catch(() => {});
-    fsPromises.unlink(outputPath).catch(() => {});
+    // Restore prior globals so we don't leak JSDOM into other code paths
+    (globalThis as any).window = prevWindow;
+    (globalThis as any).document = prevDocument;
+    (globalThis as any).navigator = prevNavigator;
   }
 }
 

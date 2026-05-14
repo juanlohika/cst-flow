@@ -5,7 +5,17 @@ import { useSession } from "next-auth/react";
 import { Loader2, Calendar, FileText, Download, Save, Clock, HelpCircle, Image as ImageIcon, Zap, LayoutList, Users, MousePointerClick, CheckSquare } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import GlobalBar from "@/components/layout/GlobalBar";
-import mermaid from "mermaid";
+// Mermaid is loaded dynamically inside useEffect so this module stays
+// CommonJS-compatible during Next's server prerender pass. Mermaid is an
+// ESM-only package and would otherwise break the build.
+let mermaid: any = null;
+async function getMermaid() {
+  if (!mermaid) {
+    const mod = await import("mermaid");
+    mermaid = (mod as any).default || mod;
+  }
+  return mermaid;
+}
 import { toPng } from "html-to-image";
 import InteractiveGantt from "@/components/timeline/InteractiveGantt";
 import Walkthrough from "@/components/timeline/Walkthrough";
@@ -143,7 +153,7 @@ function TimelineApp() {
   }, [events]);
 
   useEffect(() => {
-    mermaid.initialize({ startOnLoad: false, theme: "forest" });
+    getMermaid().then(m => m.initialize({ startOnLoad: false, theme: "forest" })).catch(() => {});
     fetch("/api/accounts")
       .then(res => res.json())
       .then(data => { if (Array.isArray(data)) setAccounts(data); })
@@ -238,7 +248,8 @@ function TimelineApp() {
           const mcode = buildMermaidGantt(events, projectName || "Project");
           mermaidRef.current!.innerHTML = mcode;
           mermaidRef.current!.removeAttribute("data-processed");
-          await mermaid.run({ nodes: [mermaidRef.current!] });
+          const m = await getMermaid();
+          await m.run({ nodes: [mermaidRef.current!] });
         } catch (e) {
           console.error("Mermaid error:", e);
         }

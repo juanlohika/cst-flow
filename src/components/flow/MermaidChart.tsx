@@ -1,15 +1,29 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import mermaid from "mermaid";
 import { Loader2 } from "lucide-react";
 
-mermaid.initialize({
-  startOnLoad: false,
-  theme: "default",
-  securityLevel: "loose",
-  fontFamily: "inherit",
-});
+// Mermaid is loaded dynamically inside useEffect so this module stays
+// CommonJS-compatible during Next's server prerender pass. Mermaid is an
+// ESM-only package and a static import breaks the build.
+let mermaidPromise: Promise<any> | null = null;
+let mermaidInitialized = false;
+async function getMermaid() {
+  if (!mermaidPromise) {
+    mermaidPromise = import("mermaid").then((mod) => (mod as any).default || mod);
+  }
+  const m = await mermaidPromise;
+  if (!mermaidInitialized) {
+    m.initialize({
+      startOnLoad: false,
+      theme: "default",
+      securityLevel: "loose",
+      fontFamily: "inherit",
+    });
+    mermaidInitialized = true;
+  }
+  return m;
+}
 
 interface MermaidChartProps {
   chart: string;
@@ -18,7 +32,7 @@ interface MermaidChartProps {
 export default function MermaidChart({ chart }: MermaidChartProps) {
   const [svgContent, setSvgContent] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  
+
   useEffect(() => {
     if (!chart) return;
 
@@ -28,11 +42,9 @@ export default function MermaidChart({ chart }: MermaidChartProps) {
 
     const renderChart = async () => {
       try {
+        const m = await getMermaid();
         const newId = `mermaid-${Math.random().toString(36).substring(7)}`;
-        
-        // Let Mermaid render the SVG string
-        const { svg } = await mermaid.render(newId, chart);
-        
+        const { svg } = await m.render(newId, chart);
         if (isMounted) {
           setSvgContent(svg);
         }
