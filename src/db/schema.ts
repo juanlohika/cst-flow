@@ -895,3 +895,48 @@ export const arimaRequests = sqliteTable("ArimaRequest", {
   createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
+
+// ─── Phase 21: Coordinator + on-demand DM ─────────────────────────────
+//
+// Telegram bots cannot DM a user who has never initiated a chat with the bot
+// — anti-spam rule. We track who's consented via BotDmConsent (one row per
+// Telegram user who tapped /start). The permission-grant flow inserts a row
+// the first time a user taps the consent button.
+export const botDmConsent = sqliteTable("BotDmConsent", {
+  id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  telegramUserId:  text("telegramUserId").notNull().unique(),
+  telegramUsername: text("telegramUsername"),
+  telegramName:    text("telegramName"),
+  grantedAt:       text("grantedAt").default(sql`(datetime('now'))`).notNull(),
+  grantedVia:      text("grantedVia").default("button").notNull(), // button | link_command | bind_command | auto_first_dm
+  status:          text("status").default("active").notNull(),     // active | revoked
+});
+
+// CoordinatorRelay: tracks an active "agent-coordinated DM" — the agent was
+// asked in a GC to PM someone; we recorded the request here so when the
+// target eventually replies in DM, we can post the response back to the
+// originating GC. Also used for the permission-grant flow (status='awaiting-consent').
+export const coordinatorRelays = sqliteTable("CoordinatorRelay", {
+  id:                    text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  conversationId:        text("conversationId").notNull(),                 // originating ARIMA conversation (the GC)
+  sourceTelegramChatId:  text("sourceTelegramChatId"),                     // for posting the response back
+  targetTelegramUserId:  text("targetTelegramUserId"),                     // null if pending consent (haven't resolved them yet)
+  targetTelegramUsername: text("targetTelegramUsername"),
+  targetDisplayName:     text("targetDisplayName").notNull(),
+  requestedByUserId:     text("requestedByUserId").notNull(),              // CST OS user who asked the agent to PM
+  requestedByName:       text("requestedByName"),
+  agentMode:             text("agentMode").default("arima").notNull(),     // arima | eliana
+  topic:                 text("topic"),                                    // short string describing what the DM is about
+  pendingMessage:        text("pendingMessage"),                           // the DM body that's queued, sent on consent
+  status:                text("status").default("awaiting-consent").notNull(), // awaiting-consent | sent | awaiting-reply | replied | timed-out | cancelled
+  consentToken:          text("consentToken").unique(),                    // signed token in the deep-link
+  sentMessageId:         text("sentMessageId"),                            // Telegram message_id of the DM we sent
+  replyMessageId:        text("replyMessageId"),                           // Telegram message_id of target's reply
+  replyText:             text("replyText"),                                // captured reply body for the relay-back
+  createdAt:             text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  consentedAt:           text("consentedAt"),
+  sentAt:                text("sentAt"),
+  repliedAt:             text("repliedAt"),
+  relayedBackAt:         text("relayedBackAt"),
+  expiresAt:             text("expiresAt"),                                // consent links auto-expire (7 days)
+});

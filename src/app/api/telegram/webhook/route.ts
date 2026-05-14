@@ -125,6 +125,23 @@ export async function POST(req: Request) {
       const argText = (cmdMatch[2] || "").trim();
 
       if (cmd === "start" || cmd === "help") {
+        // Phase 21: /start <consentToken> means a user tapped the permission-grant
+        // button. Honor it ONLY in private chat (consent has to come from the
+        // target themselves, not by anyone tapping in a group).
+        if (cmd === "start" && argText && isPrivate) {
+          const consumed = await consumeConsentToken({
+            token: argText,
+            botToken: config.botToken,
+            tappingTelegramUserId: String(from.id),
+            tappingTelegramUsername: from.username || null,
+            tappingTelegramName: [from.first_name, from.last_name].filter(Boolean).join(" ") || null,
+            tappingChatId: chat.id,
+          });
+          if (consumed.handled) {
+            return NextResponse.json({ ok: true });
+          }
+          // Not a valid consent token → fall through to generic help
+        }
         const replyText = isGroup
           ? "Hi! I'm ARIMA. " + (await getActiveBindingForChat(chat.id))
               ? "This group is bound and ready. Just chat with me normally."
@@ -349,6 +366,29 @@ export async function POST(req: Request) {
     }
 
     if (isPrivate) {
+      // Phase 21: Any DM from a user counts as implicit consent that the bot
+      // may DM them in the future. Record idempotently.
+      try {
+        const { recordDmConsent } = await import("@/lib/arima/coordinator");
+        await recordDmConsent({
+          telegramUserId: String(from.id),
+          telegramUsername: from.username || null,
+          telegramName: [from.first_name, from.last_name].filter(Boolean).join(" ") || null,
+          grantedVia: "auto_first_dm",
+        });
+      } catch {}
+
+      // Phase 21: Check if this DM is a REPLY to an active coordinator relay.
+      // If so, relay the response back to the source GC.
+      const relayHandled = await tryRelayDmReply({
+        botToken: config.botToken,
+        fromTelegramUserId: String(from.id),
+        replyText: text,
+        replyMessageId: message.message_id,
+        photos,
+      });
+      if (relayHandled) return NextResponse.json({ ok: true });
+
       // DM with the bot — only respond if this Telegram user is linked AND has access to at least one client.
       const cst = await resolveCstUserFromTelegram(from.id);
       if (!cst) {
@@ -361,7 +401,6 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true });
       }
       // For now, DM chat without a specific client just responds with general guidance.
-      // (Phase 6+ will support a client picker via inline keyboard.)
       await safeReply(
         config.botToken,
         chat.id,
@@ -537,6 +576,10 @@ async function handleArimaChat(args: {
       mentions,
       skipModelCall: !shouldReply,
       agentMode: args.agentMode,
+      // Phase 21: pass speaker context so send_telegram_dm can authority-check
+      // and post permission-grant buttons back into the originating group.
+      speakerTelegramUserId: args.senderTelegramId,
+      sourceTelegramChatId: String(args.chatId),
     });
 
     // Notify portal viewers for this client so they refresh and see the message
@@ -653,4 +696,187 @@ async function buildContactsDirectory(bindingId: string, clientProfileId: string
   lines.push("");
   lines.push("_Tag a portal user with `@Name` and they'll get a notification on the web side. Internal `@usernames` work as native Telegram pings._");
   return lines.join("\n");
+}
+
+// ─── Phase 21: Consent / Relay handlers ────────────────────────────────
+
+/**
+ * Handle /start <consentToken> in a DM. Validates the token, records consent,
+ * sends the queued DM body, marks the relay row as awaiting-reply.
+ *
+ * Strict mode: the user who taps MUST match the target the relay was intended
+ * for (matched via Telegram user id). Prevents accidental cross-consent.
+ *
+ * Returns { handled: true } if the token was a valid consent token (caller
+ * should stop processing); otherwise { handled: false } and the caller falls
+ * through to normal /start help text.
+ */
+async function consumeConsentToken(args: {
+  token: string;
+  botToken: string;
+  tappingTelegramUserId: string;
+  tappingTelegramUsername: string | null;
+  tappingTelegramName: string | null;
+  tappingChatId: number;
+}): Promise<{ handled: boolean }> {
+  const { coordinatorRelays } = await import("@/db/schema");
+  const { recordDmConsent } = await import("@/lib/arima/coordinator");
+  const { tgSendMessage, truncateForTelegram } = await import("@/lib/telegram/api");
+
+  const rows = await db
+    .select()
+    .from(coordinatorRelays)
+    .where(eq(coordinatorRelays.consentToken, args.token))
+    .limit(1);
+  const relay = rows[0];
+  if (!relay) return { handled: false };
+
+  const now = new Date().toISOString();
+
+  // Reject expired tokens
+  if (relay.expiresAt && new Date(relay.expiresAt).getTime() < Date.now()) {
+    await tgSendMessage(args.botToken, args.tappingChatId,
+      "This permission link has expired. Ask the team to send a fresh one.",
+      { parseMode: "Markdown" }
+    );
+    await db.update(coordinatorRelays)
+      .set({ status: "timed-out" })
+      .where(eq(coordinatorRelays.id, relay.id));
+    return { handled: true };
+  }
+
+  // Reject already-consumed tokens
+  if (relay.status !== "awaiting-consent") {
+    await tgSendMessage(args.botToken, args.tappingChatId,
+      "This permission link has already been used.",
+      { parseMode: "Markdown" }
+    );
+    return { handled: true };
+  }
+
+  // STRICT: only the intended target can consent
+  if (relay.targetTelegramUserId && relay.targetTelegramUserId !== args.tappingTelegramUserId) {
+    await tgSendMessage(args.botToken, args.tappingChatId,
+      `This invitation was sent to *${(relay.targetDisplayName || "someone else").replace(/[*_]/g, "")}*, not you. If they need a fresh link, ask the team.`,
+      { parseMode: "Markdown" }
+    );
+    return { handled: true };
+  }
+
+  // Record consent (idempotent)
+  await recordDmConsent({
+    telegramUserId: args.tappingTelegramUserId,
+    telegramUsername: args.tappingTelegramUsername,
+    telegramName: args.tappingTelegramName,
+    grantedVia: "button",
+  });
+
+  // Send the queued DM body
+  const escape = (s: string) => (s || "").replace(/([_*`\[\]()])/g, "\\$1");
+  const dmText = [
+    `📨 *${escape(relay.requestedByName || "A teammate")}* asked me to relay this${relay.topic ? ` about *${escape(relay.topic)}*` : ""}:`,
+    "",
+    relay.pendingMessage || "(no content)",
+    "",
+    "_Reply to this DM and I'll relay your response back to the team._",
+  ].join("\n");
+
+  let sentMessageId = "";
+  try {
+    const sent = await tgSendMessage(args.botToken, args.tappingChatId, truncateForTelegram(dmText), {
+      parseMode: "Markdown",
+      disablePreview: true,
+    });
+    sentMessageId = String(sent?.message_id || "");
+  } catch (e: any) {
+    console.warn("[coordinator] failed to send DM after consent:", e?.message);
+  }
+
+  await db.update(coordinatorRelays)
+    .set({
+      status: "awaiting-reply",
+      consentedAt: now,
+      sentAt: now,
+      sentMessageId,
+    })
+    .where(eq(coordinatorRelays.id, relay.id));
+
+  // Also notify the source group that consent was granted (optional, helps the
+  // requester know their message went out)
+  if (relay.sourceTelegramChatId) {
+    try {
+      await tgSendMessage(args.botToken, relay.sourceTelegramChatId,
+        `✅ ${escape(relay.targetDisplayName)} accepted the DM — message delivered. I'll post their reply here when they respond.`,
+        { parseMode: "Markdown" }
+      );
+    } catch {}
+  }
+
+  return { handled: true };
+}
+
+/**
+ * When a target replies in DM after a coordinator-relayed message, find the
+ * matching open relay and post the reply back into the source GC.
+ *
+ * Returns true if the DM was handled as a relay reply (caller should stop
+ * normal DM processing).
+ */
+async function tryRelayDmReply(args: {
+  botToken: string;
+  fromTelegramUserId: string;
+  replyText: string;
+  replyMessageId: number;
+  photos: any[];
+}): Promise<boolean> {
+  const { coordinatorRelays } = await import("@/db/schema");
+  const { tgSendMessage, truncateForTelegram } = await import("@/lib/telegram/api");
+
+  // Find the most recent awaiting-reply relay for this target
+  const rows = await db
+    .select()
+    .from(coordinatorRelays)
+    .where(and(
+      eq(coordinatorRelays.targetTelegramUserId, args.fromTelegramUserId),
+      eq(coordinatorRelays.status, "awaiting-reply"),
+    ))
+    .orderBy(asc(coordinatorRelays.sentAt));
+  const relay = rows[rows.length - 1]; // most recent
+  if (!relay) return false;
+  if (!relay.sourceTelegramChatId) return false;
+
+  // Post the reply back to the source GC
+  const escape = (s: string) => (s || "").replace(/([_*`\[\]()])/g, "\\$1");
+  const heading = `💬 *${escape(relay.targetDisplayName)}* replied${relay.topic ? ` (re: *${escape(relay.topic)}*)` : ""}:`;
+  const body = args.replyText.trim() || (args.photos.length > 0 ? "_(sent a photo)_" : "_(empty reply)_");
+  const relayedText = `${heading}\n\n${body}`;
+
+  try {
+    await tgSendMessage(args.botToken, relay.sourceTelegramChatId, truncateForTelegram(relayedText), {
+      parseMode: "Markdown",
+      disablePreview: true,
+    });
+  } catch (e: any) {
+    console.warn("[coordinator] failed to relay reply back:", e?.message);
+  }
+
+  await db.update(coordinatorRelays)
+    .set({
+      status: "replied",
+      replyMessageId: String(args.replyMessageId),
+      replyText: args.replyText.slice(0, 4000),
+      repliedAt: new Date().toISOString(),
+      relayedBackAt: new Date().toISOString(),
+    })
+    .where(eq(coordinatorRelays.id, relay.id));
+
+  // Confirm to the target that their reply was relayed
+  try {
+    await tgSendMessage(args.botToken, args.fromTelegramUserId,
+      `✓ Got it — I've passed your reply back to the team.`,
+      { parseMode: "Markdown" }
+    );
+  } catch {}
+
+  return true;
 }

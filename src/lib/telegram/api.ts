@@ -45,14 +45,30 @@ export async function tgFetchFile(token: string, fileId: string, maxBytes = 8 * 
   return { buffer: buf, mime, filePath: meta.file_path };
 }
 
-export async function tgSendMessage(token: string, chatId: number | string, text: string, opts: { parseMode?: "Markdown" | "HTML"; replyToMessageId?: number; disablePreview?: boolean } = {}) {
-  return call(token, "sendMessage", {
+export interface InlineButton {
+  text: string;
+  url?: string;
+  callback_data?: string;
+}
+
+export async function tgSendMessage(token: string, chatId: number | string, text: string, opts: {
+  parseMode?: "Markdown" | "HTML";
+  replyToMessageId?: number;
+  disablePreview?: boolean;
+  /** Phase 21: optional inline-keyboard. 2D array — outer = rows, inner = buttons. */
+  inlineKeyboard?: InlineButton[][];
+} = {}) {
+  const body: any = {
     chat_id: chatId,
     text,
     parse_mode: opts.parseMode,
     reply_to_message_id: opts.replyToMessageId,
     disable_web_page_preview: opts.disablePreview ?? true,
-  });
+  };
+  if (opts.inlineKeyboard && opts.inlineKeyboard.length > 0) {
+    body.reply_markup = { inline_keyboard: opts.inlineKeyboard };
+  }
+  return call(token, "sendMessage", body);
 }
 
 export async function tgSendChatAction(token: string, chatId: number | string, action: "typing" | "upload_document") {

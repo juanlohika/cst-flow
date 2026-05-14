@@ -335,6 +335,41 @@ export async function ensureAccessSchema(): Promise<void> {
       updatedAt TEXT DEFAULT (datetime('now')) NOT NULL
     )`);
 
+    // Phase 21: Coordinator + on-demand DM
+    await db.run(sql`CREATE TABLE IF NOT EXISTS BotDmConsent (
+      id TEXT PRIMARY KEY,
+      telegramUserId TEXT NOT NULL UNIQUE,
+      telegramUsername TEXT,
+      telegramName TEXT,
+      grantedAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      grantedVia TEXT DEFAULT 'button' NOT NULL,
+      status TEXT DEFAULT 'active' NOT NULL
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS CoordinatorRelay (
+      id TEXT PRIMARY KEY,
+      conversationId TEXT NOT NULL,
+      sourceTelegramChatId TEXT,
+      targetTelegramUserId TEXT,
+      targetTelegramUsername TEXT,
+      targetDisplayName TEXT NOT NULL,
+      requestedByUserId TEXT NOT NULL,
+      requestedByName TEXT,
+      agentMode TEXT DEFAULT 'arima' NOT NULL,
+      topic TEXT,
+      pendingMessage TEXT,
+      status TEXT DEFAULT 'awaiting-consent' NOT NULL,
+      consentToken TEXT UNIQUE,
+      sentMessageId TEXT,
+      replyMessageId TEXT,
+      replyText TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      consentedAt TEXT,
+      sentAt TEXT,
+      repliedAt TEXT,
+      relayedBackAt TEXT,
+      expiresAt TEXT
+    )`);
+
     _schemaEnsuredAt = Date.now();
   } catch (e) {
     console.warn("[access] ensureAccessSchema warning:", e);

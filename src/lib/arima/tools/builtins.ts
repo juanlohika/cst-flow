@@ -328,3 +328,233 @@ registerTool({
     };
   },
 });
+
+// ─── send_telegram_dm (Phase 21 — Coordinator) ─────────────────────────
+// The big one: agent reaches out privately to a specific person, with the
+// permission-grant flow handling first-time targets.
+//
+// Authority gates (enforced in handler):
+//   - Speaker MUST be owner-tier (linked CST OS admin) OR member-tier to
+//     direct this tool. Guests cannot.
+//   - Member-tier can DM other internal teammates but NOT clients.
+//   - Owner-tier can DM anyone.
+//
+// Three possible outcomes:
+//   - ok: true, sent immediately (target has DM consent, message delivered)
+//   - ok: true, awaitingConsent: true (target found but no DM consent yet;
+//     a permission-grant button was posted in the GC instead)
+//   - ok: false (unknown target, or speaker lacks authority, or target is
+//     external — clients aren't reachable via Telegram DM)
+registerTool({
+  name: "send_telegram_dm",
+  category: "write",
+  description: "Privately message a specific person via Telegram on the user's behalf. The speaker (the person asking) must be a linked CST OS user; clients in a group chat cannot direct this tool. If the target hasn't given DM consent yet, the system posts an inline permission-grant button in the group chat — the target taps it to allow DMs from the bot, then the queued message is sent automatically.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      targetName: {
+        type: "string",
+        description: "Name (or @username) of the person to DM. Resolved against the CST OS team and the bound client's contacts.",
+      },
+      messageBody: {
+        type: "string",
+        description: "The message to send. Speak as if the requesting human asked you to relay it — be concise, professional, and explain who's sending the message and why.",
+      },
+      topic: {
+        type: "string",
+        description: "Short label describing the subject of the DM, e.g. 'pricing breakdown', 'meeting schedule', 'SSO requirements'. Used in the permission-grant button text.",
+      },
+    },
+    required: ["targetName", "messageBody"],
+  },
+  defaultEnabled: true,
+  defaultAutonomy: "auto",
+  handler: async (input, ctx) => {
+    // Lazy imports so registry boot doesn't pull telegram deps until needed
+    const { classifyTelegramSpeaker, classifyTarget } = await import("@/lib/arima/authority");
+    const {
+      resolveCoordinationTarget,
+      generateConsentToken,
+      consentExpiresAt,
+      consentDeepLink,
+      hasDmConsent,
+    } = await import("@/lib/arima/coordinator");
+    const { getTelegramConfig } = await import("@/lib/telegram/config");
+    const { tgSendMessage, truncateForTelegram, tgGetMe } = await import("@/lib/telegram/api");
+    const { coordinatorRelays } = await import("@/db/schema");
+
+    if (ctx.channel !== "telegram") {
+      return { ok: false, error: "This tool only works from a Telegram group chat. Use a different channel for portal/web messages." };
+    }
+    if (!ctx.speakerTelegramUserId) {
+      return { ok: false, error: "Couldn't identify who's asking — speaker Telegram id missing from context." };
+    }
+
+    // Authority check
+    const auth = await classifyTelegramSpeaker({
+      telegramUserId: ctx.speakerTelegramUserId,
+      clientProfileId: ctx.clientProfileId,
+    });
+    if (auth.tier === "guest") {
+      return {
+        ok: false,
+        error: `Sorry — only linked CST OS team members can direct the agent to send private messages. ${auth.cstUserId ? "" : "You'll need to link your Telegram first via /link in DM with the bot."}`,
+      };
+    }
+
+    // Resolve the target
+    const target = await resolveCoordinationTarget({
+      rawName: input.targetName,
+      clientProfileId: ctx.clientProfileId,
+    });
+    if (!target) {
+      return { ok: false, error: `Couldn't find anyone matching "${input.targetName}". Try the full name or @telegram-handle.` };
+    }
+
+    // Member-tier may NOT DM external (client) targets
+    if (auth.tier === "member" && target.kind === "external-portal") {
+      return {
+        ok: false,
+        error: "Only admins can direct the agent to message clients privately. Please ask an admin, or send the message yourself.",
+      };
+    }
+
+    const cfg = await getTelegramConfig();
+    if (!cfg.botToken) {
+      return { ok: false, error: "Telegram bot isn't configured. Admin should set it up under /admin/telegram." };
+    }
+
+    // External (client) target → we can't reach them via Telegram. Suggest
+    // alternative channels.
+    if (target.kind === "external-portal") {
+      return {
+        ok: false,
+        error: `${target.displayName} is a client portal contact — Telegram DMs don't reach them. They'll see messages posted in this group (their portal mirrors it). To send something privately, use email or invite them to a separate discovery group.`,
+      };
+    }
+
+    // Internal target with no linked Telegram → can't DM at all
+    if (target.kind === "internal-no-telegram") {
+      return {
+        ok: false,
+        error: `${target.displayName} hasn't linked their Telegram account to CST OS yet, so I can't DM them. Ask them to run /link in DM with the bot first. (For now, the request was NOT delivered.)`,
+      };
+    }
+
+    // From here on: internal target WITH linked Telegram
+    const messageBody = truncateForTelegram(String(input.messageBody || "").trim());
+    const topic = String(input.topic || "").trim();
+    const dmPreamble = `📨 *${auth.cstUserName || ctx.speakerName || "A teammate"}* asked me to relay this to you${topic ? ` about *${topic.replace(/[*_]/g, "")}*` : ""}:`;
+    const fullDmText = `${dmPreamble}\n\n${messageBody}`;
+
+    // Direct DM path — target has already consented
+    if (target.hasDmConsent && target.telegramUserId) {
+      try {
+        const sent = await tgSendMessage(cfg.botToken, target.telegramUserId, fullDmText, {
+          parseMode: "Markdown",
+          disablePreview: true,
+        });
+        // Record relay for response correlation
+        const relayId = `crly_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+        await db.insert(coordinatorRelays).values({
+          id: relayId,
+          conversationId: ctx.conversationId,
+          sourceTelegramChatId: ctx.sourceTelegramChatId || null,
+          targetTelegramUserId: target.telegramUserId,
+          targetTelegramUsername: target.telegramUsername || null,
+          targetDisplayName: target.displayName,
+          requestedByUserId: auth.cstUserId || ctx.userId,
+          requestedByName: auth.cstUserName || ctx.speakerName || null,
+          agentMode: ctx.agentMode || "arima",
+          topic: topic || null,
+          pendingMessage: messageBody,
+          status: "awaiting-reply",
+          sentMessageId: String(sent?.message_id || ""),
+          createdAt: new Date().toISOString(),
+          sentAt: new Date().toISOString(),
+        });
+        return {
+          ok: true,
+          data: {
+            relayId,
+            target: target.displayName,
+            telegramUsername: target.telegramUsername,
+            status: "sent",
+          },
+          summary: `Sent DM to ${target.displayName}. I'll relay their reply back here when they respond.`,
+        };
+      } catch (e: any) {
+        return { ok: false, error: `Couldn't deliver the DM — ${e?.message || "unknown error"}. The team will need to reach them another way.` };
+      }
+    }
+
+    // Otherwise: target hasn't consented to DMs yet → post permission-grant button
+    if (!ctx.sourceTelegramChatId) {
+      return { ok: false, error: "Permission-grant flow needs a source group chat to post the consent button into, but it wasn't provided in context. Try asking from inside the group chat." };
+    }
+    if (!target.telegramUserId) {
+      return { ok: false, error: `${target.displayName} can't be DM'd yet — Telegram account info missing.` };
+    }
+
+    // Get our bot's username (for the deep-link)
+    let botUsername = "";
+    try {
+      const me = await tgGetMe(cfg.botToken);
+      botUsername = me?.username || "";
+    } catch {}
+    if (!botUsername) {
+      return { ok: false, error: "Couldn't determine the bot username. Admin should verify /admin/telegram is configured." };
+    }
+
+    // Persist a pending relay row + consent token
+    const consentToken = generateConsentToken();
+    const relayId = `crly_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+    await db.insert(coordinatorRelays).values({
+      id: relayId,
+      conversationId: ctx.conversationId,
+      sourceTelegramChatId: ctx.sourceTelegramChatId,
+      targetTelegramUserId: target.telegramUserId,
+      targetTelegramUsername: target.telegramUsername || null,
+      targetDisplayName: target.displayName,
+      requestedByUserId: auth.cstUserId || ctx.userId,
+      requestedByName: auth.cstUserName || ctx.speakerName || null,
+      agentMode: ctx.agentMode || "arima",
+      topic: topic || null,
+      pendingMessage: messageBody,
+      status: "awaiting-consent",
+      consentToken,
+      createdAt: new Date().toISOString(),
+      expiresAt: consentExpiresAt(),
+    });
+
+    // Post the inline-keyboard button in the source group
+    const deepLink = consentDeepLink(botUsername, consentToken);
+    const escape = (s: string) => s.replace(/([_*`\[\]()])/g, "\\$1");
+    const promptText = [
+      `👋 Hi *${escape(target.displayName)}*${target.telegramUsername ? ` (@${escape(target.telegramUsername)})` : ""} —`,
+      `*${escape(auth.cstUserName || ctx.speakerName || "A teammate")}* asked me to send you a private message${topic ? ` about *${escape(topic)}*` : ""}.`,
+      "",
+      "I can't DM you yet because we haven't been introduced in private. Tap the button below once — it takes 2 seconds — and I'll relay the message immediately.",
+      "",
+      "_(One-time setup. After this, I can reach you anytime your teammates ask.)_",
+    ].join("\n");
+
+    await tgSendMessage(cfg.botToken, ctx.sourceTelegramChatId, truncateForTelegram(promptText), {
+      parseMode: "Markdown",
+      disablePreview: true,
+      inlineKeyboard: [
+        [{ text: `✓ Allow ${target.displayName.split(/\s+/)[0]} to receive DMs`, url: deepLink }],
+      ],
+    });
+
+    return {
+      ok: true,
+      data: {
+        relayId,
+        target: target.displayName,
+        status: "awaiting-consent",
+      },
+      summary: `Posted a permission-grant button for ${target.displayName}. The DM will be sent once they tap it.`,
+    };
+  },
+});

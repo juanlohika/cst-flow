@@ -30,6 +30,19 @@ export interface ToolContext {
   clientProfileId: string | null;
   /** "web" | "telegram" | "portal" */
   channel: string;
+  /** Phase 21: who is actually SPEAKING to the agent right now (the requester
+   * of any action). For Telegram messages, the Telegram user id of the
+   * message sender. For portal messages, the ClientContact id. For web, the
+   * CST OS user id (same as userId). Used by send_telegram_dm to authority-check
+   * who's directing the agent. */
+  speakerTelegramUserId?: string | null;
+  speakerName?: string | null;
+  /** Phase 21: Telegram chat id of the ORIGIN group, so we can post the
+   * permission-grant button into the same room and relay any DM responses
+   * back to it. */
+  sourceTelegramChatId?: string | null;
+  /** Phase 21: which agent persona is active. */
+  agentMode?: "arima" | "eliana";
 }
 
 export interface ToolResult {

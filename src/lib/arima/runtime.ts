@@ -106,6 +106,14 @@ export interface ArimaRunArgs {
    * + inject Eliana-specific knowledge audience.
    */
   agentMode?: "arima" | "eliana";
+  /**
+   * Phase 21: speaker context for coordinator/DM tools. Identifies WHO is
+   * directing the agent right now so authority checks can run. For Telegram
+   * messages this is the message sender's Telegram user id; the source chat
+   * id of the GC is used to post permission-grant buttons + relay responses.
+   */
+  speakerTelegramUserId?: string | null;
+  sourceTelegramChatId?: string | null;
 }
 
 export interface ArimaRunResult {
@@ -655,6 +663,46 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     baseInstruction += `\n\n---\n\n## CRITICAL: Tool calls are INVISIBLE plumbing\n\nWhen you call a tool, that's between you and the system — the user must NEVER see tool names, JSON payloads, code blocks with arguments, or process narration like "I'll now use X", "Let me check the result", "I've attempted to call Y", "I'll fetch via Z", "using the \`tool_name\` tool".\n\nJust speak the OUTCOME in plain language. "Got it — meeting request logged. A teammate will confirm a time." That's it. Never name the tool you used. Never echo its arguments.`;
   }
 
+  // Phase 21: Coordinator skill — teach the agent when to use send_telegram_dm
+  // and how to construct the relay message. Injected as runtime augmentation
+  // so it works regardless of skill table contents.
+  const COORDINATOR_MARKER = "Coordinator skill — when to PM";
+  if (!baseInstruction.includes(COORDINATOR_MARKER)) {
+    baseInstruction += `\n\n---\n\n## Coordinator skill — when to PM someone (Phase 21)
+
+You have a tool called \`send_telegram_dm\` that privately messages a specific person on the requesting user's behalf. Use it ONLY when:
+
+- A LINKED CST OS team member (a person the system recognizes as part of the team) explicitly asks you to "PM", "message", "ping", "DM", "ask privately", or "reach out to" a specific other person.
+- The intent is genuinely a 1-to-1 private message, not a broadcast to the group.
+
+Concrete trigger phrases that should make you call send_telegram_dm:
+- "PM Lester about the pricing breakdown"
+- "Can you ask Maria privately if she's free Friday?"
+- "DM Jillian and let her know the BRD is ready"
+- "Reach out to @username about X"
+- "Coordinate with the dev team — ping Carlos about SSO"
+
+When you call the tool, construct \`messageBody\` as a polished relay:
+- Address the target by name
+- Explain WHO is asking
+- Explain WHAT they want — clearly, concisely
+- Sign off without falsely claiming you're the human
+
+Example messageBody: "Hi Lester, Tarkie asked me to follow up with you about the pricing breakdown for Sol Manpower. Do you have time this week to share the updated numbers, or should we schedule a quick sync? Thanks!"
+
+Authority rules (the system enforces these too, but be aware):
+- Only linked CST OS users can direct you to PM others. If a portal client or unlinked user says "PM John about this", you must politely decline: "That's something the team handles directly — I've logged the request so they can follow up."
+- Non-admins can't direct you to PM external clients. Decline gracefully if they try.
+
+When you receive ok:false from the tool, share the error message as-is — those errors are written to be client-readable.
+
+When you receive ok:true with status='awaiting-consent', say something like: "I've posted a one-time permission button in the group — once they tap it, I'll send the message and report back when they reply."
+
+When you receive ok:true with status='sent', say something like: "Sent — I'll relay their reply here when they respond."
+
+DO NOT call send_telegram_dm without explicit human direction. Don't volunteer to PM people on your own initiative.`;
+  }
+
   // Phase 20: inject the shared Knowledge Repository so the agent has the
   // latest Tarkie playbook, module catalog, and what's-new feed in every reply.
   try {
@@ -719,7 +767,11 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
     conversationId: args.conversationId,
     userId: args.userId,
     clientProfileId: args.clientProfileId || null,
-    channel: "web", // overridden by Telegram/portal callers if needed in future
+    channel: args.senderChannel || "web",
+    agentMode,
+    speakerTelegramUserId: args.speakerTelegramUserId || null,
+    speakerName: args.senderName || null,
+    sourceTelegramChatId: args.sourceTelegramChatId || null,
   };
 
   // Tool-aware preamble: many models will silently ignore the `tools` config
