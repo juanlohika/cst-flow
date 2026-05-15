@@ -558,3 +558,86 @@ registerTool({
     };
   },
 });
+
+// ─── share_brd_pdf (Phase 22.3 — Eliana/ARIMA BRD share) ────────────────────
+// Returns the read-only PDF link for a BRD so the agent can share it with
+// stakeholders for review.
+//
+// Security model: the *link* is freely shareable, but the *file* is gated by
+// Google Drive's native permissions. If the recipient doesn't have access to
+// the Drive folder, clicking the link triggers Drive's "Request access" flow
+// — a human teammate then approves the access grant from within Drive itself.
+// This is simpler than building a parallel approval queue inside CST OS, and
+// keeps the audit trail in Drive's "Shared with" history where teams already
+// expect it.
+registerTool({
+  name: "share_brd_pdf",
+  category: "external",
+  description: "Share the read-only PDF link of a BRD with stakeholders for review. The agent picks the most recent exported BRD for the current client (or matches by titleHint if provided). Returns the Drive PDF link to include in the reply. The link itself is shareable, but recipients without Drive folder access will see Google's 'Request access' prompt — a human teammate then grants access from Drive directly.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      titleHint: {
+        type: "string",
+        description: "Optional: a phrase from the BRD title to disambiguate when the client has multiple BRDs. Omit to pick the most recent exported BRD.",
+      },
+      recipientNote: {
+        type: "string",
+        description: "Short context to attach when relaying the link (e.g. 'for your review by Friday'). Keep under 200 chars.",
+      },
+    },
+    required: [],
+  },
+  defaultEnabled: true,
+  defaultAutonomy: "auto",
+  handler: async (input, ctx) => {
+    if (!ctx.clientProfileId) return noClientResult();
+
+    // Find the most recent BRD for this client that has a PDF URL.
+    const candidates = await db
+      .select({
+        id: arimaRequests.id,
+        title: arimaRequests.title,
+        brdPdfUrl: arimaRequests.brdPdfUrl,
+        brdDocxUrl: arimaRequests.brdDocxUrl,
+        brdStatus: arimaRequests.brdStatus,
+        createdAt: arimaRequests.createdAt,
+      })
+      .from(arimaRequests)
+      .where(and(
+        eq(arimaRequests.clientProfileId, ctx.clientProfileId),
+        eq(arimaRequests.category, "brd"),
+      ))
+      .orderBy(desc(arimaRequests.createdAt))
+      .limit(20);
+
+    const exported = candidates.filter(c => c.brdPdfUrl);
+    if (exported.length === 0) {
+      return {
+        ok: false,
+        error: "No BRD has been exported to Drive yet for this client. Generate and export a BRD first (the PDF gets created automatically alongside the Word file).",
+      };
+    }
+
+    const hint = String(input?.titleHint || "").trim().toLowerCase();
+    let chosen = exported[0];
+    if (hint) {
+      const match = exported.find(c => c.title.toLowerCase().includes(hint));
+      if (match) chosen = match;
+    }
+
+    const note = String(input?.recipientNote || "").trim().slice(0, 200);
+
+    return {
+      ok: true,
+      data: {
+        brdId: chosen.id,
+        title: chosen.title,
+        pdfUrl: chosen.brdPdfUrl,
+        docxUrl: chosen.brdDocxUrl || null,
+        note: note || null,
+      },
+      summary: `BRD ready to share: "${chosen.title}" — PDF link: ${chosen.brdPdfUrl}${note ? `. Note: ${note}` : ""}`,
+    };
+  },
+});

@@ -899,6 +899,13 @@ export const arimaRequests = sqliteTable("ArimaRequest", {
   brdGoogleDocId:  text("brdGoogleDocId"),
   brdGoogleDocUrl: text("brdGoogleDocUrl"),
   brdGoogleDocSyncedAt: text("brdGoogleDocSyncedAt"),
+  // Phase 22.3: dual Word/PDF export (replaces the broken Google-Docs HTML
+  // upload approach). The Word file is the editable internal copy; the PDF
+  // is the read-only version Eliana/ARIMA can share with clients.
+  brdDocxFileId:   text("brdDocxFileId"),    // Drive fileId of the .docx
+  brdDocxUrl:      text("brdDocxUrl"),       // Drive webViewLink (opens in Docs viewer)
+  brdPdfFileId:    text("brdPdfFileId"),     // Drive fileId of the .pdf
+  brdPdfUrl:       text("brdPdfUrl"),        // Drive webViewLink for the PDF
   brdStatus:       text("brdStatus").default("captured").notNull(), // captured | generating | document-ready | exported | regenerating | error
   brdError:        text("brdError"),
   brdExportLog:    text("brdExportLog"),                // JSON diagnostic of last export attempt (block count by kind, per-block insert outcome)

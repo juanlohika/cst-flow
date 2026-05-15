@@ -10,6 +10,9 @@ const nextConfig = {
     serverComponentsExternalPackages: [
       "jsdom",
       "pdf2json",
+      "puppeteer-core",
+      "@sparticuz/chromium",
+      "html-to-docx",
     ],
   },
   eslint: {

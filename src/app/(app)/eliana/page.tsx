@@ -247,6 +247,10 @@ interface BRDDetailData {
   brdGoogleDocId: string | null;
   brdGoogleDocUrl: string | null;
   brdGoogleDocSyncedAt: string | null;
+  brdDocxFileId: string | null;
+  brdDocxUrl: string | null;
+  brdPdfFileId: string | null;
+  brdPdfUrl: string | null;
   brdStatus: string;
   brdError: string | null;
   brdExportLog: string | null;
@@ -292,8 +296,10 @@ function BRDDetail({ brd, onClose, onReload, router }: { brd: BRDRequest; onClos
       const data = await res.json();
       if (!res.ok) {
         alert(data?.error || "Export failed. Check admin → Google integration setup.");
-      } else if (data?.docUrl) {
-        window.open(data.docUrl, "_blank");
+      } else if (data?.docxUrl) {
+        window.open(data.docxUrl, "_blank");
+      } else if (data?.pdfUrl) {
+        window.open(data.pdfUrl, "_blank");
       }
       await loadDetail();
     } finally {
@@ -370,7 +376,7 @@ function BRDDetail({ brd, onClose, onReload, router }: { brd: BRDRequest; onClos
         {!loadingDetail && d?.brdExportLog && (
           <details className="bg-slate-50 border border-slate-200 rounded-xl p-3">
             <summary className="text-[10px] font-black text-slate-500 uppercase tracking-widest cursor-pointer">
-              Google Docs export diagnostic (last attempt)
+              Drive export diagnostic (last attempt)
             </summary>
             <pre className="text-[10.5px] text-slate-700 mt-2 whitespace-pre-wrap font-mono max-h-72 overflow-auto">
               {(() => {
@@ -428,28 +434,52 @@ function BRDDetail({ brd, onClose, onReload, router }: { brd: BRDRequest; onClos
             </button>
           )}
 
-          {d?.brdDocument && (
-            d?.brdGoogleDocUrl ? (
-              <a
-                href={d.brdGoogleDocUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="px-3 py-2 rounded-xl bg-white border border-emerald-200 text-emerald-700 text-[11px] font-black uppercase tracking-widest hover:bg-emerald-50 inline-flex items-center gap-1.5"
-              >
-                <ExternalLink className="w-3 h-3" />
-                Open Google Doc
-              </a>
-            ) : (
+          {d?.brdDocument && (d?.brdDocxUrl || d?.brdPdfUrl) ? (
+            <>
+              {d?.brdDocxUrl && (
+                <a
+                  href={d.brdDocxUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-2 rounded-xl bg-white border border-blue-200 text-blue-700 text-[11px] font-black uppercase tracking-widest hover:bg-blue-50 inline-flex items-center gap-1.5"
+                  title="Editable Word file — opens in Google Docs viewer"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  Open Word
+                </a>
+              )}
+              {d?.brdPdfUrl && (
+                <a
+                  href={d.brdPdfUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-2 rounded-xl bg-white border border-rose-200 text-rose-700 text-[11px] font-black uppercase tracking-widest hover:bg-rose-50 inline-flex items-center gap-1.5"
+                  title="Read-only PDF for client sharing"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  Open PDF
+                </a>
+              )}
               <button
                 onClick={exportToDocs}
                 disabled={exporting}
-                className="px-3 py-2 rounded-xl bg-white border border-emerald-200 text-emerald-700 text-[11px] font-black uppercase tracking-widest hover:bg-emerald-50 disabled:opacity-50 inline-flex items-center gap-1.5"
+                className="px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-600 text-[11px] font-black uppercase tracking-widest hover:border-emerald-300 disabled:opacity-50 inline-flex items-center gap-1.5"
+                title="Re-export both Word and PDF to Drive"
               >
                 {exporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
-                Export to Google Docs
+                Re-export
               </button>
-            )
-          )}
+            </>
+          ) : d?.brdDocument ? (
+            <button
+              onClick={exportToDocs}
+              disabled={exporting}
+              className="px-3 py-2 rounded-xl bg-white border border-emerald-200 text-emerald-700 text-[11px] font-black uppercase tracking-widest hover:bg-emerald-50 disabled:opacity-50 inline-flex items-center gap-1.5"
+            >
+              {exporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+              Export to Drive (Word + PDF)
+            </button>
+          ) : null}
 
           <button
             onClick={promote}
@@ -464,7 +494,7 @@ function BRDDetail({ brd, onClose, onReload, router }: { brd: BRDRequest; onClos
         <p className="text-[10px] text-slate-400 text-center pt-1">
           Captured {new Date(brd.createdAt).toLocaleString()}
           {brd.ownerName ? ` · by ${brd.ownerName}` : ""}
-          {d?.brdGoogleDocSyncedAt && ` · synced to Google Docs ${new Date(d.brdGoogleDocSyncedAt).toLocaleString()}`}
+          {d?.brdGoogleDocSyncedAt && ` · synced to Drive ${new Date(d.brdGoogleDocSyncedAt).toLocaleString()}`}
         </p>
       </div>
     </div>
@@ -476,7 +506,7 @@ function BrdStatusBadge({ status }: { status: string }) {
     captured: { label: "Summary only", color: "bg-slate-100 text-slate-500" },
     generating: { label: "Generating…", color: "bg-amber-50 text-amber-700" },
     "document-ready": { label: "Document ready", color: "bg-indigo-50 text-indigo-700" },
-    exported: { label: "Synced to Google Docs", color: "bg-emerald-50 text-emerald-700" },
+    exported: { label: "Synced to Drive", color: "bg-emerald-50 text-emerald-700" },
     regenerating: { label: "Regenerating…", color: "bg-amber-50 text-amber-700" },
     error: { label: "Error", color: "bg-rose-50 text-rose-700" },
   };

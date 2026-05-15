@@ -91,6 +91,16 @@ const CANONICAL_SKILLS: CanonicalSkill[] = [
     isActive: true,
     content: BRD_CONVO_GUARDRAIL_CONTENT(),
   },
+  {
+    slug: "brd-share-pdf",
+    name: "BRD — Sharing the PDF with clients",
+    description: "How to share a BRD's read-only PDF with stakeholders. Explains the two outputs (Word for internal editing, PDF for client review) and when/how to call the share_brd_pdf tool.",
+    category: "brd",
+    subcategory: null,
+    sortOrder: 40,
+    isActive: true,
+    content: BRD_SHARE_PDF_CONTENT(),
+  },
 ];
 
 // Slugs the migrator force-archives (sets isActive=false). These are legacy
@@ -492,6 +502,59 @@ English and Filipino (Taglish). You must:
    clean English equivalent.
 5. When quoting the client directly, you may keep the original Filipino
    quote and add an English gloss in parentheses.
+`;
+}
+
+function BRD_SHARE_PDF_CONTENT(): string {
+  return `# BRD — Sharing the PDF with stakeholders
+
+Every BRD is exported to Google Drive in two formats:
+
+- **Word (.docx)** — the editable internal copy. Opens in Google Docs viewer
+  when teammates click it. Use this for ongoing edits, comments, and revisions.
+- **PDF** — the read-only version. This is what you share with clients and
+  outside stakeholders for review.
+
+## When the user asks you to share a BRD
+
+If a teammate (in a Telegram group, on the portal, or in CST OS) asks you to
+share a BRD with someone — for review, sign-off, or feedback — use the
+share_brd_pdf tool. It returns the PDF link from Drive.
+
+Examples that should trigger share_brd_pdf:
+- "Can you send the BRD to the client for review?"
+- "Share the GCash BRD with Maria for sign-off"
+- "Forward the latest BRD PDF to the steering committee"
+
+## What the tool returns
+
+The tool finds the most recent exported BRD for the current client and returns
+the Drive PDF link. Pass an optional 'titleHint' if the client has multiple
+BRDs and you need to disambiguate. You can also pass 'recipientNote' to attach
+context (e.g. "for your review by Friday").
+
+## How to reply with the link
+
+After the tool returns, paste the PDF link in your reply and add a brief note
+explaining what it is. Format:
+
+  "📄 Here's the BRD PDF for review: <pdfUrl>
+   (If you can't open the link, ask a CST teammate to grant access — the file
+   sits in our shared Drive folder and we'll add you in seconds.)"
+
+## Access semantics — DO NOT modify Drive permissions
+
+The link is the Drive webViewLink. The link itself is freely shareable, but
+the *file* is gated by Google Drive's native permissions:
+
+- If the recipient is on a domain the folder shares with, the link just works.
+- If not, the recipient sees Drive's "Request access" prompt when they click.
+  A human CST teammate then approves the access from within Drive itself.
+
+This means you do NOT need to gate the share, and you should NOT request a
+human approval for sharing the link. The Drive permission is the real gate.
+Always include the access-recovery hint in your reply so the recipient knows
+what to do if the link doesn't open for them.
 `;
 }
 

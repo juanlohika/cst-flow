@@ -57,6 +57,11 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdStatus TEXT DEFAULT 'captured' NOT NULL`); } catch {}
     try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdError TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdExportLog TEXT`); } catch {}
+    // Phase 22.3: dual Word/PDF Drive output
+    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdDocxFileId TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdDocxUrl TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdPdfFileId TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdPdfUrl TEXT`); } catch {}
 
     // Create ArimaRequest table if missing
     await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaRequest (

@@ -1147,9 +1147,9 @@ If you find yourself about to type a tool name in your reply, STOP and ask: "am 
             const { generateBrdDocument } = await import("@/lib/arima/brd-generator");
             await generateBrdDocument({ requestId: reqIdForBrd });
             // Try Google Docs export if configured (no-op if not)
-            const { exportBrdToGoogleDocs } = await import("@/lib/arima/google-docs-export");
-            await exportBrdToGoogleDocs({ requestId: reqIdForBrd }).catch(err => {
-              console.warn("[arima/runtime] BRD Google Docs export failed (non-fatal):", err?.message);
+            const { exportBrdToDrive } = await import("@/lib/arima/drive-export");
+            await exportBrdToDrive({ requestId: reqIdForBrd }).catch(err => {
+              console.warn("[arima/runtime] BRD Drive export failed (non-fatal):", err?.message);
             });
           } catch (genErr: any) {
             console.warn("[arima/runtime] BRD document generation failed:", genErr?.message);
