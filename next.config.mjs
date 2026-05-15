@@ -8,7 +8,6 @@ const nextConfig = {
     // CommonJS require if bundled into the server chunk; jsdom and pdf2json
     // pull heavy native-ish deps that don't play well with webpack bundling.
     serverComponentsExternalPackages: [
-      "jsdom",
       "pdf2json",
       "html-to-docx",
     ],

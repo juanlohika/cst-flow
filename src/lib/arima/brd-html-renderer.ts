@@ -1,26 +1,24 @@
 /**
- * Phase 22.2 — Markdown → HTML renderer for BRD export (lightweight version).
+ * Phase 22.3 — Markdown → HTML renderer for BRD export.
  *
- * Converts a BRD Markdown document into a single self-contained HTML string
- * that Google Drive's import endpoint can convert into a proper Google Doc.
+ * Mermaid handling: emit each diagram as an <img> pointing at mermaid.ink,
+ * a free public service that renders Mermaid source into PNG/SVG via URL.
  *
- * Mermaid handling (no Puppeteer):
- *   - Extract all ```mermaid fenced blocks
- *   - Render each one to SVG using the `mermaid` library running inside a
- *     JSDOM-provided fake DOM
- *   - Inline the SVG directly into the HTML
- *   - Drive's HTML importer handles inline SVG well — diagrams come through
- *     as embedded images in the resulting Google Doc
- *   - If Mermaid rendering fails, the diagram source stays in the doc as a
- *     styled <pre> code block so nothing is lost
+ *   ```mermaid\nsequenceDiagram\nA->>B: hi\n```
+ *     ↓ becomes
+ *   <img src="https://mermaid.ink/img/<base64-pako-encoded source>" />
  *
- * Why this approach (vs Puppeteer):
- *   - No 170MB Chromium download — Firebase build stays fast
- *   - No browser cold-start latency on every export
- *   - SVG renders crisper than PNG in Google Docs
- *   - Trade-off: very advanced Mermaid features that require a real browser
- *     (custom icons, certain layouts) may not work. For BRD use cases —
- *     sequenceDiagrams, flowcharts, ER diagrams — this is plenty.
+ * Why this approach (after trying JSDOM and Chromium):
+ *   - JSDOM lacks CSSStyleSheet which Mermaid 11+ requires → fails server-side
+ *   - puppeteer-core + @sparticuz/chromium fails on Firebase App Hosting
+ *     (missing system libs like libnss3 that we can't install)
+ *   - mermaid.ink takes the source as a URL, no server-side rendering needed
+ *   - Word and PDF readers load the image when the file is opened (same
+ *     mechanism as any embedded image in a Word doc)
+ *   - Mermaid.live link is provided alongside so editors can tweak the diagram
+ *
+ * Trade-off: the image only loads if the reader has internet access. For
+ * BRDs shared with clients via Drive, that's always true.
  */
 
 import { marked } from "marked";
@@ -38,8 +36,8 @@ export interface RenderResult {
 }
 
 export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderResult> {
-  // Step 1: extract Mermaid blocks and render each to SVG (or fallback).
-  const mermaidBlocks: Array<{ code: string; placeholder: string; renderedSvg?: string; error?: string }> = [];
+  // Step 1: extract Mermaid blocks and prepare their replacement HTML.
+  const mermaidBlocks: Array<{ code: string; placeholder: string; imgUrl?: string; liveUrl?: string; error?: string }> = [];
   let blockIdx = 0;
 
   const mdWithPlaceholders = markdown.replace(MERMAID_FENCE_RE, (_full, code) => {
@@ -54,18 +52,18 @@ export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderR
     return placeholder;
   });
 
-  // Render each Mermaid block sequentially (the mermaid lib isn't safe under
-  // concurrent renders inside one JSDOM)
-  for (let i = 0; i < mermaidBlocks.length; i++) {
+  // Step 2: build mermaid.ink + mermaid.live URLs for each block. These are
+  // synchronous (just base64 encoding) — no network call from our server.
+  for (const block of mermaidBlocks) {
     try {
-      const svg = await renderMermaidToSvg(mermaidBlocks[i].code, i);
-      mermaidBlocks[i].renderedSvg = svg;
+      block.imgUrl = buildMermaidInkUrl(block.code);
+      block.liveUrl = buildMermaidLiveUrl(block.code);
     } catch (e: any) {
-      mermaidBlocks[i].error = e?.message || String(e);
+      block.error = e?.message || String(e);
     }
   }
 
-  // Step 2: render the rest of the Markdown to HTML.
+  // Step 3: render the rest of the Markdown to HTML.
   marked.setOptions({
     gfm: true,        // tables, fenced code, strikethrough, autolinks
     breaks: false,
@@ -74,13 +72,16 @@ export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderR
 
   let html = await marked.parse(mdWithPlaceholders, { async: true });
 
-  // Step 3: replace the Mermaid placeholders with rendered SVGs (or fallback code).
+  // Step 4: replace placeholders with <img> tags + edit link.
   for (let i = 0; i < mermaidBlocks.length; i++) {
     const block = mermaidBlocks[i];
-    const replacementHtml = block.renderedSvg
-      ? `<div style="margin: 16px 0; text-align: center;">${block.renderedSvg}</div>`
+    const replacementHtml = block.imgUrl && block.liveUrl
+      ? `<div style="margin:16px 0;text-align:center;">
+           <img src="${block.imgUrl}" alt="Diagram ${i + 1}" style="max-width:100%;height:auto;border:1px solid #e5e7eb;border-radius:6px;padding:8px;background:#fff;" />
+           <p style="margin:6px 0 0;font-size:9pt;color:#666;"><a href="${block.liveUrl}" style="color:#1a73e8;text-decoration:none;">View or edit this diagram on mermaid.live →</a></p>
+         </div>`
       : `<div style="background:#fff7ed;border:1px solid #fdba74;border-radius:6px;padding:12px;margin:16px 0;font-size:10pt;">
-           <p style="margin:0 0 8px;font-weight:bold;color:#9a3412;">⚠ Diagram couldn't be rendered automatically</p>
+           <p style="margin:0 0 8px;font-weight:bold;color:#9a3412;">⚠ Diagram couldn't be embedded</p>
            ${block.error ? `<p style="margin:0 0 8px;color:#78350f;font-size:9pt;">Reason: ${escapeHtml(block.error.slice(0, 200))}</p>` : ""}
            <pre style="background:#fff;padding:8px;border:1px solid #fed7aa;border-radius:4px;font-family:'Courier New',monospace;font-size:9pt;white-space:pre-wrap;margin:0;">${escapeHtml(block.code)}</pre>
          </div>`;
@@ -89,7 +90,7 @@ export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderR
     html = html.replace(commentRe, replacementHtml).replace(bareCommentRe, replacementHtml);
   }
 
-  // Step 4: wrap in a full HTML document with inline styles.
+  // Step 5: wrap in a full HTML document with inline styles.
   const wrapped = wrapHtmlForDriveImport(html);
 
   return {
@@ -97,7 +98,7 @@ export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderR
     diagnostics: {
       totalLength: wrapped.length,
       mermaidBlocks: mermaidBlocks.length,
-      mermaidRendered: mermaidBlocks.filter(b => !!b.renderedSvg).length,
+      mermaidRendered: mermaidBlocks.filter(b => !!b.imgUrl).length,
       mermaidFailed: mermaidBlocks
         .map((b, i) => b.error ? { index: i, error: b.error.slice(0, 200) } : null)
         .filter((x): x is { index: number; error: string } => !!x),
@@ -106,70 +107,39 @@ export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderR
 }
 
 /**
- * Render a single Mermaid block to SVG using the `mermaid` library inside a
- * JSDOM-provided fake DOM. Lazy-imports both libraries so the cold start
- * doesn't pay the cost when no export is happening.
+ * Build a mermaid.ink image URL for the diagram. mermaid.ink expects the
+ * source to be base64url-encoded (RFC 4648 §5: '+/' → '-_', no padding) and
+ * appended to its /img/ path. We use 'pako' compression for shorter URLs on
+ * large diagrams — except pako would be another dep, and most BRD diagrams
+ * are small. Plain base64url works for diagrams under ~2KB which is the
+ * vast majority.
  */
-async function renderMermaidToSvg(code: string, blockIndex: number): Promise<string> {
-  // Lazy imports
-  const { JSDOM } = await import("jsdom");
-  const dom = new JSDOM(
-    `<!DOCTYPE html><html><head></head><body><div id="render-target"></div></body></html>`,
-    { pretendToBeVisual: true, runScripts: "outside-only" }
-  );
+function buildMermaidInkUrl(code: string): string {
+  const b64 = base64UrlEncode(code);
+  return `https://mermaid.ink/img/${b64}?type=png`;
+}
 
-  // Mermaid checks for window/document/navigator — wire up JSDOM as the globals
-  // for this render.
-  const prevWindow = (globalThis as any).window;
-  const prevDocument = (globalThis as any).document;
-  const prevNavigator = (globalThis as any).navigator;
+/**
+ * Build a mermaid.live edit URL with the diagram source pre-loaded. Uses the
+ * same base64url-encoded JSON config format mermaid.live's #base64: handler
+ * accepts.
+ */
+function buildMermaidLiveUrl(code: string): string {
+  const state = {
+    code,
+    mermaid: { theme: "default" },
+    autoSync: true,
+    updateDiagram: true,
+  };
+  const json = JSON.stringify(state);
+  const b64 = base64UrlEncode(json);
+  return `https://mermaid.live/edit#base64:${b64}`;
+}
 
-  (globalThis as any).window = dom.window as any;
-  (globalThis as any).document = dom.window.document as any;
-  (globalThis as any).navigator = dom.window.navigator as any;
-  (globalThis as any).HTMLElement = dom.window.HTMLElement as any;
-  (globalThis as any).SVGElement = (dom.window as any).SVGElement;
-  (globalThis as any).Element = dom.window.Element as any;
-  (globalThis as any).Node = dom.window.Node as any;
-
-  try {
-    const mermaidMod: any = await import("mermaid");
-    const mermaid = mermaidMod.default || mermaidMod;
-
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: "default",
-      securityLevel: "loose",
-      flowchart: { useMaxWidth: false, htmlLabels: true },
-      sequence: { useMaxWidth: false, mirrorActors: false },
-    });
-
-    const id = `mermaid-export-${blockIndex}-${Date.now()}`;
-    const result = await mermaid.render(id, code);
-    // mermaid.render returns { svg, ... } on v10+, or just the svg string on older versions
-    const svg = typeof result === "string" ? result : result?.svg;
-    if (!svg) throw new Error("Mermaid render returned no SVG");
-
-    // Strip the explicit width/height so Drive sizes the image responsively.
-    // Also strip any <foreignObject> elements — Drive's HTML importer strips
-    // them anyway and they cause rendering noise in the doc.
-    let cleaned = String(svg)
-      .replace(/<foreignObject[\s\S]*?<\/foreignObject>/g, "")
-      .replace(/\swidth="[^"]+"/i, ' width="600"')
-      .replace(/\sheight="[^"]+"/i, "");
-
-    // Ensure xmlns is present (some Mermaid versions omit it on the root)
-    if (!/<svg[^>]*xmlns=/.test(cleaned)) {
-      cleaned = cleaned.replace(/<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
-    }
-
-    return cleaned;
-  } finally {
-    // Restore prior globals so we don't leak JSDOM into other code paths
-    (globalThis as any).window = prevWindow;
-    (globalThis as any).document = prevDocument;
-    (globalThis as any).navigator = prevNavigator;
-  }
+/** RFC 4648 base64url: '+/' → '-_', strip padding. Works in Node + edge. */
+function base64UrlEncode(input: string): string {
+  const b64 = Buffer.from(input, "utf-8").toString("base64");
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function wrapHtmlForDriveImport(bodyHtml: string): string {
