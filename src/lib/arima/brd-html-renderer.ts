@@ -44,7 +44,12 @@ export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderR
 
   const mdWithPlaceholders = markdown.replace(MERMAID_FENCE_RE, (_full, code) => {
     const placeholder = `\n\n<!--MERMAID_BLOCK_${blockIdx}-->\n\n`;
-    mermaidBlocks.push({ code: String(code).trim(), placeholder });
+    // The AI sometimes emits Mermaid blocks with collapsed whitespace —
+    // e.g. "sequenceDiagram    participant F as Field    participant A as Admin"
+    // all on one line, which mermaid rejects. Normalize so each statement
+    // sits on its own line.
+    const normalized = normalizeMermaidSource(String(code));
+    mermaidBlocks.push({ code: normalized, placeholder });
     blockIdx++;
     return placeholder;
   });
@@ -74,7 +79,11 @@ export async function renderBrdMarkdownToHtml(markdown: string): Promise<RenderR
     const block = mermaidBlocks[i];
     const replacementHtml = block.renderedSvg
       ? `<div style="margin: 16px 0; text-align: center;">${block.renderedSvg}</div>`
-      : `<pre style="background:#f5f7fa;padding:12px;border:1px solid #e5e7eb;border-radius:6px;font-family:'Courier New',monospace;font-size:11pt;white-space:pre-wrap;">[Mermaid diagram — paste into mermaid.live to view]\n${escapeHtml(block.code)}</pre>`;
+      : `<div style="background:#fff7ed;border:1px solid #fdba74;border-radius:6px;padding:12px;margin:16px 0;font-size:10pt;">
+           <p style="margin:0 0 8px;font-weight:bold;color:#9a3412;">⚠ Diagram couldn't be rendered automatically</p>
+           ${block.error ? `<p style="margin:0 0 8px;color:#78350f;font-size:9pt;">Reason: ${escapeHtml(block.error.slice(0, 200))}</p>` : ""}
+           <pre style="background:#fff;padding:8px;border:1px solid #fed7aa;border-radius:4px;font-family:'Courier New',monospace;font-size:9pt;white-space:pre-wrap;margin:0;">${escapeHtml(block.code)}</pre>
+         </div>`;
     const commentRe = new RegExp(`<p>\\s*<!--MERMAID_BLOCK_${i}-->\\s*</p>`, "g");
     const bareCommentRe = new RegExp(`<!--MERMAID_BLOCK_${i}-->`, "g");
     html = html.replace(commentRe, replacementHtml).replace(bareCommentRe, replacementHtml);
@@ -194,6 +203,49 @@ hr { border: none; border-top: 1px solid #e5e7eb; margin: 16pt 0; }
 ${bodyHtml}
 </body>
 </html>`;
+}
+
+/**
+ * Normalize Mermaid source by inserting line breaks before statement keywords
+ * when the AI emitted them collapsed on one line. Mermaid's parser requires
+ * statements to be newline-separated, but Markdown rendering and AI output
+ * sometimes lose those breaks.
+ *
+ * Approach: if the code is suspiciously short on newlines but long in length,
+ * inject `\n` before each known statement keyword. Conservative — if it's
+ * already well-formed (lots of newlines), we leave it alone.
+ */
+function normalizeMermaidSource(raw: string): string {
+  const code = raw.trim();
+  if (!code) return code;
+
+  // If the block already has plenty of newlines relative to its length, trust it.
+  const lineCount = code.split(/\r?\n/).length;
+  if (lineCount >= 3 && code.length / lineCount < 80) {
+    return code;
+  }
+
+  // Statement-starting keywords that should always begin a new line.
+  // Order matters: longer first to avoid partial matches.
+  const STATEMENT_KEYWORDS = [
+    "sequenceDiagram", "flowchart", "graph", "classDiagram", "stateDiagram",
+    "stateDiagram-v2", "erDiagram", "journey", "gantt", "pie", "mindmap",
+    "timeline", "participant", "actor", "Note", "loop", "alt", "opt", "par",
+    "rect", "activate", "deactivate", "autonumber", "end", "subgraph",
+    "title", "section", "class",
+  ];
+
+  let result = code;
+  for (const kw of STATEMENT_KEYWORDS) {
+    // Insert newline before the keyword unless it's already at line start.
+    // Match the keyword as a whole word (followed by whitespace or end).
+    const re = new RegExp(`(?<!^|\\n)\\s+(${kw})\\b`, "g");
+    result = result.replace(re, `\n$1`);
+  }
+
+  // Collapse runs of blank lines to single newlines.
+  result = result.replace(/\n{3,}/g, "\n\n");
+  return result.trim();
 }
 
 function escapeHtml(s: string): string {

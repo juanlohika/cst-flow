@@ -1,24 +1,28 @@
 /**
  * Phase 22.3 — BRD export to Google Drive as .docx (editable) + .pdf (read-only).
  *
- * Replaces the Google-Docs HTML upload approach (v3) which couldn't get tables
- * and Mermaid to render correctly through Drive's importer. Now:
+ * v4.1 — PDF via Drive's native conversion. The original v4 used puppeteer-core
+ * + @sparticuz/chromium for PDF rendering but that fails on Firebase App Hosting
+ * because the Cloud Run base image is missing libnss3 / libatk / libcups etc.
+ * Switching to Drive's native Word→Doc→PDF conversion sidesteps Chromium
+ * entirely — Google Docs does the rendering, which is also what teams will
+ * see when they open the Word file anyway.
  *
+ * Flow:
  *   1. Render Markdown → HTML once (with Mermaid SVGs inlined). Reuses the
  *      same renderer as the in-CST-OS BRD viewer so what you see is what
  *      gets exported.
  *   2. From that HTML, generate a .docx using `html-to-docx` (proven path —
- *      this is the same library the existing BRD Maker app uses, and its
- *      table rendering works).
- *   3. From the same HTML, render a .pdf using puppeteer-core + Chromium
- *      (real headless browser → tables + Mermaid SVG render identically to
- *      the BRD viewer).
- *   4. Upload BOTH files to the configured Drive folder. Word file opens in
- *      Google Docs viewer (editable on click); PDF is the read-only version
+ *      same library the existing BRD Maker app uses).
+ *   3. Upload the .docx to Drive.
+ *   4. Make a temporary Google Doc copy (Drive converts the .docx on upload)
+ *      and export that as PDF via drive.files.export. Upload the PDF bytes
+ *      as a separate file alongside the .docx, then delete the temp Doc.
+ *   5. Both .docx + .pdf live in the configured Drive folder. Word opens in
+ *      Google Docs viewer (editable); PDF is the read-only version
  *      Eliana/ARIMA can share with clients.
  *
- * If either generator fails, the other still uploads — we record per-format
- * diagnostics so failures are visible in the /eliana modal.
+ * Per-format diagnostics still recorded so failures stay visible in /eliana.
  */
 import { db } from "@/db";
 import { arimaRequests } from "@/db/schema";
@@ -88,29 +92,23 @@ export async function exportBrdToDrive(args: { requestId: string }): Promise<Brd
       length: html.length,
       mermaidBlocks: htmlDiag.mermaidBlocks,
       mermaidRendered: htmlDiag.mermaidRendered,
-      mermaidFailed: htmlDiag.mermaidFailed.length,
+      mermaidFailedCount: htmlDiag.mermaidFailed.length,
+      mermaidFailures: htmlDiag.mermaidFailed, // [{ index, error }] for debugging
     };
 
-    // ─── Step 2: generate .docx + .pdf in parallel ──────────────────────────
+    // ─── Step 2: generate .docx (PDF comes later via Drive's converter) ─────
     const title = row.title.slice(0, 200);
     const safeTitleForFilename = title.replace(/[^a-zA-Z0-9 _-]/g, "").slice(0, 100) || "BRD";
 
-    const [docxBuf, pdfBuf] = await Promise.all([
-      generateDocxBuffer(html, title).catch((e: any) => {
-        diagnostics.steps.docx = { error: String(e?.message || e).slice(0, 500) };
-        return null;
-      }),
-      generatePdfBuffer(html).catch((e: any) => {
-        diagnostics.steps.pdf = { error: String(e?.message || e).slice(0, 500) };
-        return null;
-      }),
-    ]);
+    const docxBuf = await generateDocxBuffer(html, title).catch((e: any) => {
+      diagnostics.steps.docx = { error: String(e?.message || e).slice(0, 500) };
+      return null;
+    });
 
     if (docxBuf) diagnostics.steps.docx = { ...(diagnostics.steps.docx || {}), bytes: docxBuf.length };
-    if (pdfBuf) diagnostics.steps.pdf = { ...(diagnostics.steps.pdf || {}), bytes: pdfBuf.length };
 
-    if (!docxBuf && !pdfBuf) {
-      throw new Error("Both Word and PDF generation failed — see diagnostics for details.");
+    if (!docxBuf) {
+      throw new Error("Word generation failed — see diagnostics. PDF can't be produced without it.");
     }
 
     // ─── Step 3: Drive auth + folder check ──────────────────────────────────
@@ -158,7 +156,8 @@ export async function exportBrdToDrive(args: { requestId: string }): Promise<Brd
     let pdfFileId = existingPdfId || "";
     let pdfUrl = (row as any).brdPdfUrl as string | null || "";
 
-    if (docxBuf) {
+    // Upload .docx
+    {
       const result = await uploadOrUpdateFile(drive, {
         existingFileId: existingDocxId,
         folderId: cfg.driveFolderId,
@@ -171,7 +170,22 @@ export async function exportBrdToDrive(args: { requestId: string }): Promise<Brd
       diagnostics.steps.docx.uploaded = true;
     }
 
-    if (pdfBuf) {
+    // Generate PDF via Drive's native Word→Doc→PDF conversion.
+    // We do this even on re-export so the PDF stays in sync with the latest
+    // .docx content. Steps:
+    //   a. Upload the same .docx buffer to a temp Google Doc (Drive converts
+    //      on the fly via mimeType=application/vnd.google-apps.document).
+    //   b. drive.files.export({mimeType: 'application/pdf'}) returns the PDF bytes.
+    //   c. Upload those PDF bytes as the final .pdf alongside the .docx.
+    //   d. Delete the temp Google Doc — we only kept it for the conversion.
+    try {
+      const pdfBuf = await generatePdfViaDrive(drive, {
+        docxBuffer: docxBuf,
+        folderId: cfg.driveFolderId,
+        title: `${safeTitleForFilename}__pdfsource_temp`,
+      });
+      diagnostics.steps.pdf = { bytes: pdfBuf.length, method: "drive-native" };
+
       const result = await uploadOrUpdateFile(drive, {
         existingFileId: existingPdfId,
         folderId: cfg.driveFolderId,
@@ -182,6 +196,11 @@ export async function exportBrdToDrive(args: { requestId: string }): Promise<Brd
       pdfFileId = result.id;
       pdfUrl = result.webViewLink;
       diagnostics.steps.pdf.uploaded = true;
+    } catch (e: any) {
+      diagnostics.steps.pdf = {
+        error: String(e?.message || e).slice(0, 500),
+        method: "drive-native",
+      };
     }
 
     diagnostics.totalMs = Date.now() - startedAt;
@@ -247,32 +266,46 @@ async function generateDocxBuffer(html: string, title: string): Promise<Buffer> 
   return Buffer.from(result as any);
 }
 
-// ─── .pdf generation via puppeteer-core + chromium ─────────────────────────
-async function generatePdfBuffer(html: string): Promise<Buffer> {
-  // Lazy imports — only loaded when an export actually runs
-  const chromiumMod: any = await import("@sparticuz/chromium");
-  const chromium = chromiumMod.default || chromiumMod;
-  const puppeteer: any = await import("puppeteer-core");
-
-  const executablePath = await chromium.executablePath();
-  const browser = await puppeteer.launch({
-    args: chromium.args,
-    defaultViewport: chromium.defaultViewport,
-    executablePath,
-    headless: chromium.headless ?? true,
+// ─── .pdf generation via Drive's native Word→Doc→PDF conversion ────────────
+async function generatePdfViaDrive(
+  drive: any,
+  args: { docxBuffer: Buffer; folderId: string; title: string }
+): Promise<Buffer> {
+  // Step a: upload the .docx as a temp Google Doc (Drive converts on the fly)
+  const tempDoc = await drive.files.create({
+    requestBody: {
+      name: args.title,
+      mimeType: "application/vnd.google-apps.document",
+      parents: [args.folderId],
+    },
+    media: {
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      body: Readable.from(args.docxBuffer),
+    },
+    fields: "id",
+    supportsAllDrives: true,
   });
+  const tempDocId = tempDoc.data.id;
+  if (!tempDocId) throw new Error("Drive didn't return an id for the temp Doc copy");
+
   try {
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0", timeout: 60_000 });
-    const pdfBuf = await page.pdf({
-      format: "A4",
-      margin: { top: "20mm", right: "18mm", bottom: "20mm", left: "18mm" },
-      printBackground: true,
-      preferCSSPageSize: false,
-    });
-    return Buffer.isBuffer(pdfBuf) ? pdfBuf : Buffer.from(pdfBuf);
+    // Step b: export the temp Doc as PDF
+    const resp = await drive.files.export(
+      { fileId: tempDocId, mimeType: "application/pdf" },
+      { responseType: "arraybuffer" }
+    );
+    // googleapis returns the buffer in resp.data as an ArrayBuffer
+    const data = resp.data;
+    if (!data) throw new Error("Drive PDF export returned empty body");
+    return Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
   } finally {
-    await browser.close().catch(() => {});
+    // Step d: delete the temp Doc — we only kept it for the conversion.
+    // Wrap in try/catch so a cleanup failure doesn't break the export.
+    try {
+      await drive.files.delete({ fileId: tempDocId, supportsAllDrives: true });
+    } catch (cleanupErr: any) {
+      console.warn("[drive-export] failed to delete temp Doc:", cleanupErr?.message);
+    }
   }
 }
 
