@@ -22,6 +22,8 @@ import ProjectSettingsView from "@/components/projects/ProjectSettingsView";
 import BufferModal from "@/components/timeline/BufferModal";
 import ProjectSettingsModal from "@/components/projects/ProjectSettingsModal";
 import ContactsTab from "@/components/accounts/ContactsTab";
+import HealthChip from "@/components/accounts/HealthChip";
+import type { HealthColor } from "@/lib/accounts/health-score";
 import { Share, Mail, Copy, Check, X, Settings } from "lucide-react";
 
 
@@ -128,18 +130,20 @@ function MeetingPrepContent() {
   const [selectedProfile, setSelectedProfile] = useState<ClientProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [healthMap, setHealthMap] = useState<Record<string, { color: HealthColor; score: number; reasons: string[]; isCritical: boolean; lastAssessedAt: string | null }>>({});
 
   // Table filters + pagination
   const [search, setSearch] = useState("");
   const [filterIndustry, setFilterIndustry] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
+  const [filterHealth, setFilterHealth] = useState<"" | HealthColor>("");
   const [page, setPage] = useState(1);
   const [sortKey, setSortKey] = useState<"companyName" | "industry" | "updatedAt">("updatedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const [formData, setFormData] = useState(EMPTY_FORM);
 
-  useEffect(() => { loadProfiles(); }, []);
+  useEffect(() => { loadProfiles(); loadHealth(); }, []);
 
   const loadProfiles = async () => {
     setLoading(true);
@@ -148,6 +152,16 @@ function MeetingPrepContent() {
       if (res.ok) setProfiles(await res.json());
     } catch { /* silent */ }
     setLoading(false);
+  };
+
+  const loadHealth = async () => {
+    try {
+      const res = await fetch("/api/accounts/health");
+      if (res.ok) {
+        const data = await res.json();
+        setHealthMap(data?.accounts || {});
+      }
+    } catch { /* silent — list still renders without color */ }
   };
 
   // ── Filtered / sorted / paged list ──────────────────────────────────────────
@@ -163,6 +177,13 @@ function MeetingPrepContent() {
     }
     if (filterIndustry) rows = rows.filter(p => p.industry === filterIndustry);
     if (filterStatus) rows = rows.filter(p => p.engagementStatus === filterStatus);
+    if (filterHealth) {
+      rows = rows.filter(p => {
+        const h = healthMap[p.id];
+        if (!h) return filterHealth === "grey";
+        return h.color === filterHealth;
+      });
+    }
 
     rows = [...rows].sort((a, b) => {
       const av = a[sortKey] as string;
@@ -171,7 +192,19 @@ function MeetingPrepContent() {
     });
 
     return rows;
-  }, [profiles, search, filterIndustry, filterStatus, sortKey, sortDir]);
+  }, [profiles, search, filterIndustry, filterStatus, filterHealth, healthMap, sortKey, sortDir]);
+
+  // Aggregate counts for the toolbar pills
+  const healthCounts = useMemo(() => {
+    const counts = { green: 0, yellow: 0, red: 0, grey: 0, critical: 0 };
+    for (const p of profiles) {
+      const h = healthMap[p.id];
+      if (!h) { counts.grey++; continue; }
+      counts[h.color]++;
+      if (h.isCritical) counts.critical++;
+    }
+    return counts;
+  }, [profiles, healthMap]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -316,9 +349,9 @@ function MeetingPrepContent() {
               </select>
             </div>
 
-            {(search || filterIndustry || filterStatus) && (
-              <button 
-                onClick={() => { setSearch(""); setFilterIndustry(""); setFilterStatus(""); setPage(1); }} 
+            {(search || filterIndustry || filterStatus || filterHealth) && (
+              <button
+                onClick={() => { setSearch(""); setFilterIndustry(""); setFilterStatus(""); setFilterHealth(""); setPage(1); }}
                 className="text-[11px] font-bold text-text-muted hover:text-text-primary px-2 transition-colors uppercase tracking-widest"
               >
                 Clear
@@ -326,10 +359,48 @@ function MeetingPrepContent() {
             )}
 
             <div className="ml-auto flex items-center gap-2">
-               <button onClick={loadProfiles} className="p-1.5 text-text-muted hover:text-text-primary transition-colors">
+               <button onClick={() => { loadProfiles(); loadHealth(); }} className="p-1.5 text-text-muted hover:text-text-primary transition-colors">
                   <Loader2 className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                </button>
             </div>
+          </div>
+
+          {/* ── Health filter strip (counts + click-to-filter) ─────────────── */}
+          <div className="h-[40px] flex-shrink-0 flex items-center gap-2 px-4 border-b border-border-default bg-white">
+            <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">Health</span>
+            <HealthFilterPill
+              color="red"
+              label="Critical"
+              count={healthCounts.red}
+              active={filterHealth === "red"}
+              onClick={() => { setFilterHealth(filterHealth === "red" ? "" : "red"); setPage(1); }}
+            />
+            <HealthFilterPill
+              color="yellow"
+              label="Watch"
+              count={healthCounts.yellow}
+              active={filterHealth === "yellow"}
+              onClick={() => { setFilterHealth(filterHealth === "yellow" ? "" : "yellow"); setPage(1); }}
+            />
+            <HealthFilterPill
+              color="green"
+              label="Healthy"
+              count={healthCounts.green}
+              active={filterHealth === "green"}
+              onClick={() => { setFilterHealth(filterHealth === "green" ? "" : "green"); setPage(1); }}
+            />
+            <HealthFilterPill
+              color="grey"
+              label="Unassessed"
+              count={healthCounts.grey}
+              active={filterHealth === "grey"}
+              onClick={() => { setFilterHealth(filterHealth === "grey" ? "" : "grey"); setPage(1); }}
+            />
+            {healthCounts.critical > 0 && (
+              <span className="ml-2 text-[10px] font-black text-rose-700 uppercase tracking-widest bg-rose-50 px-2 py-1 rounded-full border border-rose-200">
+                ⚠ {healthCounts.critical} need attention
+              </span>
+            )}
           </div>
 
           {/* ── Main Content Area ─────────────────────────────────────────────── */}
@@ -368,6 +439,7 @@ function MeetingPrepContent() {
                         <SortHeader label="Company / Account" col="companyName" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                         <SortHeader label="Industry" col="industry" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                         <th className="px-3 py-2 text-[11px] font-bold text-text-muted border-b border-border-default select-none uppercase tracking-widest">Modules</th>
+                        <th className="px-3 py-2 text-[11px] font-bold text-text-muted border-b border-border-default select-none uppercase tracking-widest">Health</th>
                         <th className="px-3 py-2 text-[11px] font-bold text-text-muted border-b border-border-default select-none uppercase tracking-widest">Status</th>
                         <th className="px-3 py-2 text-[11px] font-bold text-text-muted border-b border-border-default select-none uppercase tracking-widest">Preps</th>
                         <SortHeader label="Updated" col="updatedAt" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -411,6 +483,13 @@ function MeetingPrepContent() {
                                 ))}
                                 {modules.length > 2 && <span className="text-[10px] text-text-muted">+{modules.length - 2}</span>}
                               </div>
+                            </td>
+                            <td className="px-3 py-3">
+                              {(() => {
+                                const h = healthMap[profile.id];
+                                if (!h) return <HealthChip color="grey" showScore={false} />;
+                                return <HealthChip color={h.color} score={h.score} reasons={h.reasons} />;
+                              })()}
                             </td>
                             <td className="px-3 py-3">
                                <div className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[11px] font-medium ${STATUS_STYLES[profile.engagementStatus] || "bg-slate-50 text-slate-500 border-slate-200"}`}>
@@ -624,6 +703,29 @@ function SortHeader({ label, col, sortKey, sortDir, onSort }: {
         )}
       </button>
     </th>
+  );
+}
+
+// ─── Health Filter Pill ───────────────────────────────────────────────────────
+function HealthFilterPill({ color, label, count, active, onClick }: {
+  color: HealthColor; label: string; count: number; active: boolean; onClick: () => void;
+}) {
+  const palettes: Record<HealthColor, { bg: string; activeBg: string; text: string; dot: string }> = {
+    red:    { bg: "bg-white",      activeBg: "bg-rose-100",    text: "text-rose-700",    dot: "bg-rose-500"    },
+    yellow: { bg: "bg-white",      activeBg: "bg-amber-100",   text: "text-amber-700",   dot: "bg-amber-500"   },
+    green:  { bg: "bg-white",      activeBg: "bg-emerald-100", text: "text-emerald-700", dot: "bg-emerald-500" },
+    grey:   { bg: "bg-white",      activeBg: "bg-slate-200",   text: "text-slate-600",   dot: "bg-slate-400"   },
+  };
+  const p = palettes[color];
+  return (
+    <button
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full border text-[10px] font-black uppercase tracking-widest transition-colors ${active ? `${p.activeBg} border-current ${p.text}` : `${p.bg} ${p.text} border-slate-200 hover:border-slate-300`}`}
+    >
+      <span className={`w-2 h-2 rounded-full ${p.dot}`} />
+      {label}
+      <span className="opacity-70">{count}</span>
+    </button>
   );
 }
 

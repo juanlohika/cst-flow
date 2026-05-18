@@ -6,6 +6,8 @@ import {
   Activity, Loader2, Sparkles, Star, TrendingUp, TrendingDown, AlertTriangle,
   CheckCircle2, ChevronDown, ChevronUp, FileText, RotateCcw, Plus, X,
 } from "lucide-react";
+import { computeHealth, HEALTH_COLORS, type HealthColor } from "@/lib/accounts/health-score";
+import HealthChip from "./HealthChip";
 
 interface Assessment {
   id: string;
@@ -102,13 +104,30 @@ export default function AccountHealthPanel({ accountId }: Props) {
   const latest = assessments[0] || null;
   const history = assessments.slice(1);
 
+  // Derive the color from the latest assessment, locally — same logic the API uses.
+  const health = latest ? computeHealth({
+    satisfaction: latest.satisfaction,
+    ebaDecisionMaker: latest.ebaDecisionMaker,
+    ebaAdmin: latest.ebaAdmin,
+    v5Readiness: latest.v5Readiness,
+    isTarkieSsot: latest.isTarkieSsot,
+    thirdPartySsot: latest.thirdPartySsot,
+    contactChangeRecent: latest.contactChangeRecent,
+  }) : null;
+  const palette = HEALTH_COLORS[health?.color || "grey"];
+
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-      <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+      {/* Top color stripe — driven by computed health */}
+      <div className="h-1.5 w-full" style={{ backgroundColor: palette.hex }} />
+      <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap">
         <Activity className="w-4 h-4 text-indigo-500" />
         <h3 className="text-[11px] font-black text-slate-800 uppercase tracking-widest">
           Account Health
         </h3>
+        {health && (
+          <HealthChip color={health.color} score={health.score} reasons={health.reasons} size="md" />
+        )}
         <div className="ml-auto flex items-center gap-2">
           {latest && (
             <span className="text-[10px] font-bold text-slate-400">
@@ -125,6 +144,17 @@ export default function AccountHealthPanel({ accountId }: Props) {
           </button>
         </div>
       </div>
+
+      {/* Critical reasons banner — when red and there are specific reasons */}
+      {health?.isCritical && health.reasons.length > 0 && (
+        <div className="px-5 py-2.5 bg-rose-50 border-b border-rose-100 flex items-start gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-rose-700">Critical signals</p>
+            <p className="text-[11px] text-rose-700 mt-0.5">{health.reasons.join(" · ")}</p>
+          </div>
+        </div>
+      )}
 
       <div className="p-5 space-y-5">
         {loading ? (
