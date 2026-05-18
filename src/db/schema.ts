@@ -333,6 +333,49 @@ export const accountAssessments = sqliteTable("AccountAssessment", {
   updatedAt:               text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+// Phase C: campaign-driven Account Health assessment.
+//
+// AssessmentCampaign is an admin-initiated batch that asks every Primary RM
+// to refresh the Health Assessment for the accounts they own (within the
+// campaign's target scope). The campaign drives:
+//   - which (RM, account) pairs need a fresh assessment
+//   - email notifications when published
+//   - per-campaign aggregate reports (Phase D)
+//
+// Targeting: at publish time, we compute the queue using
+// accountMemberships.isPrimary=true ∩ targetScope filter. Assessments
+// submitted while a campaign is active auto-bind to it via campaignId.
+export const assessmentCampaigns = sqliteTable("AssessmentCampaign", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  title:             text("title").notNull(),
+  description:       text("description"),
+  ownerUserId:       text("ownerUserId").notNull(),       // admin who created it
+  status:            text("status").default("draft").notNull(), // draft | published | closed | archived
+  // JSON: { accountStatuses: string[], industries: string[], modulesAnyOf: string[], specificAccountIds: string[] }
+  targetScope:       text("targetScope"),
+  opensAt:           text("opensAt"),                     // when publish fires
+  closesAt:          text("closesAt"),                    // optional deadline shown in queue + emails
+  publishedAt:       text("publishedAt"),
+  closedAt:          text("closedAt"),
+  createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:         text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// One row per (campaign, rmUser, account) — the "this account needs assessing
+// in this campaign" record. Created at publish time. Tracks whether the email
+// notification was sent and whether the RM has submitted yet.
+export const assessmentCampaignTargets = sqliteTable("AssessmentCampaignTarget", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  campaignId:        text("campaignId").notNull().references(() => assessmentCampaigns.id, { onDelete: "cascade" }),
+  rmUserId:          text("rmUserId").notNull(),          // Primary RM at publish time
+  clientProfileId:   text("clientProfileId").notNull(),
+  emailSentAt:       text("emailSentAt"),
+  emailError:        text("emailError"),
+  submittedAssessmentId: text("submittedAssessmentId"),   // FK to accountAssessments once submitted
+  submittedAt:       text("submittedAt"),
+  createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
+
 // Phase A: audit trail for bulk account/membership XLSX imports.
 // One row per upload attempt. The validation_report holds row-by-row
 // outcomes so admins can review past imports + diagnose failures.

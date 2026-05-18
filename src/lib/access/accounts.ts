@@ -109,6 +109,36 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS idx_AccountAssessment_client ON AccountAssessment(clientProfileId, submittedAt DESC)`); } catch {}
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS idx_AccountAssessment_campaign ON AccountAssessment(campaignId)`); } catch {}
 
+    // Phase C: Assessment Campaigns
+    await db.run(sql`CREATE TABLE IF NOT EXISTS AssessmentCampaign (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT,
+      ownerUserId TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      targetScope TEXT,
+      opensAt TEXT,
+      closesAt TEXT,
+      publishedAt TEXT,
+      closedAt TEXT,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS AssessmentCampaignTarget (
+      id TEXT PRIMARY KEY,
+      campaignId TEXT NOT NULL,
+      rmUserId TEXT NOT NULL,
+      clientProfileId TEXT NOT NULL,
+      emailSentAt TEXT,
+      emailError TEXT,
+      submittedAssessmentId TEXT,
+      submittedAt TEXT,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (campaignId) REFERENCES AssessmentCampaign(id) ON DELETE CASCADE
+    )`);
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS idx_AssessmentCampaignTarget_rm ON AssessmentCampaignTarget(rmUserId, submittedAt)`); } catch {}
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS idx_AssessmentCampaignTarget_campaign ON AssessmentCampaignTarget(campaignId)`); } catch {}
+
     // Create ArimaRequest table if missing
     await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaRequest (
       id TEXT PRIMARY KEY,
