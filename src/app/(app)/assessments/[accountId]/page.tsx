@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
+import ForceLink from "@/components/ui/ForceLink";
 import {
   ArrowLeft, Loader2, Activity, CheckCircle2, AlertTriangle, Sparkles,
 } from "lucide-react";
@@ -182,9 +182,9 @@ function Content() {
   if (error || !account) {
     return (
       <div className="max-w-2xl mx-auto p-8">
-        <Link href="/assessments" className="inline-flex items-center gap-1 text-[12px] font-bold text-slate-500 hover:text-indigo-600 mb-4">
+        <ForceLink href="/assessments" className="inline-flex items-center gap-1 text-[12px] font-bold text-slate-500 hover:text-indigo-600 mb-4">
           <ArrowLeft className="w-3 h-3" /> Back to queue
-        </Link>
+        </ForceLink>
         <div className="bg-rose-50 border border-rose-200 rounded-2xl p-5 text-rose-700">
           <p className="font-bold mb-1">Couldn't load this assessment</p>
           <p className="text-[12px]">{error || "Account not found."}</p>
@@ -198,9 +198,9 @@ function Content() {
       {/* Top bar */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3">
-          <Link href="/assessments" className="inline-flex items-center gap-1 text-[12px] font-bold text-slate-500 hover:text-indigo-600">
+          <ForceLink href="/assessments" className="inline-flex items-center gap-1 text-[12px] font-bold text-slate-500 hover:text-indigo-600">
             <ArrowLeft className="w-3.5 h-3.5" /> Queue
-          </Link>
+          </ForceLink>
           <div className="h-4 w-px bg-slate-200" />
           <Activity className="w-4 h-4 text-indigo-500 shrink-0" />
           <div className="flex-1 min-w-0">
@@ -256,12 +256,12 @@ function Content() {
               "Fill out the sections above — preview updates as you go."
             )}
           </div>
-          <Link
+          <ForceLink
             href="/assessments"
             className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-[12px] font-black uppercase tracking-widest hover:border-rose-300"
           >
             Cancel
-          </Link>
+          </ForceLink>
           <button
             onClick={submit}
             disabled={submitting}

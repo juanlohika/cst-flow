@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import Link from "next/link";
+import ForceLink from "@/components/ui/ForceLink";
 import { useSession } from "next-auth/react";
 import {
   Activity, Loader2, FileText, Download, Sparkles, AlertTriangle,
@@ -218,7 +218,7 @@ function Content() {
             <div className="flex-1">
               <p className="font-bold">Sheet sync failed</p>
               <p className="mt-0.5">{sheetResult.error}</p>
-              <p className="text-[10px] mt-1 opacity-80">Make sure GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID is set under <Link href="/admin/google-integration" className="underline">/admin/google-integration</Link> and the folder is shared with the service account as Editor.</p>
+              <p className="text-[10px] mt-1 opacity-80">Make sure GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID is set under <ForceLink href="/admin/google-integration" className="underline">/admin/google-integration</ForceLink> and the folder is shared with the service account as Editor.</p>
               <button
                 onClick={resetCachedSheet}
                 className="mt-2 px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest bg-white border border-rose-300 text-rose-700 hover:bg-rose-100"
@@ -308,7 +308,7 @@ function Content() {
               <ul className="divide-y divide-slate-100">
                 {summary.accounts.filter(a => a.health.color === "red").map(a => (
                   <li key={a.accountId} className="px-5 py-3 hover:bg-rose-50">
-                    <Link href={`/accounts/${a.accountId}`} className="flex items-start gap-3 group">
+                    <ForceLink href={`/accounts/${a.accountId}`} className="flex items-start gap-3 group">
                       <div className="flex-1 min-w-0">
                         <p className="font-black text-[13px] text-rose-900 group-hover:underline">{a.companyName}</p>
                         <p className="text-[10px] text-rose-700 mt-0.5">{a.health.reasons.join(" · ")}</p>
@@ -316,7 +316,7 @@ function Content() {
                       </div>
                       <span className="shrink-0 text-[10px] font-bold text-rose-700">{a.industry}{a.primaryRmName ? ` · ${a.primaryRmName}` : ""}</span>
                       <ChevronRight className="w-4 h-4 text-rose-300 group-hover:text-rose-600 shrink-0" />
-                    </Link>
+                    </ForceLink>
                   </li>
                 ))}
               </ul>
@@ -479,7 +479,7 @@ function Content() {
                   {summary.accounts.map(a => (
                     <tr key={a.accountId} className="border-t border-slate-100 hover:bg-slate-50">
                       <td className="px-3 py-2">
-                        <Link href={`/accounts/${a.accountId}`} className="font-bold text-slate-800 hover:text-indigo-600">{a.companyName}</Link>
+                        <ForceLink href={`/accounts/${a.accountId}`} className="font-bold text-slate-800 hover:text-indigo-600">{a.companyName}</ForceLink>
                         {a.aiSummary && <p className="text-[10px] text-slate-500 line-clamp-1">{a.aiSummary}</p>}
                       </td>
                       <td className="px-3 py-2 text-slate-600">{a.industry}</td>

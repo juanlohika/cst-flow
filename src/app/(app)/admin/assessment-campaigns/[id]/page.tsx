@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
+import ForceLink from "@/components/ui/ForceLink";
 import { ArrowLeft, Loader2, Send, AlertTriangle, CheckCircle2, Mail, Edit2, Trash2, X, Save } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useSession } from "next-auth/react";
@@ -160,9 +160,9 @@ function Content() {
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-4">
-      <Link href="/admin/assessment-campaigns" className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-indigo-600">
+      <ForceLink href="/admin/assessment-campaigns" className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-indigo-600">
         <ArrowLeft className="w-3 h-3" /> Back to campaigns
-      </Link>
+      </ForceLink>
 
       {/* Header */}
       <section className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm">
@@ -298,7 +298,7 @@ function Content() {
               {targets.map(t => (
                 <tr key={t.id} className="border-t border-slate-100">
                   <td className="px-3 py-2">
-                    <Link href={`/accounts/${t.clientProfileId}`} className="text-indigo-700 font-bold hover:underline">{t.companyName || "—"}</Link>
+                    <ForceLink href={`/accounts/${t.clientProfileId}`} className="text-indigo-700 font-bold hover:underline">{t.companyName || "—"}</ForceLink>
                   </td>
                   <td className="px-3 py-2 text-slate-700">{t.rmName || "—"}</td>
                   <td className="px-3 py-2">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import ForceLink from "@/components/ui/ForceLink";
 import { Activity, ArrowRight } from "lucide-react";
 
 /**
@@ -46,7 +46,7 @@ export default function AssessmentQueueBanner() {
   const subline = bits.join(" · ");
 
   return (
-    <Link
+    <ForceLink
       href="/assessments"
       className="block bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-xl px-4 py-3 hover:from-indigo-100 hover:to-blue-100 transition-colors group"
     >
@@ -67,6 +67,6 @@ export default function AssessmentQueueBanner() {
           Open queue <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
         </span>
       </div>
-    </Link>
+    </ForceLink>
   );
 }

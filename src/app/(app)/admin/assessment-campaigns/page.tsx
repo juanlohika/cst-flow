@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import ForceLink from "@/components/ui/ForceLink";
 import { useRouter } from "next/navigation";
 import { Plus, Loader2, Mail, Users, CheckCircle2, AlertTriangle, Send, ChevronRight } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
@@ -167,7 +167,7 @@ function Content() {
               {campaigns.map(c => (
                 <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50">
                   <td className="px-3 py-2">
-                    <Link href={`/admin/assessment-campaigns/${c.id}`} className="text-indigo-700 font-bold hover:underline">{c.title}</Link>
+                    <ForceLink href={`/admin/assessment-campaigns/${c.id}`} className="text-indigo-700 font-bold hover:underline">{c.title}</ForceLink>
                     <p className="text-[10px] text-slate-400">{formatDate(c.createdAt)}</p>
                   </td>
                   <td className="px-3 py-2"><StatusBadge status={c.status} /></td>
@@ -183,9 +183,9 @@ function Content() {
                     {c.emailsSent === 0 && c.emailsFailed === 0 && <span className="text-slate-400">—</span>}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <Link href={`/admin/assessment-campaigns/${c.id}`} className="text-slate-400 hover:text-indigo-600">
+                    <ForceLink href={`/admin/assessment-campaigns/${c.id}`} className="text-slate-400 hover:text-indigo-600">
                       <ChevronRight className="w-4 h-4 inline" />
-                    </Link>
+                    </ForceLink>
                   </td>
                 </tr>
               ))}

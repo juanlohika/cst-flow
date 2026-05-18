@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import Link from "next/link";
+import ForceLink from "@/components/ui/ForceLink";
 import { useSearchParams } from "next/navigation";
 import {
   Activity, Loader2, ArrowRight, AlertTriangle, Sparkles, Clock, Calendar,
@@ -247,7 +247,7 @@ function AccountCardRow({
 
   return (
     <li>
-      <Link
+      <ForceLink
         href={`/assessments/${card.accountId}`}
         className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50 group"
       >
@@ -299,7 +299,7 @@ function AccountCardRow({
         <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-indigo-700 group-hover:gap-1.5 transition-all shrink-0">
           {card.lastAssessedAt ? "Update" : "Assess"} <ArrowRight className="w-3 h-3" />
         </span>
-      </Link>
+      </ForceLink>
     </li>
   );
 }
