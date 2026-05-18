@@ -939,6 +939,23 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                   <ChevronRight className="w-4 h-4 text-indigo-400 shrink-0" />
                 </a>
 
+                {/* Account Tiers callout — Phase E */}
+                <a
+                  href="/admin/account-tiers"
+                  className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                    <Tag className="w-4 h-4 text-slate-600" strokeWidth={2} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-semibold text-slate-800">Account Tier · Courtesy Call Frequency</p>
+                    <p className="text-[11px] text-slate-500">
+                      Map each tier (VIP / 1 / 2 / 3 / 4 / 5) to its courtesy call cadence. Per-account override available on the profile.
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                </a>
+
                 {/* Access Codes callout */}
                 <a
                   href="/admin/access-codes"

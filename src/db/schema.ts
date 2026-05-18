@@ -265,8 +265,32 @@ export const clientProfiles = sqliteTable("ClientProfile", {
   intelligenceContent:   text("intelligenceContent"), // Markdown intelligence file
   clientCode:            text("clientCode").unique(),  // Human-readable: e.g. MOPT-A3F2
   accessToken:           text("accessToken").unique(), // Secret: 64-char hex, used for channel binding
+  // Phase E: account-level CRM metadata
+  clientShortName:       text("clientShortName"),       // Free-form short label (defaults to companyName in UI)
+  clientLongName:        text("clientLongName"),        // Official business name (longer than companyName)
+  groupName:             text("groupName"),             // Soft grouping — accounts sharing the same groupName are treated as siblings
+  tier:                  text("tier"),                  // VIP | 1 | 2 | 3 | 4 | 5 — individual account tier
+  groupTier:             text("groupTier"),             // VIP | 1 | 2 | 3 | 4 | 5 — tier of the parent group
+  frequencyOverride:     text("frequencyOverride"),     // Override the tier-derived courtesy-call cadence (label like 'monthly', 'every-2-months', 'quarterly', 'yearly')
+  pmEmail:               text("pmEmail"),               // Project Manager (metadata only — doesn't grant access)
+  baEmail:               text("baEmail"),               // Business Analyst
+  rmEmail:               text("rmEmail"),               // Relationship Manager
+  assignedOnMonth:       text("assignedOnMonth"),       // YYYY-MM when current RM was assigned
+  lastCourtesyCall:      text("lastCourtesyCall"),      // YYYY-MM-DD of the most recent courtesy call
   createdAt:             text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:             text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// Phase E: courtesy-call history. Append-only log of every call logged for an
+// account. The clientProfiles.lastCourtesyCall column is the cached latest
+// date for fast queries; this table is the source of truth for the history.
+export const courtesyCallHistory = sqliteTable("CourtesyCallHistory", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  clientProfileId:   text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
+  callDate:          text("callDate").notNull(),         // YYYY-MM-DD
+  loggedByUserId:    text("loggedByUserId").notNull(),   // who recorded this
+  notes:             text("notes"),                      // optional one-liner
+  createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
 });
 
 // AccountMembership: which CST OS users can access which client accounts

@@ -76,6 +76,31 @@ export async function ensureAccessSchema(): Promise<void> {
       status TEXT NOT NULL DEFAULT 'validated'
     )`);
 
+    // Phase E: ClientProfile CRM fields (idempotent ALTERs)
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN clientShortName TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN clientLongName TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN groupName TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN tier TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN groupTier TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN frequencyOverride TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN pmEmail TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN baEmail TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN rmEmail TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN assignedOnMonth TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN lastCourtesyCall TEXT`); } catch {}
+
+    // Phase E: courtesy call history
+    await db.run(sql`CREATE TABLE IF NOT EXISTS CourtesyCallHistory (
+      id TEXT PRIMARY KEY,
+      clientProfileId TEXT NOT NULL,
+      callDate TEXT NOT NULL,
+      loggedByUserId TEXT NOT NULL,
+      notes TEXT,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (clientProfileId) REFERENCES ClientProfile(id) ON DELETE CASCADE
+    )`);
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS idx_CourtesyCallHistory_client ON CourtesyCallHistory(clientProfileId, callDate DESC)`); } catch {}
+
     // Phase B: Account Health Assessment
     await db.run(sql`CREATE TABLE IF NOT EXISTS AccountAssessment (
       id TEXT PRIMARY KEY,

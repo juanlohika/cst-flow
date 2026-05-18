@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { useToast } from "@/components/ui/ToastContext";
 import { formatRef } from "@/lib/utils/format";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
@@ -119,12 +120,36 @@ const EMPTY_FORM = {
   primaryContact: "",
   primaryContactEmail: "",
   specialConsiderations: "",
+  // Phase E — CRM fields
+  clientShortName: "",
+  clientLongName: "",
+  groupName: "",
+  tier: "",
+  groupTier: "",
+  frequencyOverride: "",
+  pmEmail: "",
+  baEmail: "",
+  rmEmail: "",
+  assignedOnMonth: "",
+  lastCourtesyCall: "",
 };
+
+const TIER_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "—" },
+  { value: "VIP", label: "VIP" },
+  { value: "1", label: "Tier 1" },
+  { value: "2", label: "Tier 2" },
+  { value: "3", label: "Tier 3" },
+  { value: "4", label: "Tier 4" },
+  { value: "5", label: "Tier 5" },
+];
 
 // ─── Main Content ──────────────────────────────────────────────────────────────
 
 function MeetingPrepContent() {
   const { showToast } = useToast();
+  const { data: session } = useSession();
+  const isAdmin = (session?.user as any)?.role === "admin";
   const [view, setView] = useState<"list" | "form" | "profile-detail">("list");
   const [editingProfile, setEditingProfile] = useState<ClientProfile | null>(null);
   const [profiles, setProfiles] = useState<ClientProfile[]>([]);
@@ -225,6 +250,7 @@ function MeetingPrepContent() {
 
   const openEdit = (profile: ClientProfile) => {
     setEditingProfile(profile);
+    const p = profile as any;
     setFormData({
       companyName: profile.companyName,
       industry: profile.industry,
@@ -233,6 +259,18 @@ function MeetingPrepContent() {
       primaryContact: profile.primaryContact || "",
       primaryContactEmail: profile.primaryContactEmail || "",
       specialConsiderations: profile.specialConsiderations || "",
+      // Phase E
+      clientShortName: p.clientShortName || "",
+      clientLongName: p.clientLongName || "",
+      groupName: p.groupName || "",
+      tier: p.tier || "",
+      groupTier: p.groupTier || "",
+      frequencyOverride: p.frequencyOverride || "",
+      pmEmail: p.pmEmail || "",
+      baEmail: p.baEmail || "",
+      rmEmail: p.rmEmail || "",
+      assignedOnMonth: p.assignedOnMonth || "",
+      lastCourtesyCall: p.lastCourtesyCall || "",
     });
     setView("form");
   };
@@ -646,6 +684,153 @@ function MeetingPrepContent() {
                     placeholder="email@company.com"
                     className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
                   />
+                </div>
+              </div>
+
+              {/* ── Phase E: CRM fields ──────────────────────────────────── */}
+              <div className="pt-2 mt-2 border-t border-border-default">
+                <p className="text-[10px] font-black uppercase tracking-widest text-text-muted mb-3">
+                  Account CRM · {isAdmin ? "Editable" : "Admin-managed (last courtesy call editable)"}
+                </p>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Client Short Name {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
+                    <input
+                      type="text"
+                      value={formData.clientShortName}
+                      onChange={e => setFormData(f => ({ ...f, clientShortName: e.target.value }))}
+                      disabled={!isAdmin}
+                      placeholder="e.g. MX"
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Client Long Name {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
+                    <input
+                      type="text"
+                      value={formData.clientLongName}
+                      onChange={e => setFormData(f => ({ ...f, clientLongName: e.target.value }))}
+                      disabled={!isAdmin}
+                      placeholder="e.g. Mobile Optima Inc."
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Group Name {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
+                    <input
+                      type="text"
+                      value={formData.groupName}
+                      onChange={e => setFormData(f => ({ ...f, groupName: e.target.value }))}
+                      disabled={!isAdmin}
+                      placeholder="Same value across sibling accounts to group them"
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Frequency Override <span className="text-[9px] text-text-muted">(optional)</span> {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
+                    <select
+                      value={formData.frequencyOverride}
+                      onChange={e => setFormData(f => ({ ...f, frequencyOverride: e.target.value }))}
+                      disabled={!isAdmin}
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
+                    >
+                      <option value="">Use tier default</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="every-2-months">Every 2 months</option>
+                      <option value="every-3-months">Every 3 months</option>
+                      <option value="quarterly">Quarterly</option>
+                      <option value="every-6-months">Every 6 months</option>
+                      <option value="yearly">Yearly</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Tier {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
+                    <select
+                      value={formData.tier}
+                      onChange={e => setFormData(f => ({ ...f, tier: e.target.value }))}
+                      disabled={!isAdmin}
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
+                    >
+                      {TIER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Group Tier {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
+                    <select
+                      value={formData.groupTier}
+                      onChange={e => setFormData(f => ({ ...f, groupTier: e.target.value }))}
+                      disabled={!isAdmin}
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
+                    >
+                      {TIER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4 mt-4">
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">RM Email {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
+                    <input
+                      type="email"
+                      value={formData.rmEmail}
+                      onChange={e => setFormData(f => ({ ...f, rmEmail: e.target.value }))}
+                      disabled={!isAdmin}
+                      placeholder="rm@example.com"
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">PM Email {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
+                    <input
+                      type="email"
+                      value={formData.pmEmail}
+                      onChange={e => setFormData(f => ({ ...f, pmEmail: e.target.value }))}
+                      disabled={!isAdmin}
+                      placeholder="pm@example.com"
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">BA Email {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
+                    <input
+                      type="email"
+                      value={formData.baEmail}
+                      onChange={e => setFormData(f => ({ ...f, baEmail: e.target.value }))}
+                      disabled={!isAdmin}
+                      placeholder="ba@example.com"
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Assigned On <span className="text-[9px] text-text-muted">(MM/YYYY)</span> {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
+                    <input
+                      type="month"
+                      value={formData.assignedOnMonth}
+                      onChange={e => setFormData(f => ({ ...f, assignedOnMonth: e.target.value }))}
+                      disabled={!isAdmin}
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Last Courtesy Call</label>
+                    <input
+                      type="date"
+                      value={formData.lastCourtesyCall}
+                      onChange={e => setFormData(f => ({ ...f, lastCourtesyCall: e.target.value }))}
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                    <p className="text-[10px] text-text-muted mt-1">Anyone with account access can update this.</p>
+                  </div>
                 </div>
               </div>
 
