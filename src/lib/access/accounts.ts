@@ -63,6 +63,19 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdPdfFileId TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdPdfUrl TEXT`); } catch {}
 
+    // Phase A: account bulk-import audit table
+    await db.run(sql`CREATE TABLE IF NOT EXISTS AccountUploadBatch (
+      id TEXT PRIMARY KEY,
+      uploadedBy TEXT NOT NULL,
+      uploadedAt TEXT NOT NULL DEFAULT (datetime('now')),
+      filename TEXT,
+      totalRows INTEGER NOT NULL DEFAULT 0,
+      appliedRows INTEGER NOT NULL DEFAULT 0,
+      rejectedRows INTEGER NOT NULL DEFAULT 0,
+      validationReport TEXT,
+      status TEXT NOT NULL DEFAULT 'validated'
+    )`);
+
     // Create ArimaRequest table if missing
     await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaRequest (
       id TEXT PRIMARY KEY,

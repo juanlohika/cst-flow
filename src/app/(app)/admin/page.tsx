@@ -888,6 +888,23 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
             )}
             {activeTab === "auth" && (
               <div className="space-y-6 flex-1 animate-in fade-in zoom-in-95 duration-200">
+                {/* Accounts Bulk Import callout */}
+                <a
+                  href="/admin/accounts/import"
+                  className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                    <Upload className="w-4 h-4 text-slate-600" strokeWidth={2} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-semibold text-slate-800">Accounts · Bulk Import</p>
+                    <p className="text-[11px] text-slate-500">
+                      Upload accounts and internal-team assignments (RM, PM, BA, etc.) via XLSX.
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                </a>
+
                 {/* Access Codes callout */}
                 <a
                   href="/admin/access-codes"

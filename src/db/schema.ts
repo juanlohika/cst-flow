@@ -286,6 +286,21 @@ export const accountMemberships = sqliteTable("AccountMembership", {
   uniqueMembership: { columns: [table.userId, table.clientProfileId], name: "AccountMembership_unique" },
 }));
 
+// Phase A: audit trail for bulk account/membership XLSX imports.
+// One row per upload attempt. The validation_report holds row-by-row
+// outcomes so admins can review past imports + diagnose failures.
+export const accountUploadBatches = sqliteTable("AccountUploadBatch", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  uploadedBy:        text("uploadedBy").notNull(),       // userId of the admin who uploaded
+  uploadedAt:        text("uploadedAt").default(sql`(datetime('now'))`).notNull(),
+  filename:          text("filename"),
+  totalRows:         integer("totalRows").default(0).notNull(),
+  appliedRows:       integer("appliedRows").default(0).notNull(),
+  rejectedRows:      integer("rejectedRows").default(0).notNull(),
+  validationReport:  text("validationReport"),           // JSON: [{sheet, row, status, message, ...}]
+  status:            text("status").default("validated").notNull(), // validated | applied | cancelled | failed
+});
+
 export const meetingPrepSessions = sqliteTable("MeetingPrepSession", {
   id:                       text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   userId:                   text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
