@@ -76,6 +76,39 @@ export async function ensureAccessSchema(): Promise<void> {
       status TEXT NOT NULL DEFAULT 'validated'
     )`);
 
+    // Phase B: Account Health Assessment
+    await db.run(sql`CREATE TABLE IF NOT EXISTS AccountAssessment (
+      id TEXT PRIMARY KEY,
+      clientProfileId TEXT NOT NULL,
+      submittedByUserId TEXT NOT NULL,
+      campaignId TEXT,
+      status TEXT NOT NULL DEFAULT 'submitted',
+      satisfaction INTEGER,
+      ebaDecisionMaker INTEGER,
+      ebaDecisionMakerNote TEXT,
+      ebaAdmin INTEGER,
+      ebaAdminNote TEXT,
+      contactChangeRecent INTEGER NOT NULL DEFAULT 0,
+      contactChangeNote TEXT,
+      isTarkieSsot INTEGER,
+      thirdPartySsot TEXT,
+      v5Readiness INTEGER,
+      requestedModules TEXT,
+      responsesJson TEXT,
+      aiSummary TEXT,
+      aiRisks TEXT,
+      aiOpportunities TEXT,
+      notableRequests TEXT,
+      aiRollupStatus TEXT NOT NULL DEFAULT 'pending',
+      aiRollupError TEXT,
+      aiRollupAt TEXT,
+      submittedAt TEXT NOT NULL DEFAULT (datetime('now')),
+      updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (clientProfileId) REFERENCES ClientProfile(id) ON DELETE CASCADE
+    )`);
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS idx_AccountAssessment_client ON AccountAssessment(clientProfileId, submittedAt DESC)`); } catch {}
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS idx_AccountAssessment_campaign ON AccountAssessment(campaignId)`); } catch {}
+
     // Create ArimaRequest table if missing
     await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaRequest (
       id TEXT PRIMARY KEY,

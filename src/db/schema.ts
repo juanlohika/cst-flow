@@ -286,6 +286,53 @@ export const accountMemberships = sqliteTable("AccountMembership", {
   uniqueMembership: { columns: [table.userId, table.clientProfileId], name: "AccountMembership_unique" },
 }));
 
+// Phase B: Account Health Assessment — CRM-style snapshot of each account's
+// state. One row per assessment (full history kept). The latest row per
+// account is the "current health" view; older rows are the trend.
+//
+// Structured columns hold the typed answers (scores, booleans, simple text).
+// Long-text answers from RM are kept in `responsesJson` for full Q&A archive.
+// AI-derived fields (summary/risks/opportunities/notable requests) are rolled
+// up after submit via Gemini and written back to this same row.
+export const accountAssessments = sqliteTable("AccountAssessment", {
+  id:                      text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  clientProfileId:         text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
+  submittedByUserId:       text("submittedByUserId").notNull(),   // CST user who filled this in
+  campaignId:              text("campaignId"),                    // null = ad-hoc; FK to AssessmentCampaign (Phase C)
+  status:                  text("status").default("submitted").notNull(), // draft | submitted
+
+  // Section B — Account Health
+  satisfaction:            integer("satisfaction"),               // 1-5
+  // Section C — Relationship Strength (EBA)
+  ebaDecisionMaker:        integer("ebaDecisionMaker"),           // 1-5
+  ebaDecisionMakerNote:    text("ebaDecisionMakerNote"),
+  ebaAdmin:                integer("ebaAdmin"),                   // 1-5
+  ebaAdminNote:            text("ebaAdminNote"),
+  contactChangeRecent:     integer("contactChangeRecent", { mode: "boolean" }).default(false).notNull(),
+  contactChangeNote:       text("contactChangeNote"),
+  // Section D — System of Record
+  isTarkieSsot:            integer("isTarkieSsot", { mode: "boolean" }),
+  thirdPartySsot:          text("thirdPartySsot"),                // null if Tarkie is SSOT
+  // Section E — Demand Signals & V5 Outlook
+  v5Readiness:             integer("v5Readiness"),                // 1-5
+  requestedModules:        text("requestedModules"),              // JSON array of module names
+
+  // Full Q&A archive: { questionId: { value: any, label: string, ... } }
+  responsesJson:           text("responsesJson"),
+
+  // AI rollup (populated by accountAssessmentRollup worker)
+  aiSummary:               text("aiSummary"),                     // 3-4 sentence exec summary
+  aiRisks:                 text("aiRisks"),                       // JSON array of bullets
+  aiOpportunities:         text("aiOpportunities"),               // JSON array of bullets
+  notableRequests:         text("notableRequests"),               // JSON array of bullets
+  aiRollupStatus:          text("aiRollupStatus").default("pending").notNull(), // pending | ok | failed
+  aiRollupError:           text("aiRollupError"),
+  aiRollupAt:              text("aiRollupAt"),
+
+  submittedAt:             text("submittedAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:               text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
 // Phase A: audit trail for bulk account/membership XLSX imports.
 // One row per upload attempt. The validation_report holds row-by-row
 // outcomes so admins can review past imports + diagnose failures.
