@@ -19,7 +19,7 @@ import {
 import { desc, eq, inArray, and } from "drizzle-orm";
 import { computeHealth, type HealthResult, type HealthColor } from "./health-score";
 import { getModelForApp, generateWithRetry } from "@/lib/ai";
-import { loadTierFrequencyMap, resolveAccountFrequency, callCompliance } from "./tier-frequency";
+import { loadTierFrequencyMap, resolveAccountFrequency, callCompliance, resolveF2FFrequency, f2fCompliance } from "./tier-frequency";
 
 export interface AccountSnapshot {
   accountId: string;
@@ -57,6 +57,11 @@ export interface AccountSnapshot {
   frequencyLabel: string;
   complianceStatus: "compliant" | "warning" | "overdue" | "unknown";
   daysSinceCall: number | null;
+  // F2F compliance
+  lastF2FVisit: string | null;
+  f2fFrequencyLabel: string;
+  f2fComplianceStatus: "compliant" | "warning" | "overdue" | "unknown";
+  daysSinceF2F: number | null;
 }
 
 export interface ColorCounts {
@@ -79,7 +84,8 @@ export interface TierBreakdownRow {
   accountCount: number;
   health: ColorCounts;
   compliance: ComplianceCounts;
-  avgScore: number | null;     // mean health score across this tier
+  f2fCompliance: ComplianceCounts;
+  avgScore: number | null;
 }
 
 export interface GroupBreakdownRow {
@@ -87,17 +93,19 @@ export interface GroupBreakdownRow {
   accountCount: number;
   health: ColorCounts;
   compliance: ComplianceCounts;
-  worstColor: HealthColor;     // any red → group is red; else any yellow → yellow; etc.
-  rollupScore: number | null;  // avg health score
-  members: string[];           // child account names (top 5)
+  f2fCompliance: ComplianceCounts;
+  worstColor: HealthColor;
+  rollupScore: number | null;
+  members: string[];
 }
 
 export interface RmBreakdownRow {
   rmEmail: string;
-  rmName: string | null;       // resolved from users table if email matches
+  rmName: string | null;
   accountCount: number;
   health: ColorCounts;
   compliance: ComplianceCounts;
+  f2fCompliance: ComplianceCounts;
   avgScore: number | null;
 }
 
@@ -127,6 +135,7 @@ export interface ExecutiveSummary {
   topRequestedModules: Array<{ module: string; count: number }>;
   // Phase E — compliance + breakdowns
   complianceCounts: ComplianceCounts;
+  f2fComplianceCounts: ComplianceCounts;
   byTier: TierBreakdownRow[];
   byGroup: GroupBreakdownRow[];
   byRm: RmBreakdownRow[];
@@ -160,6 +169,8 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
     baEmail: clientProfiles.baEmail,
     assignedOnMonth: clientProfiles.assignedOnMonth,
     lastCourtesyCall: clientProfiles.lastCourtesyCall,
+    lastF2FVisit: clientProfiles.lastF2FVisit,
+    f2fFrequencyOverride: clientProfiles.f2fFrequencyOverride,
   }).from(clientProfiles);
 
   // 2. Load latest assessment per account (group + take first via ordering)
@@ -282,6 +293,14 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
       lastCourtesyCall: (account as any).lastCourtesyCall || null,
       frequencyDays: freq.days,
     });
+    // F2F compliance (yearly default, per-account override)
+    const f2fFreq = resolveF2FFrequency({
+      f2fFrequencyOverride: (account as any).f2fFrequencyOverride || null,
+    });
+    const f2fComp = f2fCompliance({
+      lastF2FVisit: (account as any).lastF2FVisit || null,
+      frequencyDays: f2fFreq.days,
+    });
 
     snapshots.push({
       accountId: account.id,
@@ -318,6 +337,11 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
       frequencyLabel: freq.label,
       complianceStatus: compliance.status,
       daysSinceCall: compliance.daysSince,
+      // F2F
+      lastF2FVisit: (account as any).lastF2FVisit || null,
+      f2fFrequencyLabel: f2fFreq.label,
+      f2fComplianceStatus: f2fComp.status,
+      daysSinceF2F: f2fComp.daysSince,
     });
   }
 
@@ -331,9 +355,13 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
     return a.health.score - b.health.score;
   });
 
-  // Portfolio-level compliance counts
+  // Portfolio-level compliance counts (both CC and F2F)
   const complianceCounts: ComplianceCounts = { compliant: 0, warning: 0, overdue: 0, unknown: 0 };
-  for (const s of snapshots) complianceCounts[s.complianceStatus]++;
+  const f2fComplianceCounts: ComplianceCounts = { compliant: 0, warning: 0, overdue: 0, unknown: 0 };
+  for (const s of snapshots) {
+    complianceCounts[s.complianceStatus]++;
+    f2fComplianceCounts[s.f2fComplianceStatus]++;
+  }
 
   return {
     generatedAt: new Date().toISOString(),
@@ -359,6 +387,7 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
       .sort((a, b) => b.count - a.count)
       .slice(0, 10),
     complianceCounts,
+    f2fComplianceCounts,
     byTier: buildTierBreakdown(snapshots),
     byGroup: buildGroupBreakdown(snapshots),
     byRm: buildRmBreakdown(snapshots, rmRows),
@@ -392,6 +421,7 @@ function buildTierBreakdown(accounts: AccountSnapshot[]): TierBreakdownRow[] {
       accountCount: row.accountCount,
       health: row.health,
       compliance: row.compliance,
+      f2fCompliance: row.f2fCompliance,
       avgScore: row.avgScore,
     }));
 }
@@ -418,6 +448,7 @@ function buildGroupBreakdown(accounts: AccountSnapshot[]): GroupBreakdownRow[] {
       accountCount: summary.accountCount,
       health: summary.health,
       compliance: summary.compliance,
+      f2fCompliance: summary.f2fCompliance,
       worstColor,
       rollupScore: summary.avgScore,
       members: members.map(m => m.companyName).slice(0, 5),
@@ -460,6 +491,7 @@ function buildRmBreakdown(accounts: AccountSnapshot[], rmRows: Array<{ id: strin
       accountCount: summary.accountCount,
       health: summary.health,
       compliance: summary.compliance,
+      f2fCompliance: summary.f2fCompliance,
       avgScore: summary.avgScore,
     });
   });
@@ -479,16 +511,19 @@ function summarizeBucket(args: { label: string; accounts: AccountSnapshot[] }): 
   accountCount: number;
   health: ColorCounts;
   compliance: ComplianceCounts;
+  f2fCompliance: ComplianceCounts;
   avgScore: number | null;
 } {
   const health = emptyColorCounts();
   const compliance = emptyComplianceCounts();
+  const f2fComp = emptyComplianceCounts();
   let scoreSum = 0;
   let scoreN = 0;
   for (const a of args.accounts) {
     health[a.health.color]++;
     if (a.health.isCritical) health.critical++;
     compliance[a.complianceStatus]++;
+    f2fComp[a.f2fComplianceStatus]++;
     if (a.health.color !== "grey") {
       scoreSum += a.health.score;
       scoreN++;
@@ -499,6 +534,7 @@ function summarizeBucket(args: { label: string; accounts: AccountSnapshot[] }): 
     accountCount: args.accounts.length,
     health,
     compliance,
+    f2fCompliance: f2fComp,
     avgScore: scoreN > 0 ? Math.round(scoreSum / scoreN) : null,
   };
 }

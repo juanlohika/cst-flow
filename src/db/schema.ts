@@ -276,7 +276,9 @@ export const clientProfiles = sqliteTable("ClientProfile", {
   baEmail:               text("baEmail"),               // Business Analyst
   rmEmail:               text("rmEmail"),               // Relationship Manager
   assignedOnMonth:       text("assignedOnMonth"),       // YYYY-MM when current RM was assigned
-  lastCourtesyCall:      text("lastCourtesyCall"),      // YYYY-MM-DD of the most recent courtesy call
+  lastCourtesyCall:      text("lastCourtesyCall"),      // YYYY-MM-DD of the most recent courtesy call (any channel)
+  lastF2FVisit:          text("lastF2FVisit"),          // YYYY-MM-DD of the most recent in-person visit (separate target from CC)
+  f2fFrequencyOverride:  text("f2fFrequencyOverride"),  // Override the default once-per-year F2F target (label like 'monthly', 'every-6-months', 'yearly')
   createdAt:             text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:             text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
@@ -305,6 +307,19 @@ export const courtesyCallHistory = sqliteTable("CourtesyCallHistory", {
   callDate:          text("callDate").notNull(),         // YYYY-MM-DD
   loggedByUserId:    text("loggedByUserId").notNull(),   // who recorded this
   notes:             text("notes"),                      // optional one-liner
+  createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// Phase E.5: F2F visit history. Mirrors CourtesyCallHistory but for the
+// once-a-year in-person target. Tracked separately because the cadence
+// and significance are different from a CC (which can be over Zoom).
+export const f2fVisitHistory = sqliteTable("F2FVisitHistory", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  clientProfileId:   text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
+  visitDate:         text("visitDate").notNull(),        // YYYY-MM-DD
+  loggedByUserId:    text("loggedByUserId").notNull(),
+  location:          text("location"),                   // optional: where the meeting took place
+  notes:             text("notes"),
   createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
 });
 

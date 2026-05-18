@@ -152,19 +152,40 @@ ${criticals.map(a => `
 
 function renderComplianceSection(s: ExecutiveSummary): string {
   const c = s.complianceCounts;
-  if (!c) return "";
+  const f = s.f2fComplianceCounts;
+  if (!c && !f) return "";
   return `
-<h2>Courtesy Call Compliance</h2>
-<p class="meta">Based on each account's tier-derived call cadence vs the last courtesy call logged.</p>
-<table>
-  <thead><tr><th>Status</th><th style="width: 80pt;">Accounts</th></tr></thead>
-  <tbody>
-    <tr><td>✓ Compliant</td><td>${c.compliant}</td></tr>
-    <tr><td>⚠ Warning</td><td>${c.warning}</td></tr>
-    <tr><td>⌛ Overdue</td><td>${c.overdue}</td></tr>
-    <tr><td>Unknown</td><td>${c.unknown}</td></tr>
-  </tbody>
-</table>`;
+<h2>Engagement Compliance</h2>
+<div style="display: table; width: 100%; margin: 12pt 0; border-spacing: 8pt;">
+  ${c ? `
+  <div style="display: table-cell; width: 50%; vertical-align: top;">
+    <h3 style="margin-top: 0;">📞 Courtesy Calls</h3>
+    <p class="meta">Any channel — Zoom, phone, F2F. Tier-derived cadence.</p>
+    <table>
+      <thead><tr><th>Status</th><th style="width: 80pt;">Accounts</th></tr></thead>
+      <tbody>
+        <tr><td>✓ Compliant</td><td>${c.compliant}</td></tr>
+        <tr><td>⚠ Warning</td><td>${c.warning}</td></tr>
+        <tr><td>⌛ Overdue</td><td>${c.overdue}</td></tr>
+        <tr><td>Unknown</td><td>${c.unknown}</td></tr>
+      </tbody>
+    </table>
+  </div>` : ""}
+  ${f ? `
+  <div style="display: table-cell; width: 50%; vertical-align: top;">
+    <h3 style="margin-top: 0;">📍 F2F Visits</h3>
+    <p class="meta">In-person visits. Target: once per year per account.</p>
+    <table>
+      <thead><tr><th>Status</th><th style="width: 80pt;">Accounts</th></tr></thead>
+      <tbody>
+        <tr><td>✓ Compliant</td><td>${f.compliant}</td></tr>
+        <tr><td>⚠ Warning</td><td>${f.warning}</td></tr>
+        <tr><td>⌛ Overdue</td><td>${f.overdue}</td></tr>
+        <tr><td>Unknown</td><td>${f.unknown}</td></tr>
+      </tbody>
+    </table>
+  </div>` : ""}
+</div>`;
 }
 
 function renderTierBreakdown(s: ExecutiveSummary): string {
@@ -177,6 +198,7 @@ ${renderBreakdownTable(s.byTier.map(r => ({
   avgScore: r.avgScore,
   health: r.health,
   compliance: r.compliance,
+  f2fCompliance: r.f2fCompliance,
 })))}`;
 }
 
@@ -191,6 +213,7 @@ ${renderBreakdownTable(s.byRm.map(r => ({
   avgScore: r.avgScore,
   health: r.health,
   compliance: r.compliance,
+  f2fCompliance: r.f2fCompliance,
 })))}`;
 }
 
@@ -206,6 +229,7 @@ ${renderBreakdownTable(s.byGroup.map(r => ({
   avgScore: r.rollupScore,
   health: r.health,
   compliance: r.compliance,
+  f2fCompliance: r.f2fCompliance,
 })))}`;
 }
 
@@ -213,26 +237,34 @@ function renderBreakdownTable(rows: Array<{
   label: string; sublabel?: string; count: number; avgScore: number | null;
   health: { green: number; yellow: number; red: number; grey: number };
   compliance: { compliant: number; warning: number; overdue: number; unknown: number };
+  f2fCompliance?: { compliant: number; warning: number; overdue: number; unknown: number };
 }>): string {
+  const hasF2F = rows.some(r => r.f2fCompliance);
   return `
 <table>
   <thead>
     <tr>
       <th rowspan="2">Bucket</th>
-      <th rowspan="2" style="width: 50pt;">Accounts</th>
-      <th rowspan="2" style="width: 50pt;">Avg Score</th>
+      <th rowspan="2" style="width: 40pt;">Accts</th>
+      <th rowspan="2" style="width: 40pt;">Avg</th>
       <th colspan="4" style="text-align: center;">Health</th>
-      <th colspan="4" style="text-align: center;">Compliance</th>
+      <th colspan="4" style="text-align: center;">📞 CC</th>
+      ${hasF2F ? `<th colspan="4" style="text-align: center;">📍 F2F</th>` : ""}
     </tr>
     <tr>
-      <th style="width: 30pt; text-align: center;">🟢</th>
-      <th style="width: 30pt; text-align: center;">🟡</th>
-      <th style="width: 30pt; text-align: center;">🔴</th>
-      <th style="width: 30pt; text-align: center;">⚪</th>
-      <th style="width: 30pt; text-align: center;">✓</th>
-      <th style="width: 30pt; text-align: center;">⚠</th>
-      <th style="width: 30pt; text-align: center;">⌛</th>
-      <th style="width: 30pt; text-align: center;">?</th>
+      <th style="width: 24pt; text-align: center;">🟢</th>
+      <th style="width: 24pt; text-align: center;">🟡</th>
+      <th style="width: 24pt; text-align: center;">🔴</th>
+      <th style="width: 24pt; text-align: center;">⚪</th>
+      <th style="width: 24pt; text-align: center;">✓</th>
+      <th style="width: 24pt; text-align: center;">⚠</th>
+      <th style="width: 24pt; text-align: center;">⌛</th>
+      <th style="width: 24pt; text-align: center;">?</th>
+      ${hasF2F ? `
+      <th style="width: 24pt; text-align: center;">✓</th>
+      <th style="width: 24pt; text-align: center;">⚠</th>
+      <th style="width: 24pt; text-align: center;">⌛</th>
+      <th style="width: 24pt; text-align: center;">?</th>` : ""}
     </tr>
   </thead>
   <tbody>
@@ -252,6 +284,11 @@ function renderBreakdownTable(rows: Array<{
       <td style="text-align: center;">${r.compliance.warning || ""}</td>
       <td style="text-align: center;">${r.compliance.overdue || ""}</td>
       <td style="text-align: center;">${r.compliance.unknown || ""}</td>
+      ${hasF2F && r.f2fCompliance ? `
+      <td style="text-align: center;">${r.f2fCompliance.compliant || ""}</td>
+      <td style="text-align: center;">${r.f2fCompliance.warning || ""}</td>
+      <td style="text-align: center;">${r.f2fCompliance.overdue || ""}</td>
+      <td style="text-align: center;">${r.f2fCompliance.unknown || ""}</td>` : ""}
     </tr>
     `).join("")}
   </tbody>

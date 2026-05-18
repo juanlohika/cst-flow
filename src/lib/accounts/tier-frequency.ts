@@ -34,6 +34,7 @@ const FREQUENCY_TO_DAYS: Record<string, number> = {
   "quarterly": 90,
   "every-6-months": 180,
   "yearly": 365,
+  "every-2-years": 730,
 };
 
 export function frequencyToDays(label: string | null | undefined): number | null {
@@ -131,4 +132,53 @@ function daysSinceDate(iso: string): number | null {
   } catch {
     return null;
   }
+}
+
+// ─── F2F (face-to-face) visit cadence ──────────────────────────────────────
+// F2F has a single org-wide default of once-per-year. Per-account override
+// is the only way to vary it (e.g. VIPs visited twice a year, dormant
+// accounts every 18 months). No tier-level mapping — kept simple.
+
+export const F2F_DEFAULT_FREQUENCY: string = "yearly";
+
+export function resolveF2FFrequency(args: {
+  f2fFrequencyOverride: string | null | undefined;
+}): { label: string; days: number | null; source: "override" | "default" } {
+  if (args.f2fFrequencyOverride) {
+    return {
+      label: args.f2fFrequencyOverride,
+      days: frequencyToDays(args.f2fFrequencyOverride),
+      source: "override",
+    };
+  }
+  return {
+    label: F2F_DEFAULT_FREQUENCY,
+    days: frequencyToDays(F2F_DEFAULT_FREQUENCY),
+    source: "default",
+  };
+}
+
+/**
+ * F2F compliance is more lenient than CC:
+ *   - "compliant": daysSince <= maxDays
+ *   - "warning":   daysSince > maxDays && daysSince <= maxDays * 1.5
+ *   - "overdue":   daysSince > maxDays * 1.5
+ *   - "unknown":   no F2F visit ever logged
+ */
+export function f2fCompliance(args: {
+  lastF2FVisit: string | null | undefined;
+  frequencyDays: number | null;
+}): { status: "compliant" | "warning" | "overdue" | "unknown"; daysSince: number | null } {
+  if (!args.lastF2FVisit) return { status: "unknown", daysSince: null };
+  if (!args.frequencyDays) {
+    return {
+      status: "unknown",
+      daysSince: daysSinceDate(args.lastF2FVisit),
+    };
+  }
+  const daysSince = daysSinceDate(args.lastF2FVisit);
+  if (daysSince === null) return { status: "unknown", daysSince: null };
+  if (daysSince <= args.frequencyDays) return { status: "compliant", daysSince };
+  if (daysSince <= args.frequencyDays * 1.5) return { status: "warning", daysSince };
+  return { status: "overdue", daysSince };
 }

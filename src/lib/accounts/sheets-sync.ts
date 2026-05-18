@@ -362,12 +362,23 @@ function buildOverviewRows(s: ExecutiveSummary): any[][] {
 
   // Courtesy Call Compliance summary
   if (s.complianceCounts) {
-    rows.push(["Courtesy Call Compliance"]);
+    rows.push(["Courtesy Call Compliance (any channel — Zoom, phone, F2F)"]);
     rows.push(["Status", "Accounts"]);
     rows.push(["✓ Compliant", s.complianceCounts.compliant]);
     rows.push(["⚠ Warning", s.complianceCounts.warning]);
     rows.push(["⌛ Overdue", s.complianceCounts.overdue]);
     rows.push(["? Unknown", s.complianceCounts.unknown]);
+    rows.push([]);
+  }
+
+  // F2F Compliance summary
+  if (s.f2fComplianceCounts) {
+    rows.push(["F2F Visit Compliance (in-person, target: once a year)"]);
+    rows.push(["Status", "Accounts"]);
+    rows.push(["✓ Compliant", s.f2fComplianceCounts.compliant]);
+    rows.push(["⚠ Warning", s.f2fComplianceCounts.warning]);
+    rows.push(["⌛ Overdue", s.f2fComplianceCounts.overdue]);
+    rows.push(["? Unknown", s.f2fComplianceCounts.unknown]);
     rows.push([`Detailed breakdowns: see "By Tier", "By RM", and "By Group" tabs`]);
   }
 
@@ -394,9 +405,13 @@ function buildAccountRows(s: ExecutiveSummary): any[][] {
     "SSOT",
     "Last Assessed",
     "Last Courtesy Call",
-    "Compliance",
-    "Days Since Call",
-    "Frequency",
+    "CC Compliance",
+    "Days Since CC",
+    "CC Frequency",
+    "Last F2F Visit",
+    "F2F Compliance",
+    "Days Since F2F",
+    "F2F Frequency",
     "Link",
   ]);
   // Data rows
@@ -455,13 +470,22 @@ function buildAccountRow(a: AccountSnapshot): any[] {
     complianceLabel(a.complianceStatus),
     a.daysSinceCall === null || a.daysSinceCall === undefined ? "" : a.daysSinceCall,
     a.frequencyLabel || "—",
+    a.lastF2FVisit ? new Date(a.lastF2FVisit).toLocaleDateString() : "—",
+    complianceLabel(a.f2fComplianceStatus),
+    a.daysSinceF2F === null || a.daysSinceF2F === undefined ? "" : a.daysSinceF2F,
+    a.f2fFrequencyLabel || "—",
     accountLink(a.accountId),
   ];
 }
 
 function buildTierBreakdownRows(s: ExecutiveSummary): any[][] {
   const rows: any[][] = [];
-  rows.push(["Tier", "Accounts", "Avg Score", "🟢 Healthy", "🟡 Watch", "🔴 Critical", "⚪ Unassessed", "✓ Compliant", "⚠ Warning", "⌛ Overdue", "? Unknown"]);
+  rows.push([
+    "Tier", "Accounts", "Avg Score",
+    "🟢 Healthy", "🟡 Watch", "🔴 Critical", "⚪ Unassessed",
+    "CC ✓", "CC ⚠", "CC ⌛", "CC ?",
+    "F2F ✓", "F2F ⚠", "F2F ⌛", "F2F ?",
+  ]);
   for (const r of s.byTier || []) {
     rows.push([
       r.tier === "Unset" ? "Unset" : r.tier === "VIP" ? "VIP" : `Tier ${r.tier}`,
@@ -469,6 +493,7 @@ function buildTierBreakdownRows(s: ExecutiveSummary): any[][] {
       r.avgScore ?? "—",
       r.health.green, r.health.yellow, r.health.red, r.health.grey,
       r.compliance.compliant, r.compliance.warning, r.compliance.overdue, r.compliance.unknown,
+      r.f2fCompliance.compliant, r.f2fCompliance.warning, r.f2fCompliance.overdue, r.f2fCompliance.unknown,
     ]);
   }
   return rows;
@@ -476,7 +501,12 @@ function buildTierBreakdownRows(s: ExecutiveSummary): any[][] {
 
 function buildRmBreakdownRows(s: ExecutiveSummary): any[][] {
   const rows: any[][] = [];
-  rows.push(["RM", "Email", "Accounts", "Avg Score", "🟢 Healthy", "🟡 Watch", "🔴 Critical", "⚪ Unassessed", "✓ Compliant", "⚠ Warning", "⌛ Overdue", "? Unknown"]);
+  rows.push([
+    "RM", "Email", "Accounts", "Avg Score",
+    "🟢 Healthy", "🟡 Watch", "🔴 Critical", "⚪ Unassessed",
+    "CC ✓", "CC ⚠", "CC ⌛", "CC ?",
+    "F2F ✓", "F2F ⚠", "F2F ⌛", "F2F ?",
+  ]);
   for (const r of s.byRm || []) {
     rows.push([
       r.rmName || "(unknown user)",
@@ -485,6 +515,7 @@ function buildRmBreakdownRows(s: ExecutiveSummary): any[][] {
       r.avgScore ?? "—",
       r.health.green, r.health.yellow, r.health.red, r.health.grey,
       r.compliance.compliant, r.compliance.warning, r.compliance.overdue, r.compliance.unknown,
+      r.f2fCompliance.compliant, r.f2fCompliance.warning, r.f2fCompliance.overdue, r.f2fCompliance.unknown,
     ]);
   }
   return rows;
@@ -492,7 +523,12 @@ function buildRmBreakdownRows(s: ExecutiveSummary): any[][] {
 
 function buildGroupBreakdownRows(s: ExecutiveSummary): any[][] {
   const rows: any[][] = [];
-  rows.push(["Group", "Worst Color", "Accounts", "Avg Score", "Members", "🟢", "🟡", "🔴", "⚪", "✓", "⚠", "⌛", "?"]);
+  rows.push([
+    "Group", "Worst Color", "Accounts", "Avg Score", "Members",
+    "🟢", "🟡", "🔴", "⚪",
+    "CC ✓", "CC ⚠", "CC ⌛", "CC ?",
+    "F2F ✓", "F2F ⚠", "F2F ⌛", "F2F ?",
+  ]);
   for (const r of s.byGroup || []) {
     const memberList = r.members.join(", ") + (r.accountCount > r.members.length ? ` (+${r.accountCount - r.members.length} more)` : "");
     rows.push([
@@ -503,6 +539,7 @@ function buildGroupBreakdownRows(s: ExecutiveSummary): any[][] {
       memberList,
       r.health.green, r.health.yellow, r.health.red, r.health.grey,
       r.compliance.compliant, r.compliance.warning, r.compliance.overdue, r.compliance.unknown,
+      r.f2fCompliance.compliant, r.f2fCompliance.warning, r.f2fCompliance.overdue, r.f2fCompliance.unknown,
     ]);
   }
   return rows;

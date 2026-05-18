@@ -19,11 +19,13 @@ const ADMIN_ONLY_FIELDS = new Set([
   "clientLongName",
   "engagementStatus",
   "specialConsiderations",
+  "f2fFrequencyOverride",
 ]);
 
 // Fields any team member with account access can edit.
 const TEAM_EDITABLE_FIELDS = new Set([
   "lastCourtesyCall",
+  "lastF2FVisit",
   "companyName",
   "industry",
   "modulesAvailed",
@@ -111,6 +113,8 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       assignedOnMonth,
       // team-editable — operational
       lastCourtesyCall,
+      lastF2FVisit,
+      f2fFrequencyOverride,
     } = body;
 
     // Reject if any admin-only field is being touched by a non-admin
@@ -144,6 +148,8 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
         ...(rmEmail !== undefined && { rmEmail }),
         ...(assignedOnMonth !== undefined && { assignedOnMonth }),
         ...(lastCourtesyCall !== undefined && { lastCourtesyCall }),
+        ...(lastF2FVisit !== undefined && { lastF2FVisit }),
+        ...(f2fFrequencyOverride !== undefined && { f2fFrequencyOverride }),
         updatedAt: new Date().toISOString(),
       } as any)
       .where(eq(clientProfilesTable.id, params.id));

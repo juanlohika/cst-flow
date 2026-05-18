@@ -88,6 +88,8 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN rmEmail TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN assignedOnMonth TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN lastCourtesyCall TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN lastF2FVisit TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN f2fFrequencyOverride TEXT`); } catch {}
 
     // Phase E.3: master modules list
     await db.run(sql`CREATE TABLE IF NOT EXISTS AccountModule (
@@ -139,6 +141,19 @@ export async function ensureAccessSchema(): Promise<void> {
       FOREIGN KEY (clientProfileId) REFERENCES ClientProfile(id) ON DELETE CASCADE
     )`);
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS idx_CourtesyCallHistory_client ON CourtesyCallHistory(clientProfileId, callDate DESC)`); } catch {}
+
+    // Phase E.5: F2F visit history
+    await db.run(sql`CREATE TABLE IF NOT EXISTS F2FVisitHistory (
+      id TEXT PRIMARY KEY,
+      clientProfileId TEXT NOT NULL,
+      visitDate TEXT NOT NULL,
+      loggedByUserId TEXT NOT NULL,
+      location TEXT,
+      notes TEXT,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (clientProfileId) REFERENCES ClientProfile(id) ON DELETE CASCADE
+    )`);
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS idx_F2FVisitHistory_client ON F2FVisitHistory(clientProfileId, visitDate DESC)`); } catch {}
 
     // Phase B: Account Health Assessment
     await db.run(sql`CREATE TABLE IF NOT EXISTS AccountAssessment (

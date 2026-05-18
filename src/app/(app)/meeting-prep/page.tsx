@@ -133,6 +133,8 @@ const EMPTY_FORM = {
   rmEmail: "",
   assignedOnMonth: "",
   lastCourtesyCall: "",
+  lastF2FVisit: "",
+  f2fFrequencyOverride: "",
 };
 
 const TIER_OPTIONS: { value: string; label: string }[] = [
@@ -283,6 +285,8 @@ function MeetingPrepContent() {
         rmEmail: p.rmEmail || "",
         assignedOnMonth: p.assignedOnMonth || "",
         lastCourtesyCall: p.lastCourtesyCall || "",
+        lastF2FVisit: p.lastF2FVisit || "",
+        f2fFrequencyOverride: p.f2fFrequencyOverride || "",
       });
     } catch (e) {
       showToast("Couldn't load latest account data. Try again.", "error");
@@ -842,7 +846,7 @@ function MeetingPrepContent() {
                     />
                   </div>
                   <div>
-                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Last Courtesy Call</label>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Last Courtesy Call <span className="text-[9px] text-text-muted">(any channel — Zoom, phone, F2F, etc.)</span></label>
                     <input
                       type="date"
                       value={formData.lastCourtesyCall}
@@ -850,6 +854,33 @@ function MeetingPrepContent() {
                       className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                     <p className="text-[10px] text-text-muted mt-1">Anyone with account access can update this.</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Last F2F Visit <span className="text-[9px] text-text-muted">(in-person)</span></label>
+                    <input
+                      type="date"
+                      value={formData.lastF2FVisit}
+                      onChange={e => setFormData(f => ({ ...f, lastF2FVisit: e.target.value }))}
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                    <p className="text-[10px] text-text-muted mt-1">Target: at least once per year. Anyone with account access can update this.</p>
+                  </div>
+                  <div>
+                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">F2F Frequency Override <span className="text-[9px] text-text-muted">(optional)</span> {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
+                    <select
+                      value={formData.f2fFrequencyOverride}
+                      onChange={e => setFormData(f => ({ ...f, f2fFrequencyOverride: e.target.value }))}
+                      disabled={!isAdmin}
+                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
+                    >
+                      <option value="">Use default (yearly)</option>
+                      <option value="every-6-months">Every 6 months</option>
+                      <option value="yearly">Yearly</option>
+                      <option value="every-2-years">Every 2 years</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -1105,17 +1136,19 @@ export function ProfileTab({ profile, modules }: {
       </Section>
 
       {/* CRM panel */}
-      {(profile.groupName || profile.tier || profile.groupTier || profile.rmEmail || profile.pmEmail || profile.baEmail || profile.assignedOnMonth || profile.lastCourtesyCall || profile.frequencyOverride) && (
+      {(profile.groupName || profile.tier || profile.groupTier || profile.rmEmail || profile.pmEmail || profile.baEmail || profile.assignedOnMonth || profile.lastCourtesyCall || profile.lastF2FVisit || profile.frequencyOverride || profile.f2fFrequencyOverride) && (
         <Section title="Account CRM">
           {profile.groupName && <Field label="Group" value={profile.groupName} />}
           {profile.tier && <Field label="Tier" value={profile.tier === "VIP" ? "VIP" : `Tier ${profile.tier}`} />}
           {profile.groupTier && <Field label="Group Tier" value={profile.groupTier === "VIP" ? "VIP" : `Tier ${profile.groupTier}`} />}
-          {profile.frequencyOverride && <Field label="Frequency Override" value={profile.frequencyOverride} />}
+          {profile.frequencyOverride && <Field label="CC Frequency Override" value={profile.frequencyOverride} />}
+          {profile.f2fFrequencyOverride && <Field label="F2F Frequency Override" value={profile.f2fFrequencyOverride} />}
           {profile.rmEmail && <Field label="Relationship Manager" value={profile.rmEmail} />}
           {profile.pmEmail && <Field label="Project Manager" value={profile.pmEmail} />}
           {profile.baEmail && <Field label="Business Analyst" value={profile.baEmail} />}
           {profile.assignedOnMonth && <Field label="Assigned On" value={profile.assignedOnMonth} />}
           {profile.lastCourtesyCall && <Field label="Last Courtesy Call" value={new Date(profile.lastCourtesyCall).toLocaleDateString(undefined, { dateStyle: "medium" })} />}
+          {profile.lastF2FVisit && <Field label="Last F2F Visit" value={new Date(profile.lastF2FVisit).toLocaleDateString(undefined, { dateStyle: "medium" })} />}
         </Section>
       )}
 

@@ -6,10 +6,11 @@ import { useSession } from "next-auth/react";
 import {
   Activity, Loader2, FileText, Download, Sparkles, AlertTriangle,
   TrendingUp, TrendingDown, ChevronRight, RotateCcw, Calendar, Sheet,
-  ExternalLink,
+  ExternalLink, Phone, MapPin, Building2, ShieldCheck, AlertCircle,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import HealthChip from "@/components/accounts/HealthChip";
+import ComplianceDonut from "@/components/charts/ComplianceDonut";
 import { HEALTH_COLORS, type HealthColor } from "@/lib/accounts/health-score";
 
 interface AccountSnap {
@@ -37,13 +38,17 @@ interface AccountSnap {
   frequencyLabel?: string;
   complianceStatus?: "compliant" | "warning" | "overdue" | "unknown";
   daysSinceCall?: number | null;
+  lastF2FVisit?: string | null;
+  f2fFrequencyLabel?: string;
+  f2fComplianceStatus?: "compliant" | "warning" | "overdue" | "unknown";
+  daysSinceF2F?: number | null;
 }
 
 interface ColorCounts { green: number; yellow: number; red: number; grey: number; critical: number; }
 interface ComplianceCounts { compliant: number; warning: number; overdue: number; unknown: number; }
-interface TierBreakdownRow { tier: string; accountCount: number; health: ColorCounts; compliance: ComplianceCounts; avgScore: number | null; }
-interface GroupBreakdownRow { groupName: string; accountCount: number; health: ColorCounts; compliance: ComplianceCounts; worstColor: HealthColor; rollupScore: number | null; members: string[]; }
-interface RmBreakdownRow { rmEmail: string; rmName: string | null; accountCount: number; health: ColorCounts; compliance: ComplianceCounts; avgScore: number | null; }
+interface TierBreakdownRow { tier: string; accountCount: number; health: ColorCounts; compliance: ComplianceCounts; f2fCompliance: ComplianceCounts; avgScore: number | null; }
+interface GroupBreakdownRow { groupName: string; accountCount: number; health: ColorCounts; compliance: ComplianceCounts; f2fCompliance: ComplianceCounts; worstColor: HealthColor; rollupScore: number | null; members: string[]; }
+interface RmBreakdownRow { rmEmail: string; rmName: string | null; accountCount: number; health: ColorCounts; compliance: ComplianceCounts; f2fCompliance: ComplianceCounts; avgScore: number | null; }
 
 interface Summary {
   generatedAt: string;
@@ -64,6 +69,7 @@ interface Summary {
   thirdPartyTools: Array<{ tool: string; count: number }>;
   topRequestedModules: Array<{ module: string; count: number }>;
   complianceCounts?: ComplianceCounts;
+  f2fComplianceCounts?: ComplianceCounts;
   byTier?: TierBreakdownRow[];
   byGroup?: GroupBreakdownRow[];
   byRm?: RmBreakdownRow[];
@@ -290,13 +296,98 @@ function Content() {
             </section>
           )}
 
-          {/* Portfolio counts */}
-          <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <CountCard color="red" label="Critical" count={summary.redCount} total={summary.totalAccounts} subtitle={summary.criticalCount > 0 ? `${summary.criticalCount} flagged` : undefined} />
-            <CountCard color="yellow" label="Watch" count={summary.yellowCount} total={summary.totalAccounts} />
-            <CountCard color="green" label="Healthy" count={summary.greenCount} total={summary.totalAccounts} />
-            <CountCard color="grey" label="Unassessed" count={summary.greyCount} total={summary.totalAccounts} />
+          {/* Hero — big portfolio metric strip */}
+          <section className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <MetricCard
+                icon={<Building2 className="w-5 h-5" />}
+                label="Portfolio"
+                value={summary.totalAccounts}
+                subtext="Total accounts"
+                color="indigo"
+              />
+              <MetricCard
+                icon={<AlertCircle className="w-5 h-5" />}
+                label="Critical"
+                value={summary.redCount}
+                subtext={summary.criticalCount > 0 ? `${summary.criticalCount} flagged` : `${pct(summary.redCount, summary.totalAccounts)}% of portfolio`}
+                color="red"
+              />
+              <MetricCard
+                icon={<AlertTriangle className="w-5 h-5" />}
+                label="Watch"
+                value={summary.yellowCount}
+                subtext={`${pct(summary.yellowCount, summary.totalAccounts)}% of portfolio`}
+                color="yellow"
+              />
+              <MetricCard
+                icon={<ShieldCheck className="w-5 h-5" />}
+                label="Healthy"
+                value={summary.greenCount}
+                subtext={`${pct(summary.greenCount, summary.totalAccounts)}% of portfolio`}
+                color="green"
+              />
+              <MetricCard
+                icon={<Sparkles className="w-5 h-5" />}
+                label="Unassessed"
+                value={summary.greyCount}
+                subtext={`${pct(summary.greyCount, summary.totalAccounts)}% of portfolio`}
+                color="grey"
+              />
+            </div>
           </section>
+
+          {/* Compliance Donuts — CC + F2F side by side */}
+          {(summary.complianceCounts || summary.f2fComplianceCounts) && (
+            <section className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {summary.complianceCounts && (
+                <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Phone className="w-4 h-4 text-emerald-600" />
+                    <h2 className="text-[13px] font-black text-slate-900">Courtesy Call Compliance</h2>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mb-4">Any channel — Zoom, phone, F2F. Cadence is tier-derived.</p>
+                  <div className="flex justify-center">
+                    <ComplianceDonut
+                      size={220}
+                      centerLabel="On Schedule"
+                      centerValue={`${pct(summary.complianceCounts.compliant, summary.totalAccounts)}%`}
+                      centerSubtext={`${summary.complianceCounts.compliant} of ${summary.totalAccounts}`}
+                      segments={[
+                        { label: "Compliant", value: summary.complianceCounts.compliant, color: "#10b981" },
+                        { label: "Warning", value: summary.complianceCounts.warning, color: "#f59e0b" },
+                        { label: "Overdue", value: summary.complianceCounts.overdue, color: "#ef4444" },
+                        { label: "Unknown", value: summary.complianceCounts.unknown, color: "#cbd5e1" },
+                      ]}
+                    />
+                  </div>
+                </div>
+              )}
+              {summary.f2fComplianceCounts && (
+                <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <MapPin className="w-4 h-4 text-blue-600" />
+                    <h2 className="text-[13px] font-black text-slate-900">F2F Visit Compliance</h2>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mb-4">In-person visits. Target: once per year per account.</p>
+                  <div className="flex justify-center">
+                    <ComplianceDonut
+                      size={220}
+                      centerLabel="On Schedule"
+                      centerValue={`${pct(summary.f2fComplianceCounts.compliant, summary.totalAccounts)}%`}
+                      centerSubtext={`${summary.f2fComplianceCounts.compliant} of ${summary.totalAccounts}`}
+                      segments={[
+                        { label: "Compliant", value: summary.f2fComplianceCounts.compliant, color: "#10b981" },
+                        { label: "Warning", value: summary.f2fComplianceCounts.warning, color: "#f59e0b" },
+                        { label: "Overdue", value: summary.f2fComplianceCounts.overdue, color: "#ef4444" },
+                        { label: "Unknown", value: summary.f2fComplianceCounts.unknown, color: "#cbd5e1" },
+                      ]}
+                    />
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
 
           {/* Critical accounts */}
           {summary.redCount > 0 && (
@@ -367,20 +458,6 @@ function Content() {
             )}
           </section>
 
-          {/* Courtesy Call Compliance */}
-          {summary.complianceCounts && (
-            <section className="bg-white border border-slate-100 rounded-2xl shadow-sm p-5">
-              <h2 className="text-[13px] font-black text-slate-800 mb-3">Courtesy Call Compliance</h2>
-              <p className="text-[11px] text-slate-500 mb-3">Based on each account's tier-derived call cadence vs the last courtesy call logged. Per-account override available on the account profile.</p>
-              <div className="grid grid-cols-4 gap-2">
-                <ComplianceStat label="Compliant" value={summary.complianceCounts.compliant} color="emerald" />
-                <ComplianceStat label="Warning" value={summary.complianceCounts.warning} color="amber" />
-                <ComplianceStat label="Overdue" value={summary.complianceCounts.overdue} color="rose" />
-                <ComplianceStat label="Unknown" value={summary.complianceCounts.unknown} color="slate" />
-              </div>
-            </section>
-          )}
-
           {/* By Tier */}
           {summary.byTier && summary.byTier.length > 0 && (
             <section className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden">
@@ -393,6 +470,7 @@ function Content() {
                   label: r.tier === "Unset" ? "Unset (no tier)" : (r.tier === "VIP" ? "VIP" : `Tier ${r.tier}`),
                   health: r.health,
                   compliance: r.compliance,
+                  f2fCompliance: r.f2fCompliance,
                   count: r.accountCount,
                   avgScore: r.avgScore,
                 }))}
@@ -413,6 +491,7 @@ function Content() {
                   sublabel: r.rmName ? r.rmEmail : undefined,
                   health: r.health,
                   compliance: r.compliance,
+                  f2fCompliance: r.f2fCompliance,
                   count: r.accountCount,
                   avgScore: r.avgScore,
                 }))}
@@ -434,6 +513,7 @@ function Content() {
                   sublabel: r.members.length > 0 ? `Members: ${r.members.join(", ")}${r.accountCount > r.members.length ? ` (+${r.accountCount - r.members.length} more)` : ""}` : undefined,
                   health: r.health,
                   compliance: r.compliance,
+                  f2fCompliance: r.f2fCompliance,
                   count: r.accountCount,
                   avgScore: r.rollupScore,
                 }))}
@@ -543,23 +623,25 @@ function Distribution({ label, dist }: { label: string; dist: number[] }) {
   const total = dist.reduce((a, b) => a + b, 0);
   const max = Math.max(...dist, 1);
   return (
-    <div>
-      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">{label}</p>
-      <div className="flex items-end gap-1 h-16">
+    <div className="bg-slate-50 rounded-xl p-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <p className="text-[11px] font-black uppercase tracking-widest text-slate-700">{label}</p>
+        <p className="text-[10px] font-bold text-slate-400">{total} assessment{total === 1 ? "" : "s"}</p>
+      </div>
+      <div className="flex items-end gap-2 h-28">
         {dist.map((count, i) => {
           const score = i + 1;
-          const hue = score <= 2 ? "bg-rose-400" : score === 3 ? "bg-amber-400" : "bg-emerald-500";
+          const hue = score <= 2 ? "bg-rose-500" : score === 3 ? "bg-amber-500" : "bg-emerald-500";
           const heightPct = (count / max) * 100;
           return (
-            <div key={score} className="flex-1 flex flex-col items-center justify-end">
-              <p className="text-[9px] font-bold text-slate-500 mb-0.5">{count}</p>
-              <div className={`w-full ${hue} rounded-t`} style={{ height: `${heightPct}%` }} />
-              <p className="text-[9px] font-bold text-slate-400 mt-0.5">{score}</p>
+            <div key={score} className="flex-1 flex flex-col items-center justify-end gap-1.5">
+              <p className="text-[14px] font-black text-slate-900 leading-none">{count}</p>
+              <div className={`w-full ${hue} rounded-md shadow-sm transition-all`} style={{ height: `${heightPct}%`, minHeight: count > 0 ? "4px" : "0" }} />
+              <p className="text-[11px] font-black text-slate-500">{score}</p>
             </div>
           );
         })}
       </div>
-      <p className="text-[9px] text-slate-400 mt-1">{total} assessment{total === 1 ? "" : "s"}</p>
     </div>
   );
 }
@@ -599,55 +681,111 @@ interface BreakdownRow {
   sublabel?: string;
   health: { green: number; yellow: number; red: number; grey: number; critical: number };
   compliance: { compliant: number; warning: number; overdue: number; unknown: number };
+  f2fCompliance?: { compliant: number; warning: number; overdue: number; unknown: number };
   count: number;
   avgScore: number | null;
 }
 
 function BreakdownTable({ rows }: { rows: BreakdownRow[] }) {
+  const hasF2F = rows.some(r => r.f2fCompliance);
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-[11px]">
+      <table className="w-full text-[12px]">
         <thead className="bg-slate-50">
           <tr>
-            <th className="text-left px-3 py-2 font-black text-slate-500 uppercase text-[9px] tracking-widest">Bucket</th>
-            <th className="text-center px-2 py-2 font-black text-slate-500 uppercase text-[9px] tracking-widest">Accounts</th>
-            <th className="text-center px-2 py-2 font-black text-slate-500 uppercase text-[9px] tracking-widest">Avg Score</th>
-            <th className="text-center px-2 py-2 font-black text-slate-500 uppercase text-[9px] tracking-widest" colSpan={4}>Health</th>
-            <th className="text-center px-2 py-2 font-black text-slate-500 uppercase text-[9px] tracking-widest" colSpan={4}>Compliance</th>
+            <th className="text-left px-4 py-2.5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Bucket</th>
+            <th className="text-center px-2 py-2.5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Accts</th>
+            <th className="text-center px-2 py-2.5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Avg</th>
+            <th className="text-center px-2 py-2.5 font-black text-slate-500 uppercase text-[10px] tracking-widest" colSpan={4}>Health</th>
+            <th className="text-center px-2 py-2.5 font-black text-slate-500 uppercase text-[10px] tracking-widest" colSpan={4}>📞 CC Compliance</th>
+            {hasF2F && (
+              <th className="text-center px-2 py-2.5 font-black text-slate-500 uppercase text-[10px] tracking-widest" colSpan={4}>📍 F2F Compliance</th>
+            )}
           </tr>
           <tr className="border-t border-slate-100 bg-slate-50/60">
             <th colSpan={3}></th>
-            <th className="text-center px-1.5 py-1 font-bold text-emerald-700 text-[9px]">🟢</th>
-            <th className="text-center px-1.5 py-1 font-bold text-amber-700 text-[9px]">🟡</th>
-            <th className="text-center px-1.5 py-1 font-bold text-rose-700 text-[9px]">🔴</th>
-            <th className="text-center px-1.5 py-1 font-bold text-slate-500 text-[9px]">⚪</th>
-            <th className="text-center px-1.5 py-1 font-bold text-emerald-700 text-[9px]">✓</th>
-            <th className="text-center px-1.5 py-1 font-bold text-amber-700 text-[9px]">⚠</th>
-            <th className="text-center px-1.5 py-1 font-bold text-rose-700 text-[9px]">⌛</th>
-            <th className="text-center px-1.5 py-1 font-bold text-slate-500 text-[9px]">?</th>
+            <th className="text-center px-1.5 py-1.5 font-bold text-emerald-700 text-[10px]">🟢</th>
+            <th className="text-center px-1.5 py-1.5 font-bold text-amber-700 text-[10px]">🟡</th>
+            <th className="text-center px-1.5 py-1.5 font-bold text-rose-700 text-[10px]">🔴</th>
+            <th className="text-center px-1.5 py-1.5 font-bold text-slate-500 text-[10px]">⚪</th>
+            <th className="text-center px-1.5 py-1.5 font-bold text-emerald-700 text-[10px]">✓</th>
+            <th className="text-center px-1.5 py-1.5 font-bold text-amber-700 text-[10px]">⚠</th>
+            <th className="text-center px-1.5 py-1.5 font-bold text-rose-700 text-[10px]">⌛</th>
+            <th className="text-center px-1.5 py-1.5 font-bold text-slate-500 text-[10px]">?</th>
+            {hasF2F && (
+              <>
+                <th className="text-center px-1.5 py-1.5 font-bold text-emerald-700 text-[10px]">✓</th>
+                <th className="text-center px-1.5 py-1.5 font-bold text-amber-700 text-[10px]">⚠</th>
+                <th className="text-center px-1.5 py-1.5 font-bold text-rose-700 text-[10px]">⌛</th>
+                <th className="text-center px-1.5 py-1.5 font-bold text-slate-500 text-[10px]">?</th>
+              </>
+            )}
           </tr>
         </thead>
         <tbody>
           {rows.map(r => (
             <tr key={r.key} className="border-t border-slate-100 hover:bg-slate-50">
-              <td className="px-3 py-2">
+              <td className="px-4 py-3">
                 <p className="font-bold text-slate-800">{r.label}</p>
                 {r.sublabel && <p className="text-[10px] text-slate-500 mt-0.5">{r.sublabel}</p>}
               </td>
-              <td className="px-2 py-2 text-center font-bold text-slate-700">{r.count}</td>
-              <td className="px-2 py-2 text-center font-black text-slate-800">{r.avgScore !== null ? r.avgScore : "—"}</td>
-              <td className="px-1.5 py-2 text-center text-emerald-700 font-bold">{r.health.green || ""}</td>
-              <td className="px-1.5 py-2 text-center text-amber-700 font-bold">{r.health.yellow || ""}</td>
-              <td className="px-1.5 py-2 text-center text-rose-700 font-bold">{r.health.red || ""}</td>
-              <td className="px-1.5 py-2 text-center text-slate-500 font-bold">{r.health.grey || ""}</td>
-              <td className="px-1.5 py-2 text-center text-emerald-700 font-bold">{r.compliance.compliant || ""}</td>
-              <td className="px-1.5 py-2 text-center text-amber-700 font-bold">{r.compliance.warning || ""}</td>
-              <td className="px-1.5 py-2 text-center text-rose-700 font-bold">{r.compliance.overdue || ""}</td>
-              <td className="px-1.5 py-2 text-center text-slate-500 font-bold">{r.compliance.unknown || ""}</td>
+              <td className="px-2 py-3 text-center font-bold text-slate-700">{r.count}</td>
+              <td className="px-2 py-3 text-center font-black text-slate-900">{r.avgScore !== null ? r.avgScore : "—"}</td>
+              <td className="px-1.5 py-3 text-center text-emerald-700 font-black">{r.health.green || ""}</td>
+              <td className="px-1.5 py-3 text-center text-amber-700 font-black">{r.health.yellow || ""}</td>
+              <td className="px-1.5 py-3 text-center text-rose-700 font-black">{r.health.red || ""}</td>
+              <td className="px-1.5 py-3 text-center text-slate-500 font-black">{r.health.grey || ""}</td>
+              <td className="px-1.5 py-3 text-center text-emerald-700 font-black">{r.compliance.compliant || ""}</td>
+              <td className="px-1.5 py-3 text-center text-amber-700 font-black">{r.compliance.warning || ""}</td>
+              <td className="px-1.5 py-3 text-center text-rose-700 font-black">{r.compliance.overdue || ""}</td>
+              <td className="px-1.5 py-3 text-center text-slate-500 font-black">{r.compliance.unknown || ""}</td>
+              {hasF2F && r.f2fCompliance && (
+                <>
+                  <td className="px-1.5 py-3 text-center text-emerald-700 font-black">{r.f2fCompliance.compliant || ""}</td>
+                  <td className="px-1.5 py-3 text-center text-amber-700 font-black">{r.f2fCompliance.warning || ""}</td>
+                  <td className="px-1.5 py-3 text-center text-rose-700 font-black">{r.f2fCompliance.overdue || ""}</td>
+                  <td className="px-1.5 py-3 text-center text-slate-500 font-black">{r.f2fCompliance.unknown || ""}</td>
+                </>
+              )}
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function pct(n: number, total: number): number {
+  if (total === 0) return 0;
+  return Math.round((n / total) * 100);
+}
+
+function MetricCard({ icon, label, value, subtext, color }: {
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+  subtext?: string;
+  color: "indigo" | "red" | "yellow" | "green" | "grey" | "blue";
+}) {
+  const palette: Record<string, { icon: string; bg: string; iconBg: string; value: string }> = {
+    indigo: { icon: "text-white", bg: "bg-white", iconBg: "bg-indigo-500", value: "text-slate-900" },
+    red: { icon: "text-white", bg: "bg-rose-50", iconBg: "bg-rose-500", value: "text-rose-900" },
+    yellow: { icon: "text-white", bg: "bg-amber-50", iconBg: "bg-amber-500", value: "text-amber-900" },
+    green: { icon: "text-white", bg: "bg-emerald-50", iconBg: "bg-emerald-500", value: "text-emerald-900" },
+    grey: { icon: "text-white", bg: "bg-slate-50", iconBg: "bg-slate-400", value: "text-slate-700" },
+    blue: { icon: "text-white", bg: "bg-blue-50", iconBg: "bg-blue-500", value: "text-blue-900" },
+  };
+  const p = palette[color];
+  return (
+    <div className={`rounded-xl p-3 ${p.bg} border border-slate-100 flex items-start gap-3`}>
+      <div className={`w-9 h-9 rounded-lg ${p.iconBg} flex items-center justify-center shrink-0 ${p.icon}`}>
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">{label}</p>
+        <p className={`text-2xl font-black mt-0.5 ${p.value}`}>{value}</p>
+        {subtext && <p className="text-[10px] font-bold text-slate-500 mt-0.5">{subtext}</p>}
+      </div>
     </div>
   );
 }

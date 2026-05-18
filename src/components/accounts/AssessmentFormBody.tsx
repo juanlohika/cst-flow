@@ -128,7 +128,7 @@ export default function AssessmentFormBody({ value, onChange }: Props) {
       {/* Section C */}
       <Section title="Relationship Strength (EBA)" letter="C" accent="emerald">
         <p className="text-[11px] text-slate-500 -mt-2 mb-1">
-          How strong is your Executive Business Alignment with the two key contacts at this client?
+          How strong is your Emotional Bank Account with the two key contacts at this client?
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
           <Rating

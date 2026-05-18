@@ -54,6 +54,8 @@ export interface ParsedAccountRow {
   rmEmail?: string;
   assignedOnMonth?: string;
   lastCourtesyCall?: string;
+  lastF2FVisit?: string;
+  f2fFrequencyOverride?: string;
 }
 
 export interface ParsedTeamRow {
@@ -122,6 +124,8 @@ export function parseXlsx(buffer: ArrayBuffer): {
         rmEmail: stringOrEmpty(r.rm_email || r.rmEmail),
         assignedOnMonth: stringOrEmpty(r.assigned_on_month || r.assignedOnMonth),
         lastCourtesyCall: stringOrEmpty(r.last_courtesy_call || r.lastCourtesyCall),
+        lastF2FVisit: stringOrEmpty(r.last_f2f_visit || r.lastF2FVisit),
+        f2fFrequencyOverride: stringOrEmpty(r.f2f_frequency_override || r.f2fFrequencyOverride),
       });
     });
   }
@@ -229,6 +233,18 @@ export async function validateRows(input: {
     if (row.lastCourtesyCall && !/^\d{4}-\d{2}-\d{2}$/.test(row.lastCourtesyCall)) {
       report.push({ sheet: "Accounts", rowNumber: row.rowNumber, status: "warn",
         message: `last_courtesy_call "${row.lastCourtesyCall}" should be YYYY-MM-DD. Will be saved as-is.` });
+      warnCountAcc++;
+      continue;
+    }
+    if (row.lastF2FVisit && !/^\d{4}-\d{2}-\d{2}$/.test(row.lastF2FVisit)) {
+      report.push({ sheet: "Accounts", rowNumber: row.rowNumber, status: "warn",
+        message: `last_f2f_visit "${row.lastF2FVisit}" should be YYYY-MM-DD. Will be saved as-is.` });
+      warnCountAcc++;
+      continue;
+    }
+    if (row.f2fFrequencyOverride && !VALID_FREQUENCIES.includes(row.f2fFrequencyOverride as any) && row.f2fFrequencyOverride !== "every-2-years") {
+      report.push({ sheet: "Accounts", rowNumber: row.rowNumber, status: "warn",
+        message: `f2f_frequency_override "${row.f2fFrequencyOverride}" is non-standard. Expected: every-6-months | yearly | every-2-years. Will be saved as-is.` });
       warnCountAcc++;
       continue;
     }
@@ -443,6 +459,8 @@ export async function applyValidated(args: {
             rmEmail: row.rmEmail || null,
             assignedOnMonth: row.assignedOnMonth || null,
             lastCourtesyCall: row.lastCourtesyCall || null,
+            lastF2FVisit: row.lastF2FVisit || null,
+            f2fFrequencyOverride: row.f2fFrequencyOverride || null,
           } as any);
           resolvedAccountId = newId;
         }
@@ -596,6 +614,8 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
       rmEmail: clientProfilesTable.rmEmail,
       assignedOnMonth: clientProfilesTable.assignedOnMonth,
       lastCourtesyCall: clientProfilesTable.lastCourtesyCall,
+      lastF2FVisit: clientProfilesTable.lastF2FVisit,
+      f2fFrequencyOverride: clientProfilesTable.f2fFrequencyOverride,
     })
     .from(clientProfilesTable);
 
@@ -660,6 +680,8 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
       ba_email: a.baEmail || memberEmails.BA || "",
       assigned_on_month: a.assignedOnMonth || "",
       last_courtesy_call: a.lastCourtesyCall || "",
+      last_f2f_visit: a.lastF2FVisit || "",
+      f2f_frequency_override: a.f2fFrequencyOverride || "",
     };
   });
 
@@ -684,6 +706,7 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
       "group_name", "tier", "group_tier", "frequency_override",
       "rm_email", "pm_email", "ba_email",
       "assigned_on_month", "last_courtesy_call",
+      "last_f2f_visit", "f2f_frequency_override",
     ],
   });
   wsAccounts["!cols"] = [
@@ -693,6 +716,7 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
     { wch: 22 }, { wch: 8 }, { wch: 10 }, { wch: 18 },
     { wch: 26 }, { wch: 26 }, { wch: 26 },
     { wch: 14 }, { wch: 16 },
+    { wch: 14 }, { wch: 18 },
   ];
   XLSX.utils.book_append_sheet(wb, wsAccounts, "Accounts");
 
@@ -725,7 +749,9 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
     ["   - group_tier: VIP | 1 | 2 | 3 | 4 | 5 (the parent group's tier)."],
     ["   - frequency_override: monthly | every-2-months | every-3-months | quarterly | every-6-months | yearly. Leave blank to use the tier default."],
     ["   - assigned_on_month: YYYY-MM (when current RM took over)."],
-    ["   - last_courtesy_call: YYYY-MM-DD."],
+    ["   - last_courtesy_call: YYYY-MM-DD (any channel — Zoom, phone, F2F all count)."],
+    ["   - last_f2f_visit: YYYY-MM-DD (in-person visits only). Target: once per year per account."],
+    ["   - f2f_frequency_override: yearly | every-6-months | every-2-years. Leave blank for default (yearly)."],
     [""],
     ["   Internal team via emails (NEW behavior — Phase E.4):"],
     ["   - rm_email / pm_email / ba_email: when filled in with a registered CST OS user email,"],
@@ -889,6 +915,8 @@ function buildUpdatePatch(row: ParsedAccountRow): any {
   if (row.rmEmail !== undefined) patch.rmEmail = row.rmEmail || null;
   if (row.assignedOnMonth !== undefined) patch.assignedOnMonth = row.assignedOnMonth || null;
   if (row.lastCourtesyCall !== undefined) patch.lastCourtesyCall = row.lastCourtesyCall || null;
+  if (row.lastF2FVisit !== undefined) patch.lastF2FVisit = row.lastF2FVisit || null;
+  if (row.f2fFrequencyOverride !== undefined) patch.f2fFrequencyOverride = row.f2fFrequencyOverride || null;
   return patch;
 }
 
