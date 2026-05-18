@@ -40,11 +40,10 @@ export default function GoogleIntegrationPage() {
       if (res.ok) {
         const data = await res.json();
         setStatus(data);
-        setForm(prev => ({
-          ...prev,
-          driveFolderId: data.driveFolderId || "",
-          dashboardsFolderId: data.dashboardsFolderId || "",
-        }));
+        // Don't pre-fill the edit form with existing values — keeping them
+        // blank means "leave them alone on save". The status card above
+        // already shows what's currently configured.
+        setForm({ serviceAccountJson: "", driveFolderId: "", dashboardsFolderId: "" });
       }
     } finally {
       setLoading(false);
@@ -55,8 +54,10 @@ export default function GoogleIntegrationPage() {
 
   const save = async () => {
     setError(null);
-    if (!form.serviceAccountJson || !form.driveFolderId) {
-      setError("Both fields are required");
+    // Allow saving a single field on its own — blank fields preserve the
+    // existing value on the server. Only block if EVERYTHING is blank.
+    if (!form.serviceAccountJson && !form.driveFolderId && !form.dashboardsFolderId) {
+      setError("Nothing to save — fill in at least one field.");
       return;
     }
     setSaving(true);
@@ -72,7 +73,7 @@ export default function GoogleIntegrationPage() {
         return;
       }
       setShowEdit(false);
-      setForm({ serviceAccountJson: "", driveFolderId: form.driveFolderId, dashboardsFolderId: form.dashboardsFolderId });
+      setForm({ serviceAccountJson: "", driveFolderId: "", dashboardsFolderId: "" });
       await load();
     } finally {
       setSaving(false);
@@ -178,21 +179,39 @@ export default function GoogleIntegrationPage() {
               {/* Edit form */}
               {showEdit && (
                 <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
-                  <p className="text-[12px] font-bold text-slate-800">Service account JSON</p>
-                  <p className="text-[10px] text-slate-500">Paste the JSON file you downloaded from Google Cloud → IAM → Service Accounts → Keys.</p>
+                  {status?.configured && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 mb-1">
+                      <p className="text-[11px] text-emerald-800">
+                        <strong>Tip:</strong> leave any field <em>blank</em> to keep the existing value. To just add the Dashboards folder, fill in only that one field.
+                      </p>
+                    </div>
+                  )}
+                  <p className="text-[12px] font-bold text-slate-800">
+                    Service account JSON {status?.serviceAccountValid && <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest ml-1">currently saved</span>}
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    {status?.serviceAccountValid
+                      ? "Leave blank to keep the existing credentials. Paste a new JSON file only if rotating the service account."
+                      : "Paste the JSON file you downloaded from Google Cloud → IAM → Service Accounts → Keys."}
+                  </p>
                   <textarea
                     value={form.serviceAccountJson}
                     onChange={e => setForm({ ...form, serviceAccountJson: e.target.value })}
-                    rows={10}
-                    placeholder='{"type": "service_account", "project_id": "...", "private_key_id": "...", "private_key": "-----BEGIN PRIVATE KEY-----\n..."}'
+                    rows={status?.serviceAccountValid ? 4 : 10}
+                    placeholder={status?.serviceAccountValid ? "Leave blank to keep current credentials" : '{"type": "service_account", "project_id": "...", "private_key_id": "...", "private_key": "-----BEGIN PRIVATE KEY-----\\n..."}'}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-mono outline-none focus:border-slate-400"
                   />
-                  <p className="text-[12px] font-bold text-slate-800 mt-2">BRD Drive folder ID</p>
-                  <p className="text-[10px] text-slate-500">From the URL of the Google Drive folder you created and shared with the service account: <code>https://drive.google.com/drive/folders/<b>THIS_PART</b></code></p>
+                  <p className="text-[12px] font-bold text-slate-800 mt-2">
+                    BRD Drive folder ID {status?.driveFolderId && <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest ml-1">currently saved</span>}
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    From the URL of the Google Drive folder you created and shared with the service account: <code>https://drive.google.com/drive/folders/<b>THIS_PART</b></code>
+                    {status?.driveFolderId && " — leave blank to keep current."}
+                  </p>
                   <input
                     value={form.driveFolderId}
                     onChange={e => setForm({ ...form, driveFolderId: e.target.value })}
-                    placeholder="1A2bC3...xyz"
+                    placeholder={status?.driveFolderId ? "Leave blank to keep current" : "1A2bC3...xyz"}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-mono outline-none focus:border-slate-400"
                   />
 
@@ -220,7 +239,7 @@ export default function GoogleIntegrationPage() {
                       Save credentials
                     </button>
                     <button
-                      onClick={() => { setShowEdit(false); setForm({ serviceAccountJson: "", driveFolderId: status?.driveFolderId || "", dashboardsFolderId: status?.dashboardsFolderId || "" }); setError(null); }}
+                      onClick={() => { setShowEdit(false); setForm({ serviceAccountJson: "", driveFolderId: "", dashboardsFolderId: "" }); setError(null); }}
                       className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-[11px] font-black uppercase tracking-widest"
                     >
                       Cancel

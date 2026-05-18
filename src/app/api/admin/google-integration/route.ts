@@ -70,13 +70,21 @@ export async function POST(req: Request) {
     const driveFolderId = String(body?.driveFolderId || "").trim();
     const dashboardsFolderId = String(body?.dashboardsFolderId || "").trim();
 
-    if (!serviceAccountJson || !driveFolderId) {
-      return NextResponse.json({ error: "Both serviceAccountJson and driveFolderId are required" }, { status: 400 });
+    // Load existing values so we can keep them when the admin only edits one
+    // field (e.g. just adding the Dashboards folder later).
+    const existingRows = await db.select().from(globalSettings).where(inArray(globalSettings.key, KEYS as unknown as string[]));
+    const existingMap = new Map(existingRows.map((r: any) => [r.key, r.value]));
+
+    const effectiveJson = serviceAccountJson || String(existingMap.get("GOOGLE_SERVICE_ACCOUNT_JSON") || "");
+    const effectiveBrdFolder = driveFolderId || String(existingMap.get("GOOGLE_DRIVE_BRD_FOLDER_ID") || "");
+
+    if (!effectiveJson || !effectiveBrdFolder) {
+      return NextResponse.json({ error: "Service account JSON and BRD folder ID are required (they can come from previously saved values — paste them again only if you want to change them)." }, { status: 400 });
     }
 
-    // Validate JSON
+    // Validate the JSON we'll persist (whether new or existing)
     try {
-      const parsed = JSON.parse(serviceAccountJson);
+      const parsed = JSON.parse(effectiveJson);
       if (!parsed.client_email || !parsed.private_key) {
         return NextResponse.json({ error: "Service account JSON missing client_email or private_key" }, { status: 400 });
       }
@@ -84,12 +92,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Service account JSON is not valid JSON" }, { status: 400 });
     }
 
-    const upserts: Array<{ key: string; value: string }> = [
-      { key: "GOOGLE_SERVICE_ACCOUNT_JSON", value: serviceAccountJson },
-      { key: "GOOGLE_DRIVE_BRD_FOLDER_ID", value: driveFolderId },
-    ];
-    if (dashboardsFolderId) {
-      upserts.push({ key: "GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID", value: dashboardsFolderId });
+    // Only upsert keys the admin actually provided in this submission.
+    // Blank fields mean "leave the existing value as-is".
+    const upserts: Array<{ key: string; value: string }> = [];
+    if (serviceAccountJson) upserts.push({ key: "GOOGLE_SERVICE_ACCOUNT_JSON", value: serviceAccountJson });
+    if (driveFolderId) upserts.push({ key: "GOOGLE_DRIVE_BRD_FOLDER_ID", value: driveFolderId });
+    if (dashboardsFolderId) upserts.push({ key: "GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID", value: dashboardsFolderId });
+
+    if (upserts.length === 0) {
+      return NextResponse.json({ error: "Nothing to save — all fields were blank." }, { status: 400 });
     }
 
     const now = new Date().toISOString();
