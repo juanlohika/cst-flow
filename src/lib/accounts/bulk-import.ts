@@ -240,6 +240,29 @@ export async function validateRows(input: {
       continue;
     }
 
+    // Validate RM/PM/BA emails — match against registered CST OS users.
+    // If unknown, surface a warning and the email is saved as CRM metadata only
+    // (no membership granted). If matched, the apply step will create the
+    // membership row automatically.
+    const emailRoleChecks: Array<{ field: string; email: string | undefined; roleLabel: string }> = [
+      { field: "rm_email", email: row.rmEmail, roleLabel: "RM" },
+      { field: "pm_email", email: row.pmEmail, roleLabel: "PM" },
+      { field: "ba_email", email: row.baEmail, roleLabel: "BA" },
+    ];
+    let emailWarned = false;
+    for (const check of emailRoleChecks) {
+      const email = check.email?.trim().toLowerCase();
+      if (!email) continue;
+      if (!usersByEmail.has(email)) {
+        report.push({ sheet: "Accounts", rowNumber: row.rowNumber, status: "warn",
+          message: `${check.field} "${check.email}" is not a registered CST OS user. The email will be saved as metadata only — no ${check.roleLabel} access granted. Ask them to register first, then re-upload to grant access.` });
+        warnCountAcc++;
+        emailWarned = true;
+        break;
+      }
+    }
+    if (emailWarned) continue;
+
     report.push({ sheet: "Accounts", rowNumber: row.rowNumber, status: "ok",
       message: isUpdate ? `Will update "${row.companyName || row.accountId}".`
                          : `Will create new account "${row.companyName}".` });
@@ -373,12 +396,15 @@ export async function applyValidated(args: {
     if (!rep || rep.status === "error") { skipped++; continue; }
 
     try {
+      let resolvedAccountId: string | null = null;
+
       if (row.accountId) {
         // Update by ID
         await db
           .update(clientProfilesTable)
           .set(buildUpdatePatch(row))
           .where(eq(clientProfilesTable.id, row.accountId));
+        resolvedAccountId = row.accountId;
       } else {
         // Upsert by companyName
         const existing = await db
@@ -391,9 +417,13 @@ export async function applyValidated(args: {
             .update(clientProfilesTable)
             .set(buildUpdatePatch(row))
             .where(eq(clientProfilesTable.id, existing[0].id));
+          resolvedAccountId = existing[0].id;
         } else {
-          // Insert new
+          // Insert new — generate the id explicitly so we can use it
+          // for downstream membership upserts.
+          const newId = `cp_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
           await db.insert(clientProfilesTable).values({
+            id: newId,
             userId: args.uploadedBy,
             companyName: row.companyName!,
             industry: row.industry || "Unknown",
@@ -414,8 +444,32 @@ export async function applyValidated(args: {
             assignedOnMonth: row.assignedOnMonth || null,
             lastCourtesyCall: row.lastCourtesyCall || null,
           } as any);
+          resolvedAccountId = newId;
         }
       }
+
+      // Auto-sync memberships from RM/PM/BA emails on the Accounts sheet.
+      // If an email matches a registered user, ensure they have a membership
+      // with the correct internalRole. Previous holders of the same role
+      // on this account are revoked (single-source-of-truth: the CRM email
+      // on the profile drives access).
+      if (resolvedAccountId) {
+        const emailRoleMap: Array<{ email: string | null | undefined; role: "RM" | "PM" | "BA" }> = [
+          { email: row.rmEmail, role: "RM" },
+          { email: row.pmEmail, role: "PM" },
+          { email: row.baEmail, role: "BA" },
+        ];
+        for (const { email, role } of emailRoleMap) {
+          await syncMembershipForRole({
+            accountId: resolvedAccountId,
+            email: email?.trim().toLowerCase() || null,
+            role,
+            grantedBy: args.uploadedBy,
+            usersByEmail,
+          });
+        }
+      }
+
       appliedAccounts++;
     } catch (e: any) {
       // Mutate the report so the batch record has the failure
@@ -560,27 +614,54 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
   const userEmailById = new Map(allUsers.map(u => [u.id, u.email]));
   const accountNameById = new Map(accounts.map(a => [a.id, a.companyName]));
 
+  // Build (account → role → email) map from existing memberships so we can
+  // auto-fill rm_email/pm_email/ba_email in the Accounts sheet when those
+  // CRM fields are blank on the profile. This closes the loop between the
+  // CRM metadata and the access-granting InternalTeam memberships.
+  const membershipEmailByAccountAndRole = new Map<string, Record<string, string>>();
+  for (const m of memberships) {
+    if (!m.internalRole) continue;
+    const role = m.internalRole as string;
+    if (!["RM", "PM", "BA"].includes(role)) continue;
+    if (!membershipEmailByAccountAndRole.has(m.clientProfileId)) {
+      membershipEmailByAccountAndRole.set(m.clientProfileId, {});
+    }
+    const email = userEmailById.get(m.userId);
+    if (!email) continue;
+    // If multiple users have the same role on one account, prefer the primary one for RM
+    if (role === "RM" && m.isPrimary) {
+      membershipEmailByAccountAndRole.get(m.clientProfileId)!.RM = email;
+    } else if (!membershipEmailByAccountAndRole.get(m.clientProfileId)![role]) {
+      membershipEmailByAccountAndRole.get(m.clientProfileId)![role] = email;
+    }
+  }
+
   // Sheet 1: Accounts
-  const accountsRows = accounts.map((a: any) => ({
-    account_id: a.id,
-    account_name: a.companyName,
-    client_short_name: a.clientShortName || "",
-    client_long_name: a.clientLongName || "",
-    industry: a.industry,
-    modules_in_use: parseModulesForTemplate(a.modulesAvailed),
-    status: a.engagementStatus,
-    primary_contact: a.primaryContact || "",
-    primary_contact_email: a.primaryContactEmail || "",
-    group_name: a.groupName || "",
-    tier: a.tier || "",
-    group_tier: a.groupTier || "",
-    frequency_override: a.frequencyOverride || "",
-    rm_email: a.rmEmail || "",
-    pm_email: a.pmEmail || "",
-    ba_email: a.baEmail || "",
-    assigned_on_month: a.assignedOnMonth || "",
-    last_courtesy_call: a.lastCourtesyCall || "",
-  }));
+  const accountsRows = accounts.map((a: any) => {
+    const memberEmails = membershipEmailByAccountAndRole.get(a.id) || {};
+    return {
+      account_id: a.id,
+      account_name: a.companyName,
+      client_short_name: a.clientShortName || "",
+      client_long_name: a.clientLongName || "",
+      industry: a.industry,
+      modules_in_use: parseModulesForTemplate(a.modulesAvailed),
+      status: a.engagementStatus,
+      primary_contact: a.primaryContact || "",
+      primary_contact_email: a.primaryContactEmail || "",
+      group_name: a.groupName || "",
+      tier: a.tier || "",
+      group_tier: a.groupTier || "",
+      frequency_override: a.frequencyOverride || "",
+      // Auto-fill from membership if the CRM field is blank but a
+      // matching role membership exists for the account.
+      rm_email: a.rmEmail || memberEmails.RM || "",
+      pm_email: a.pmEmail || memberEmails.PM || "",
+      ba_email: a.baEmail || memberEmails.BA || "",
+      assigned_on_month: a.assignedOnMonth || "",
+      last_courtesy_call: a.lastCourtesyCall || "",
+    };
+  });
 
   // Sheet 2: InternalTeam — include only memberships with an internalRole set
   const teamRows = memberships
@@ -626,23 +707,40 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
     ["CST OS — Account & Internal Team bulk import"],
     [""],
     ["INSTRUCTIONS"],
-    ["1. Edit the Accounts sheet to update existing rows or add new ones."],
-    ["   - account_id: leave blank for new accounts (companyName will be the upsert key)."],
+    ["The Accounts sheet handles BOTH adding new accounts AND updating existing ones."],
+    ["Same template for both operations:"],
+    ["   - To ADD a new account: leave account_id blank. account_name becomes the upsert key."],
+    ["   - To UPDATE an existing account: keep the account_id (auto-filled when you download the template)."],
+    [""],
+    ["1. Accounts sheet — required fields (for new accounts):"],
+    ["   - account_name: company display name."],
     ["   - industry: required for new accounts."],
     ["   - modules_in_use: semicolon-separated list (e.g. Attendance;Inventory;Leads)."],
-    ["   - status: confirmed | pilot | exploratory | inactive | prospect"],
+    ["   - status: confirmed | pilot | exploratory | inactive | prospect."],
     [""],
     ["   CRM fields (admin-managed):"],
-    ["   - client_short_name / client_long_name: identity at two sizes."],
-    ["   - group_name: free-text. Accounts with the same group_name are treated as siblings."],
+    ["   - client_long_name: official business name (e.g. Mobile Optima Inc.)."],
+    ["   - group_name: free-text. Accounts with the same group_name are treated as siblings/one BU."],
     ["   - tier: VIP | 1 | 2 | 3 | 4 | 5 (individual account tier)."],
     ["   - group_tier: VIP | 1 | 2 | 3 | 4 | 5 (the parent group's tier)."],
     ["   - frequency_override: monthly | every-2-months | every-3-months | quarterly | every-6-months | yearly. Leave blank to use the tier default."],
-    ["   - rm_email / pm_email / ba_email: metadata only (does NOT change account access — use InternalTeam sheet for that)."],
     ["   - assigned_on_month: YYYY-MM (when current RM took over)."],
     ["   - last_courtesy_call: YYYY-MM-DD."],
     [""],
-    ["2. Edit the InternalTeam sheet to assign CST team members to accounts."],
+    ["   Internal team via emails (NEW behavior — Phase E.4):"],
+    ["   - rm_email / pm_email / ba_email: when filled in with a registered CST OS user email,"],
+    ["     the system AUTOMATICALLY creates an AccountMembership granting that user access"],
+    ["     with the correct internalRole. The RM email also gets isPrimary=true."],
+    ["   - If the same role was previously held by a different user, their RM/PM/BA tag is"],
+    ["     revoked (membership keeps account access at member level, but the role flag is cleared)."],
+    ["   - If the email doesn't match a registered user, you'll get a warning and the email is"],
+    ["     saved as metadata only — no access granted. The user must register first."],
+    ["   - Downloaded template auto-fills these from existing memberships, so you can manage"],
+    ["     the team in this single sheet."],
+    [""],
+    ["2. Optional InternalTeam sheet — for advanced cases not covered by the Accounts sheet:"],
+    ["   - Multi-role assignments (e.g. someone is RM on one account AND Developer on another)."],
+    ["   - Roles outside RM/PM/BA: Developer, Other."],
     ["   - account_id OR account_name must reference an account (existing or being created)."],
     ["   - user_email must match a registered CST OS user."],
     ["   - role: RM | PM | BA | Developer | Other (one per row)."],
@@ -676,6 +774,99 @@ function parseBool(raw?: string): boolean {
   if (!raw) return false;
   const v = String(raw).toLowerCase().trim();
   return v === "true" || v === "1" || v === "yes" || v === "y";
+}
+
+/**
+ * Sync access-granting accountMembership for a given role based on the
+ * CRM email field on the profile. Behavior:
+ *   - email blank → revoke any current holder of this role on this account
+ *   - email matches a registered user → upsert their membership with the
+ *     correct internalRole (and isPrimary=true when role===RM); revoke
+ *     anyone else holding the same role on this account
+ *   - email doesn't match a user → no-op (validation already warned;
+ *     the email stays in CRM metadata, no membership granted)
+ */
+async function syncMembershipForRole(args: {
+  accountId: string;
+  email: string | null;
+  role: "RM" | "PM" | "BA";
+  grantedBy: string;
+  usersByEmail: Map<string, { id: string; email: string | null }>;
+}): Promise<void> {
+  const now = new Date().toISOString();
+
+  // 1. Find existing holders of this role on this account (excluding the
+  //    new user if they're already in place)
+  const existingHolders = await db
+    .select({ id: membershipsTable.id, userId: membershipsTable.userId })
+    .from(membershipsTable)
+    .where(and(
+      eq(membershipsTable.clientProfileId, args.accountId),
+      eq(membershipsTable.internalRole, args.role),
+    ));
+
+  // 2. If no email provided → revoke all current holders (CRM field was cleared)
+  if (!args.email) {
+    for (const h of existingHolders) {
+      await db.update(membershipsTable)
+        .set({ internalRole: null, isPrimary: false })
+        .where(eq(membershipsTable.id, h.id));
+    }
+    return;
+  }
+
+  const user = args.usersByEmail.get(args.email);
+  if (!user) {
+    // Validation already warned; no membership granted.
+    return;
+  }
+
+  // 3. Revoke role from any other user who currently holds it on this account
+  for (const h of existingHolders) {
+    if (h.userId !== user.id) {
+      await db.update(membershipsTable)
+        .set({ internalRole: null, isPrimary: false })
+        .where(eq(membershipsTable.id, h.id));
+    }
+  }
+
+  // 4. If user already has a membership on this account → update it.
+  //    Otherwise create one. RM role also sets isPrimary=true (and clears
+  //    any other isPrimary on this account).
+  const existingMembership = await db
+    .select({ id: membershipsTable.id })
+    .from(membershipsTable)
+    .where(and(
+      eq(membershipsTable.userId, user.id),
+      eq(membershipsTable.clientProfileId, args.accountId),
+    ))
+    .limit(1);
+
+  if (args.role === "RM") {
+    // Clear other primaries on this account
+    await db.update(membershipsTable)
+      .set({ isPrimary: false })
+      .where(eq(membershipsTable.clientProfileId, args.accountId));
+  }
+
+  if (existingMembership[0]) {
+    await db.update(membershipsTable)
+      .set({
+        internalRole: args.role,
+        isPrimary: args.role === "RM",
+      })
+      .where(eq(membershipsTable.id, existingMembership[0].id));
+  } else {
+    await db.insert(membershipsTable).values({
+      userId: user.id,
+      clientProfileId: args.accountId,
+      role: "member",
+      internalRole: args.role,
+      isPrimary: args.role === "RM",
+      grantedBy: args.grantedBy,
+      grantedAt: now,
+    });
+  }
 }
 
 function buildUpdatePatch(row: ParsedAccountRow): any {
