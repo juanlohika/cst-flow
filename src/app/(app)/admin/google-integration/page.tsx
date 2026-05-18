@@ -10,9 +10,11 @@ import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 
 interface ConfigStatus {
   configured: boolean;
+  dashboardsConfigured: boolean;
   serviceAccountEmail: string;
   serviceAccountValid: boolean;
   driveFolderId: string;
+  dashboardsFolderId: string;
   source: "db" | "env" | "none";
 }
 
@@ -28,7 +30,7 @@ export default function GoogleIntegrationPage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
-  const [form, setForm] = useState({ serviceAccountJson: "", driveFolderId: "" });
+  const [form, setForm] = useState({ serviceAccountJson: "", driveFolderId: "", dashboardsFolderId: "" });
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -38,7 +40,11 @@ export default function GoogleIntegrationPage() {
       if (res.ok) {
         const data = await res.json();
         setStatus(data);
-        setForm(prev => ({ ...prev, driveFolderId: data.driveFolderId || "" }));
+        setForm(prev => ({
+          ...prev,
+          driveFolderId: data.driveFolderId || "",
+          dashboardsFolderId: data.dashboardsFolderId || "",
+        }));
       }
     } finally {
       setLoading(false);
@@ -66,7 +72,7 @@ export default function GoogleIntegrationPage() {
         return;
       }
       setShowEdit(false);
-      setForm({ serviceAccountJson: "", driveFolderId: form.driveFolderId });
+      setForm({ serviceAccountJson: "", driveFolderId: form.driveFolderId, dashboardsFolderId: form.dashboardsFolderId });
       await load();
     } finally {
       setSaving(false);
@@ -134,6 +140,15 @@ export default function GoogleIntegrationPage() {
                         <p className="text-[11px] text-slate-600">
                           BRD Drive folder: <a href={`https://drive.google.com/drive/folders/${status.driveFolderId}`} target="_blank" rel="noreferrer" className="text-[#0177b5] hover:underline inline-flex items-center gap-0.5">{status.driveFolderId} <ExternalLink className="w-2.5 h-2.5" /></a>
                         </p>
+                        {status.dashboardsFolderId ? (
+                          <p className="text-[11px] text-slate-600">
+                            Dashboards Drive folder: <a href={`https://drive.google.com/drive/folders/${status.dashboardsFolderId}`} target="_blank" rel="noreferrer" className="text-[#0177b5] hover:underline inline-flex items-center gap-0.5">{status.dashboardsFolderId} <ExternalLink className="w-2.5 h-2.5" /></a>
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-amber-700">
+                            Dashboards Drive folder: <span className="font-bold">not set</span> — the live Account Health Sheet sync needs this.
+                          </p>
+                        )}
                         <p className="text-[10px] text-slate-400">Stored in: {status.source === "env" ? "environment variables" : "DB (globalSettings)"}</p>
                       </div>
                     ) : (
@@ -172,11 +187,20 @@ export default function GoogleIntegrationPage() {
                     placeholder='{"type": "service_account", "project_id": "...", "private_key_id": "...", "private_key": "-----BEGIN PRIVATE KEY-----\n..."}'
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-mono outline-none focus:border-slate-400"
                   />
-                  <p className="text-[12px] font-bold text-slate-800 mt-2">Drive folder ID</p>
+                  <p className="text-[12px] font-bold text-slate-800 mt-2">BRD Drive folder ID</p>
                   <p className="text-[10px] text-slate-500">From the URL of the Google Drive folder you created and shared with the service account: <code>https://drive.google.com/drive/folders/<b>THIS_PART</b></code></p>
                   <input
                     value={form.driveFolderId}
                     onChange={e => setForm({ ...form, driveFolderId: e.target.value })}
+                    placeholder="1A2bC3...xyz"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-mono outline-none focus:border-slate-400"
+                  />
+
+                  <p className="text-[12px] font-bold text-slate-800 mt-2">Dashboards Drive folder ID <span className="text-[10px] font-bold text-slate-400">(optional, for the live Account Health Sheet)</span></p>
+                  <p className="text-[10px] text-slate-500">Separate folder for org-wide dashboards. Create a new folder, share with the same service account as Editor, and paste the folder ID. Leave blank if you only need BRD export for now.</p>
+                  <input
+                    value={form.dashboardsFolderId}
+                    onChange={e => setForm({ ...form, dashboardsFolderId: e.target.value })}
                     placeholder="1A2bC3...xyz"
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-mono outline-none focus:border-slate-400"
                   />
@@ -196,7 +220,7 @@ export default function GoogleIntegrationPage() {
                       Save credentials
                     </button>
                     <button
-                      onClick={() => { setShowEdit(false); setForm({ serviceAccountJson: "", driveFolderId: status?.driveFolderId || "" }); setError(null); }}
+                      onClick={() => { setShowEdit(false); setForm({ serviceAccountJson: "", driveFolderId: status?.driveFolderId || "", dashboardsFolderId: status?.dashboardsFolderId || "" }); setError(null); }}
                       className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-[11px] font-black uppercase tracking-widest"
                     >
                       Cancel

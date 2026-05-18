@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import {
   Activity, Loader2, FileText, Download, Sparkles, AlertTriangle,
-  TrendingUp, TrendingDown, ChevronRight, RotateCcw, Calendar,
+  TrendingUp, TrendingDown, ChevronRight, RotateCcw, Calendar, Sheet,
+  ExternalLink,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import HealthChip from "@/components/accounts/HealthChip";
@@ -69,6 +70,8 @@ function Content() {
   const [aiLoading, setAiLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<{ docxUrl?: string; pdfUrl?: string; errors?: string[] } | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [sheetResult, setSheetResult] = useState<{ sheetUrl?: string; created?: boolean; error?: string } | null>(null);
 
   const load = useCallback(async (withAi = false) => {
     setLoading(true);
@@ -118,6 +121,25 @@ function Content() {
     }
   };
 
+  const syncSheet = async () => {
+    setSyncing(true);
+    setSheetResult(null);
+    try {
+      const res = await fetch("/api/admin/executive-summary/sync-sheet", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setSheetResult({ error: data?.error || "Sync failed" });
+      } else {
+        setSheetResult({ sheetUrl: data.sheetUrl, created: data.created });
+        if (data.sheetUrl) window.open(data.sheetUrl, "_blank");
+      }
+    } catch (e: any) {
+      setSheetResult({ error: e?.message || "Sync failed" });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   if (!isAdmin) return <div className="max-w-3xl mx-auto p-8"><p className="text-rose-700 font-bold">Admin only</p></div>;
 
   return (
@@ -138,6 +160,15 @@ function Content() {
             Refresh
           </button>
           <button
+            onClick={syncSheet}
+            disabled={syncing || !summary}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-emerald-300 text-emerald-700 text-[11px] font-black uppercase tracking-widest hover:bg-emerald-50 disabled:opacity-50"
+            title="Push the latest data to the live Google Sheet"
+          >
+            {syncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sheet className="w-3.5 h-3.5" />}
+            Sync to Google Sheet
+          </button>
+          <button
             onClick={doExport}
             disabled={exporting || !summary}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 text-white text-[11px] font-black uppercase tracking-widest shadow-md disabled:opacity-50"
@@ -147,6 +178,31 @@ function Content() {
           </button>
         </div>
       </div>
+
+      {sheetResult && (
+        sheetResult.error ? (
+          <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-[11px] text-rose-700 flex items-start gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-bold">Sheet sync failed</p>
+              <p className="mt-0.5">{sheetResult.error}</p>
+              <p className="text-[10px] mt-1 opacity-80">Make sure GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID is set under <Link href="/admin/google-integration" className="underline">/admin/google-integration</Link> and the folder is shared with the service account.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-3 flex-wrap">
+            <span className="text-[11px] font-black text-emerald-700 uppercase tracking-widest">
+              {sheetResult.created ? "Sheet created" : "Sheet updated"}
+            </span>
+            {sheetResult.sheetUrl && (
+              <a href={sheetResult.sheetUrl} target="_blank" rel="noreferrer" className="text-[11px] font-bold text-emerald-800 hover:underline inline-flex items-center gap-1">
+                Open Google Sheet <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+            <span className="text-[10px] text-emerald-600 ml-auto">Bookmark this URL — it stays the same on every sync.</span>
+          </div>
+        )
+      )}
 
       {summary && (
         <p className="text-[11px] text-slate-500">

@@ -13,7 +13,7 @@ function requireAdmin(session: any) {
   return { ok: true as const };
 }
 
-const KEYS = ["GOOGLE_SERVICE_ACCOUNT_JSON", "GOOGLE_DRIVE_BRD_FOLDER_ID"] as const;
+const KEYS = ["GOOGLE_SERVICE_ACCOUNT_JSON", "GOOGLE_DRIVE_BRD_FOLDER_ID", "GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID"] as const;
 
 /** GET /api/admin/google-integration — returns whether credentials are configured (NOT the secrets themselves). */
 export async function GET() {
@@ -27,6 +27,7 @@ export async function GET() {
     const map = new Map(rows.map(r => [r.key, r.value]));
     const serviceAccountJson = map.get("GOOGLE_SERVICE_ACCOUNT_JSON") || process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "";
     const driveFolderId = map.get("GOOGLE_DRIVE_BRD_FOLDER_ID") || process.env.GOOGLE_DRIVE_BRD_FOLDER_ID || "";
+    const dashboardsFolderId = map.get("GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID") || process.env.GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID || "";
 
     // Surface only meta info, not the secrets
     let serviceAccountEmail = "";
@@ -43,9 +44,11 @@ export async function GET() {
 
     return NextResponse.json({
       configured: !!(serviceAccountValid && driveFolderId),
+      dashboardsConfigured: !!(serviceAccountValid && dashboardsFolderId),
       serviceAccountEmail,
       serviceAccountValid,
       driveFolderId,
+      dashboardsFolderId,
       source: rows.length > 0 ? "db" : (process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? "env" : "none"),
     });
   } catch (error: any) {
@@ -65,6 +68,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const serviceAccountJson = String(body?.serviceAccountJson || "").trim();
     const driveFolderId = String(body?.driveFolderId || "").trim();
+    const dashboardsFolderId = String(body?.dashboardsFolderId || "").trim();
 
     if (!serviceAccountJson || !driveFolderId) {
       return NextResponse.json({ error: "Both serviceAccountJson and driveFolderId are required" }, { status: 400 });
@@ -84,6 +88,9 @@ export async function POST(req: Request) {
       { key: "GOOGLE_SERVICE_ACCOUNT_JSON", value: serviceAccountJson },
       { key: "GOOGLE_DRIVE_BRD_FOLDER_ID", value: driveFolderId },
     ];
+    if (dashboardsFolderId) {
+      upserts.push({ key: "GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID", value: dashboardsFolderId });
+    }
 
     const now = new Date().toISOString();
     for (const { key, value } of upserts) {

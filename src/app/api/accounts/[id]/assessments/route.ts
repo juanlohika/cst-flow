@@ -172,11 +172,24 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
     // Fire-and-forget AI rollup. Don't await — the API returns quickly and
     // the UI polls for status.
+    // After rollup completes (or fails), trigger the live Google Sheet
+    // sync so the bookmarked CEO dashboard stays current.
     (async () => {
       try {
         await rollupAssessment({ assessmentId: id });
       } catch (e: any) {
         console.warn("[assessments POST] rollup failed:", e?.message);
+      }
+      // Sheet sync — also non-fatal. Includes the AI clustering pass so
+      // the Sheet picks up the latest portfolio narrative.
+      try {
+        const { syncExecutiveSummaryToSheet } = await import("@/lib/accounts/sheets-sync");
+        const result = await syncExecutiveSummaryToSheet({ includeAi: true });
+        if (!result.ok) {
+          console.warn("[assessments POST] sheet sync skipped:", result.error);
+        }
+      } catch (e: any) {
+        console.warn("[assessments POST] sheet sync failed:", e?.message);
       }
     })();
 
