@@ -2,14 +2,20 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
-  Shield, Loader2, Plus, X, Copy, Check, RefreshCw, KeyRound, AlertTriangle, Users,
+  Shield, Loader2, Plus, X, Copy, Check, RefreshCw, KeyRound, AlertTriangle, Users, Star,
 } from "lucide-react";
+
+// Phase A: internal-role taxonomy from accountMemberships.internalRole
+const INTERNAL_ROLES = ["RM", "PM", "BA", "Developer", "Other"] as const;
+type InternalRole = (typeof INTERNAL_ROLES)[number];
 import { useSession } from "next-auth/react";
 
 interface Member {
   id: string;
   userId: string;
   role: string;
+  internalRole?: InternalRole | null;
+  isPrimary?: boolean;
   grantedBy?: string | null;
   grantedAt: string;
   userName?: string | null;
@@ -123,6 +129,24 @@ export default function AccountAccessControl({ accountId, companyName }: Props) 
       }
     } finally {
       setGranting(null);
+    }
+  };
+
+  const updateMember = async (userId: string, updates: { internalRole?: InternalRole | null; isPrimary?: boolean }) => {
+    try {
+      const res = await fetch(`/api/accounts/${accountId}/members`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, ...updates }),
+      });
+      if (res.ok) {
+        await fetchMembers();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err?.error || "Failed to update membership");
+      }
+    } catch (e: any) {
+      alert(e?.message || "Failed to update membership");
     }
   };
 
@@ -322,17 +346,51 @@ export default function AccountAccessControl({ accountId, companyName }: Props) 
                   key={m.id}
                   className="flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-slate-50 group"
                 >
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-rose-400 to-pink-500 flex items-center justify-center text-white text-[11px] font-black shrink-0">
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-rose-400 to-pink-500 flex items-center justify-center text-white text-[11px] font-black shrink-0 relative">
                     {(m.userName || m.userEmail || "?").charAt(0).toUpperCase()}
+                    {m.isPrimary && (
+                      <span
+                        title="Primary RM"
+                        className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-amber-400 border border-white flex items-center justify-center"
+                      >
+                        <Star className="w-2 h-2 text-white" fill="currentColor" />
+                      </span>
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-[11px] font-bold text-slate-800 truncate">
                       {m.userName || m.userEmail || "Unknown user"}
+                      {m.isPrimary && (
+                        <span className="ml-1.5 text-[8px] font-black uppercase tracking-widest text-amber-600">Primary</span>
+                      )}
                     </p>
                     <p className="text-[9px] font-semibold text-slate-400 truncate">
-                      {m.userEmail} · {m.role}
+                      {m.userEmail}
                     </p>
                   </div>
+
+                  {/* Internal role dropdown */}
+                  <select
+                    value={m.internalRole || ""}
+                    onChange={e => updateMember(m.userId, { internalRole: (e.target.value || null) as InternalRole | null })}
+                    className="text-[10px] font-black uppercase tracking-wider text-slate-600 bg-slate-50 border border-slate-200 rounded px-1.5 py-1 cursor-pointer hover:border-rose-300"
+                    title="Internal role on this account"
+                  >
+                    <option value="">— role —</option>
+                    {INTERNAL_ROLES.map(r => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
+
+                  {/* Primary toggle — only meaningful when internalRole is RM */}
+                  <button
+                    onClick={() => updateMember(m.userId, { isPrimary: !m.isPrimary })}
+                    title={m.isPrimary ? "Unset as Primary RM" : "Set as Primary RM"}
+                    className={`p-1 rounded transition-colors ${m.isPrimary ? "text-amber-500 hover:text-amber-600" : "text-slate-300 hover:text-amber-400"}`}
+                  >
+                    <Star className="w-3.5 h-3.5" fill={m.isPrimary ? "currentColor" : "none"} />
+                  </button>
+
                   <button
                     onClick={() => revokeAccess(m.userId, m.userName || m.userEmail || "this user")}
                     disabled={revoking === m.userId}

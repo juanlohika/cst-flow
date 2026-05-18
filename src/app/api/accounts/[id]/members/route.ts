@@ -181,6 +181,68 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   }
 }
 
+/**
+ * PATCH /api/accounts/[id]/members
+ * Body: { userId, internalRole?, isPrimary?, role? }
+ *
+ * Updates an existing membership's internalRole, isPrimary, or legacy role.
+ * If isPrimary=true is set, all other memberships on the same account have
+ * their isPrimary cleared first (one primary per account invariant).
+ */
+export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+  try {
+    const session = await auth();
+    const gate = requireAdmin(session);
+    if ("error" in gate) {
+      return NextResponse.json({ error: gate.error.message }, { status: gate.error.status });
+    }
+
+    const body = await req.json();
+    const targetUserId = body?.userId as string | undefined;
+    if (!targetUserId) return NextResponse.json({ error: "userId required" }, { status: 400 });
+
+    // Find the membership row
+    const existing = await db
+      .select({ id: membershipsTable.id })
+      .from(membershipsTable)
+      .where(and(
+        eq(membershipsTable.userId, targetUserId),
+        eq(membershipsTable.clientProfileId, params.id),
+      ))
+      .limit(1);
+    if (existing.length === 0) {
+      return NextResponse.json({ error: "Membership not found — grant access first." }, { status: 404 });
+    }
+
+    const updates: any = {};
+    if (typeof body?.internalRole === "string" || body?.internalRole === null) updates.internalRole = body.internalRole;
+    if (typeof body?.role === "string") updates.role = body.role;
+    if (typeof body?.isPrimary === "boolean") updates.isPrimary = body.isPrimary;
+
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ error: "Nothing to update — supply internalRole, role, or isPrimary." }, { status: 400 });
+    }
+
+    // If setting isPrimary=true, clear other primaries on the same account first.
+    if (updates.isPrimary === true) {
+      await db
+        .update(membershipsTable)
+        .set({ isPrimary: false })
+        .where(eq(membershipsTable.clientProfileId, params.id));
+    }
+
+    await db
+      .update(membershipsTable)
+      .set(updates)
+      .where(eq(membershipsTable.id, existing[0].id));
+
+    return NextResponse.json({ ok: true, id: existing[0].id, updates });
+  } catch (error: any) {
+    console.error("[members PATCH] error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
 export async function DELETE(req: Request, { params }: { params: { id: string } }) {
   try {
     const session = await auth();
