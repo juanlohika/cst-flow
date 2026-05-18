@@ -973,6 +973,23 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                   <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                 </a>
 
+                {/* Super Admin Context callout — Phase E.6 (CRITICAL) */}
+                <a
+                  href="/admin/super-admin-context"
+                  className="flex items-center gap-3 p-4 rounded-xl border-2 border-rose-300 bg-gradient-to-r from-rose-50 to-pink-50 hover:from-rose-100 hover:to-pink-100 transition-colors"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-rose-500 flex items-center justify-center shrink-0">
+                    <Shield className="w-4 h-4 text-white" strokeWidth={2.5} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-black text-rose-900">⚠ Super Admin Context · Critical Data Access</p>
+                    <p className="text-[11px] text-rose-700">
+                      Bind a Telegram GC where ARIMA can answer portfolio-wide CRM questions. Time-bound, allowlist-gated, fully audited. Handle with care.
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-rose-400 shrink-0" />
+                </a>
+
                 {/* Access Codes callout */}
                 <a
                   href="/admin/access-codes"

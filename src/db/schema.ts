@@ -323,6 +323,60 @@ export const f2fVisitHistory = sqliteTable("F2FVisitHistory", {
   createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+// Phase E.6: Super Admin Context. A single org-wide binding to a Telegram
+// group chat where portfolio-wide CRM data may be discussed. Time-bound
+// (soft expiration with rolling /extend), allowlist-gated, fully audited.
+//
+// The Super Admin context is the ONLY place where the cross-account
+// portfolio_* tools become callable. Outside this context (DMs, other GCs,
+// web), those tools are filtered out of ARIMA's tool list entirely.
+export const superAdminContext = sqliteTable("SuperAdminContext", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  telegramChatId:    text("telegramChatId").notNull().unique(),
+  status:            text("status").default("active").notNull(), // active | revoked | expired
+  expiresAt:         text("expiresAt").notNull(),
+  createdBy:         text("createdBy").notNull(),
+  createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  revokedBy:         text("revokedBy"),
+  revokedAt:         text("revokedAt"),
+  notes:             text("notes"),
+  // Token used by the /sabind command in Telegram to claim the GC
+  bindToken:         text("bindToken").unique(),
+  boundAt:           text("boundAt"),
+});
+
+// Allowlist of CST OS users who may participate in the Super Admin GC.
+// They must have a linked Telegram account (telegramAccountLinks row) for
+// their messages in the SA GC to be recognized.
+export const superAdminUsers = sqliteTable("SuperAdminUser", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  cstUserId:         text("cstUserId").notNull().unique(),
+  telegramUserId:    text("telegramUserId"),            // cached at bind time for fast lookup
+  // Per-user opt-in: when true, ARIMA will also engage with portfolio
+  // tools in this user's PRIVATE DM with the bot. Off by default for safety.
+  allowDmAccess:     integer("allowDmAccess", { mode: "boolean" }).default(false).notNull(),
+  addedBy:           text("addedBy").notNull(),
+  addedAt:           text("addedAt").default(sql`(datetime('now'))`).notNull(),
+  notes:             text("notes"),
+});
+
+// Append-only audit log of every Super Admin tool call (success or refusal).
+// Stores the question + the data returned for full forensic value.
+export const superAdminAccessLog = sqliteTable("SuperAdminAccessLog", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  contextId:         text("contextId"),                 // FK to SuperAdminContext (nullable for refusals before bind)
+  telegramChatId:    text("telegramChatId"),
+  telegramUserId:    text("telegramUserId"),
+  cstUserId:         text("cstUserId"),
+  toolName:          text("toolName"),
+  question:          text("question"),                  // The user's prompt that triggered the tool call
+  status:            text("status").notNull(),          // 'allowed' | 'refused-not-in-context' | 'refused-not-allowlisted' | 'refused-expired' | 'refused-dm-not-allowed'
+  reason:            text("reason"),
+  responseSummary:   text("responseSummary"),           // Short string the AI saw back (not the full data dump)
+  responseBytes:     integer("responseBytes"),          // Byte size of the returned data
+  createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
+
 // AccountMembership: which CST OS users can access which client accounts
 // Membership is required for non-admin users to see/use a client in any app.
 // Admins bypass this check (they see everything).

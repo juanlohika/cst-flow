@@ -28,6 +28,8 @@ import {
   revokeBinding,
 } from "@/lib/telegram/binding";
 import { runArima, shouldArimaRespond, shouldElianaRespond, type MessageAttachment, type MentionRef } from "@/lib/arima/runtime";
+import { loadActiveSuperAdminContext, extendSuperAdminContext } from "@/lib/super-admin/context";
+import { superAdminContext as saCtxTable, superAdminUsers as saUsersTable } from "@/db/schema";
 import { ensureAccessSchema } from "@/lib/access/accounts";
 import { resolveTelegramMentions } from "@/lib/arima/mentions";
 import { broadcastToClient } from "@/lib/portal/stream";
@@ -223,6 +225,102 @@ export async function POST(req: Request) {
           `✅ This group is now bound to **${client.companyName}** (${client.clientCode || "no code"}).\nI'll respond as their AI Relationship Manager. Type a message to start.`,
           message.message_id
         );
+        return NextResponse.json({ ok: true });
+      }
+
+      if (cmd === "sabind") {
+        // Bind THIS Telegram group as the Super Admin Context.
+        // Caller must be Telegram group admin + linked CST OS admin.
+        // The bind token (from /admin/super-admin-context) must match an active draft.
+        if (!isGroup) {
+          await safeReply(config.botToken, chat.id, "`/sabind` only works in a group.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        if (!argText) {
+          await safeReply(config.botToken, chat.id, "Usage: `/sabind <token>`\nGet the token from CST OS → Admin → Super Admin Context.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const isGroupAdmin = await isUserGroupAdmin(config.botToken, chat.id, from.id);
+        if (!isGroupAdmin) {
+          await safeReply(config.botToken, chat.id, "❌ You must be a Telegram group admin to bind the Super Admin Context.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const cst = await resolveCstUserFromTelegram(from.id);
+        if (!cst || cst.role !== "admin") {
+          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can bind the Super Admin Context.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        // Look up by bindToken
+        const rows = await db.select().from(saCtxTable).where(eq(saCtxTable.bindToken, argText.trim())).limit(1);
+        const ctx = rows[0];
+        if (!ctx) {
+          await safeReply(config.botToken, chat.id, "❌ That bind token isn't valid. Generate a new one in CST OS → Admin → Super Admin Context.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        if (ctx.status !== "active") {
+          await safeReply(config.botToken, chat.id, `❌ That bind token is ${ctx.status}. Generate a new one.`, message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        if (new Date(ctx.expiresAt).getTime() < Date.now()) {
+          await safeReply(config.botToken, chat.id, "❌ That bind token has expired. Generate a new one.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        // Update the row with the actual chat id
+        await db.update(saCtxTable)
+          .set({ telegramChatId: String(chat.id), boundAt: new Date().toISOString() })
+          .where(eq(saCtxTable.id, ctx.id));
+        const expiryStr = new Date(ctx.expiresAt).toLocaleString();
+        await safeReply(
+          config.botToken,
+          chat.id,
+          `✅ *Super Admin Context bound to this group.*\n\nExpires: ${expiryStr}\n\n⚠️ This GC now has access to portfolio-wide CRM data via ARIMA. Only allowlisted users can interact. Run \`/extend <hours>\` to push the expiry forward. Run \`/saunbind\` to revoke.\n\nData discussed here may not be repeated to other channels.`,
+          message.message_id
+        );
+        return NextResponse.json({ ok: true });
+      }
+
+      if (cmd === "extend") {
+        if (!isGroup) {
+          await safeReply(config.botToken, chat.id, "`/extend` only works inside the Super Admin group.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const saCtx = await loadActiveSuperAdminContext();
+        if (!saCtx || saCtx.telegramChatId !== String(chat.id)) {
+          await safeReply(config.botToken, chat.id, "❌ This group isn't the bound Super Admin Context.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        // Caller must be on the allowlist
+        const cst = await resolveCstUserFromTelegram(from.id);
+        if (!cst) {
+          await safeReply(config.botToken, chat.id, "❌ Your Telegram account isn't linked to a CST OS account.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const allow = await db.select({ id: saUsersTable.id }).from(saUsersTable).where(eq(saUsersTable.cstUserId, cst.cstUserId)).limit(1);
+        if (!allow[0]) {
+          await safeReply(config.botToken, chat.id, "❌ You aren't on the Super Admin allowlist.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const hours = Math.max(1, Math.min(168, parseInt(argText, 10) || 24));
+        const newExpiry = await extendSuperAdminContext({ hours, byUserId: cst.cstUserId });
+        await safeReply(config.botToken, chat.id, `✅ Super Admin Context extended by ${hours}h.\nNew expiry: ${newExpiry ? new Date(newExpiry).toLocaleString() : "(unknown)"}`, message.message_id);
+        return NextResponse.json({ ok: true });
+      }
+
+      if (cmd === "saunbind") {
+        if (!isGroup) {
+          await safeReply(config.botToken, chat.id, "`/saunbind` only works in the bound Super Admin group.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const cst = await resolveCstUserFromTelegram(from.id);
+        if (!cst || cst.role !== "admin") {
+          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can revoke the Super Admin Context.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const now = new Date().toISOString();
+        await db.update(saCtxTable)
+          .set({ status: "revoked", revokedBy: cst.cstUserId, revokedAt: now })
+          .where(eq(saCtxTable.status, "active"));
+        await safeReply(config.botToken, chat.id, "✅ Super Admin Context revoked. ARIMA will stop providing portfolio data here.", message.message_id);
         return NextResponse.json({ ok: true });
       }
 
@@ -540,7 +638,7 @@ async function handleArimaChat(args: {
   const lastAssistant = [...history].reverse().find(m => m.role === "assistant");
   const lastBotWasEliana = (lastAssistant?.senderName || "").toLowerCase().startsWith("eli");
 
-  const shouldReply = args.agentMode === "eliana"
+  let shouldReply = args.agentMode === "eliana"
     ? shouldElianaRespond({
         isGroup: args.isGroup,
         text: args.userMessage,
@@ -555,6 +653,36 @@ async function handleArimaChat(args: {
         mentions,
         hasAttachments: attachments.length > 0,
       });
+
+  // Super Admin Context gate — when this chat is the bound SA GC, only
+  // allowlisted users may interact with ARIMA. Polite refusal otherwise.
+  // We do NOT bypass for /commands (those are handled above before this
+  // function is even reached).
+  // Use senderCstUserId (resolved from the actual message sender), NOT
+  // args.cstUserId which is the conversation owner.
+  if (shouldReply) {
+    try {
+      const saCtx = await loadActiveSuperAdminContext();
+      if (saCtx && saCtx.telegramChatId === String(args.chatId)) {
+        if (!senderCstUserId) {
+          shouldReply = false;
+          try {
+            await tgSendMessage(args.botToken, args.chatId, "Hi — this is a restricted Super Admin group. I can only respond to authorized members. Link your Telegram account first via DM with `/link <code>` and ask an admin to add you to the allowlist.", { replyToMessageId: args.replyToMessageId });
+          } catch {}
+        } else {
+          const allow = await db.select({ id: saUsersTable.id }).from(saUsersTable).where(eq(saUsersTable.cstUserId, senderCstUserId)).limit(1);
+          if (!allow[0]) {
+            shouldReply = false;
+            try {
+              await tgSendMessage(args.botToken, args.chatId, "Sorry — this is the Super Admin group. I can only respond to authorized members. Ask an admin to add you to the allowlist.", { replyToMessageId: args.replyToMessageId });
+            } catch {}
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn("[telegram/webhook] SA gate check failed:", e?.message);
+    }
+  }
 
   // Show "typing" only if we'll actually reply
   if (shouldReply) {

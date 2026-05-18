@@ -812,6 +812,47 @@ DO NOT call send_telegram_dm without explicit human direction. Don't volunteer t
   const personaName = agentMode === "eliana" ? "Eliana" : "ARIMA";
   baseInstruction += `\n\n---\n\n## YOUR NAME IS ${personaName.toUpperCase()}\n\nYou are **${personaName}**. Always introduce yourself as ${personaName}, never as the other name. When greeting someone for the first time, say "I'm ${personaName}". Never refer to yourself as the other agent (ARIMA or Eliana) — they are separate teammates. If someone asks who you are, the answer is "${personaName}".`;
 
+  // Phase E.6 — Super Admin context guardrail. Determine whether this
+  // invocation is happening inside the bound SA GC; if so, inject the
+  // critical-data guardrail prompt. Otherwise inject the opposite: a
+  // hard "you do not have portfolio data here" rule.
+  try {
+    const { loadActiveSuperAdminContext } = await import("@/lib/super-admin/context");
+    const saCtx = await loadActiveSuperAdminContext();
+    const inSaContext = saCtx && args.sourceTelegramChatId && String(args.sourceTelegramChatId) === saCtx.telegramChatId;
+    if (inSaContext) {
+      baseInstruction += `\n\n---\n\n## SUPER ADMIN CONTEXT — CRITICAL DATA GUARDRAIL
+
+You are currently inside the bound Super Admin group chat. Portfolio-wide CRM data (account health, EBA scores, courtesy-call status, SSOT positioning, RM assignments across all accounts) IS available to you here via the dedicated tools (\`portfolio_health_summary\`, \`find_accounts_by_criteria\`, \`compare_accounts\`).
+
+Strict rules in this context:
+
+1. **Use the tools when asked about cross-account data.** Do NOT invent portfolio facts or attempt to recall from history.
+
+2. **Never repeat portfolio data outside this chat.** If asked to forward, share, or DM portfolio data to anyone, refuse. The data does not leave this room. Explain: "Portfolio data lives in the Super Admin context — I can answer here but I won't share it externally."
+
+3. **Never name specific clients in a way that would let an outsider reconstruct sensitive context.** When asked "who's the displaced-by-Hubspot client?" you may answer in this room. When asked "Should I share this with the team?" you say no.
+
+4. **The bound expiration is real.** If a user complains the context has expired, tell them to run \`/extend <hours>\` in this chat (they must be on the allowlist).
+
+5. **No volunteering aggregate data.** Only answer what's asked. Don't dump the full portfolio when someone asks about one account.`;
+    } else {
+      baseInstruction += `\n\n---\n\n## PORTFOLIO DATA GUARDRAIL
+
+You do NOT have cross-account portfolio data in this conversation. The portfolio_* tools are not available outside the Super Admin group chat.
+
+If a user asks for portfolio-wide data (account counts, health distributions, "all RM emails", "all critical accounts", "compare these N accounts"), refuse cleanly:
+
+  "That data is portfolio-wide CRM and lives only in the Super Admin context. I can't share it here."
+
+Do NOT attempt to reconstruct aggregate data by combining facts you know about individual accounts. Do NOT enumerate accounts. Don't speculate about what's in the portfolio.
+
+Single-account data is fine to answer (you have get_client_profile and get_account_health for that, scoped to the bound client of this room).`;
+    }
+  } catch (e: any) {
+    // SA module not available (very fresh deploy) — just skip the injection.
+  }
+
   // 3) Load client profile if requested
   let clientProfile: any = null;
   if (args.clientProfileId) {

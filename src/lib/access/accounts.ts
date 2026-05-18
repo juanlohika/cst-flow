@@ -155,6 +155,45 @@ export async function ensureAccessSchema(): Promise<void> {
     )`);
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS idx_F2FVisitHistory_client ON F2FVisitHistory(clientProfileId, visitDate DESC)`); } catch {}
 
+    // Phase E.6: Super Admin context (single bound GC, allowlist, audit log)
+    await db.run(sql`CREATE TABLE IF NOT EXISTS SuperAdminContext (
+      id TEXT PRIMARY KEY,
+      telegramChatId TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'active',
+      expiresAt TEXT NOT NULL,
+      createdBy TEXT NOT NULL,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      revokedBy TEXT,
+      revokedAt TEXT,
+      notes TEXT,
+      bindToken TEXT UNIQUE,
+      boundAt TEXT
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS SuperAdminUser (
+      id TEXT PRIMARY KEY,
+      cstUserId TEXT NOT NULL UNIQUE,
+      telegramUserId TEXT,
+      allowDmAccess INTEGER NOT NULL DEFAULT 0,
+      addedBy TEXT NOT NULL,
+      addedAt TEXT NOT NULL DEFAULT (datetime('now')),
+      notes TEXT
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS SuperAdminAccessLog (
+      id TEXT PRIMARY KEY,
+      contextId TEXT,
+      telegramChatId TEXT,
+      telegramUserId TEXT,
+      cstUserId TEXT,
+      toolName TEXT,
+      question TEXT,
+      status TEXT NOT NULL,
+      reason TEXT,
+      responseSummary TEXT,
+      responseBytes INTEGER,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS idx_SuperAdminAccessLog_created ON SuperAdminAccessLog(createdAt DESC)`); } catch {}
+
     // Phase B: Account Health Assessment
     await db.run(sql`CREATE TABLE IF NOT EXISTS AccountAssessment (
       id TEXT PRIMARY KEY,
