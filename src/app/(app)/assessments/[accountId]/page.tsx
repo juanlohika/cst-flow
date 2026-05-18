@@ -75,6 +75,9 @@ function Content() {
         modulesAvailed: Array.isArray(acctData.modulesAvailed) ? acctData.modulesAvailed : [],
       });
 
+      // Pre-fill lastCourtesyCall from the account profile in all cases
+      const accountLastCourtesyCall = acctData?.lastCourtesyCall || "";
+
       if (assessRes.ok) {
         const assessData = await assessRes.json();
         const first = (assessData?.assessments || [])[0];
@@ -102,7 +105,10 @@ function Content() {
             e1: responses.e1_open_requests || "",
             e4: responses.e4_single_action || "",
             e5: responses.e5_other || "",
+            lastCourtesyCall: accountLastCourtesyCall,
           });
+        } else if (accountLastCourtesyCall) {
+          setForm(prev => ({ ...prev, lastCourtesyCall: accountLastCourtesyCall }));
         }
       }
     } catch (e: any) {
@@ -129,6 +135,22 @@ function Content() {
         alert(data?.error || "Submit failed. Please try again.");
         return;
       }
+
+      // If the RM updated lastCourtesyCall, sync it to the account profile
+      // and log a history entry. Non-fatal — assessment is already saved.
+      if (form.lastCourtesyCall) {
+        try {
+          await fetch(`/api/accounts/${accountId}/courtesy-calls`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              callDate: form.lastCourtesyCall,
+              notes: "Logged via Health Assessment submission",
+            }),
+          });
+        } catch { /* non-fatal */ }
+      }
+
       // Redirect back to the queue
       router.push("/assessments?submitted=" + encodeURIComponent(account.companyName));
     } finally {

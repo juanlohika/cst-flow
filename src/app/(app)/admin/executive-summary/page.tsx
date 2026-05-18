@@ -30,7 +30,20 @@ interface AccountSnap {
   v5Readiness: number | null;
   isTarkieSsot: boolean | null;
   thirdPartySsot: string | null;
+  tier?: string | null;
+  groupName?: string | null;
+  rmEmail?: string | null;
+  lastCourtesyCall?: string | null;
+  frequencyLabel?: string;
+  complianceStatus?: "compliant" | "warning" | "overdue" | "unknown";
+  daysSinceCall?: number | null;
 }
+
+interface ColorCounts { green: number; yellow: number; red: number; grey: number; critical: number; }
+interface ComplianceCounts { compliant: number; warning: number; overdue: number; unknown: number; }
+interface TierBreakdownRow { tier: string; accountCount: number; health: ColorCounts; compliance: ComplianceCounts; avgScore: number | null; }
+interface GroupBreakdownRow { groupName: string; accountCount: number; health: ColorCounts; compliance: ComplianceCounts; worstColor: HealthColor; rollupScore: number | null; members: string[]; }
+interface RmBreakdownRow { rmEmail: string; rmName: string | null; accountCount: number; health: ColorCounts; compliance: ComplianceCounts; avgScore: number | null; }
 
 interface Summary {
   generatedAt: string;
@@ -50,6 +63,10 @@ interface Summary {
   ssotUnknown: number;
   thirdPartyTools: Array<{ tool: string; count: number }>;
   topRequestedModules: Array<{ module: string; count: number }>;
+  complianceCounts?: ComplianceCounts;
+  byTier?: TierBreakdownRow[];
+  byGroup?: GroupBreakdownRow[];
+  byRm?: RmBreakdownRow[];
   accounts: AccountSnap[];
   aiPortfolioSummary?: string;
   aiTopRisks?: string[];
@@ -350,6 +367,80 @@ function Content() {
             )}
           </section>
 
+          {/* Courtesy Call Compliance */}
+          {summary.complianceCounts && (
+            <section className="bg-white border border-slate-100 rounded-2xl shadow-sm p-5">
+              <h2 className="text-[13px] font-black text-slate-800 mb-3">Courtesy Call Compliance</h2>
+              <p className="text-[11px] text-slate-500 mb-3">Based on each account's tier-derived call cadence vs the last courtesy call logged. Per-account override available on the account profile.</p>
+              <div className="grid grid-cols-4 gap-2">
+                <ComplianceStat label="Compliant" value={summary.complianceCounts.compliant} color="emerald" />
+                <ComplianceStat label="Warning" value={summary.complianceCounts.warning} color="amber" />
+                <ComplianceStat label="Overdue" value={summary.complianceCounts.overdue} color="rose" />
+                <ComplianceStat label="Unknown" value={summary.complianceCounts.unknown} color="slate" />
+              </div>
+            </section>
+          )}
+
+          {/* By Tier */}
+          {summary.byTier && summary.byTier.length > 0 && (
+            <section className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100">
+                <h2 className="text-[13px] font-black text-slate-800">Health by Tier</h2>
+              </div>
+              <BreakdownTable
+                rows={summary.byTier.map(r => ({
+                  key: r.tier,
+                  label: r.tier === "Unset" ? "Unset (no tier)" : (r.tier === "VIP" ? "VIP" : `Tier ${r.tier}`),
+                  health: r.health,
+                  compliance: r.compliance,
+                  count: r.accountCount,
+                  avgScore: r.avgScore,
+                }))}
+              />
+            </section>
+          )}
+
+          {/* By RM */}
+          {summary.byRm && summary.byRm.length > 0 && (
+            <section className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100">
+                <h2 className="text-[13px] font-black text-slate-800">Health by Relationship Manager</h2>
+              </div>
+              <BreakdownTable
+                rows={summary.byRm.map(r => ({
+                  key: r.rmEmail,
+                  label: r.rmName || r.rmEmail,
+                  sublabel: r.rmName ? r.rmEmail : undefined,
+                  health: r.health,
+                  compliance: r.compliance,
+                  count: r.accountCount,
+                  avgScore: r.avgScore,
+                }))}
+              />
+            </section>
+          )}
+
+          {/* By Group */}
+          {summary.byGroup && summary.byGroup.length > 0 && (
+            <section className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100">
+                <h2 className="text-[13px] font-black text-slate-800">Health by Group</h2>
+                <p className="text-[11px] text-slate-500 mt-0.5">Accounts sharing a group name are aggregated as one parent unit. Group's color is its worst child color.</p>
+              </div>
+              <BreakdownTable
+                rows={summary.byGroup.map(r => ({
+                  key: r.groupName,
+                  label: r.groupName,
+                  sublabel: r.members.length > 0 ? `Members: ${r.members.join(", ")}${r.accountCount > r.members.length ? ` (+${r.accountCount - r.members.length} more)` : ""}` : undefined,
+                  health: r.health,
+                  compliance: r.compliance,
+                  count: r.accountCount,
+                  avgScore: r.rollupScore,
+                }))}
+              />
+            </section>
+          )}
+
           {/* Requested modules */}
           {summary.topRequestedModules.length > 0 && (
             <section className="bg-white border border-slate-100 rounded-2xl shadow-sm p-5">
@@ -483,6 +574,80 @@ function Stat({ label, value, color }: { label: string; value: number; color: "e
     <div className={`border rounded-xl p-2.5 ${palette[color]}`}>
       <p className="text-[9px] font-black uppercase tracking-widest">{label}</p>
       <p className="text-lg font-black mt-0.5">{value}</p>
+    </div>
+  );
+}
+
+function ComplianceStat({ label, value, color }: { label: string; value: number; color: "emerald" | "amber" | "rose" | "slate" }) {
+  const palette: Record<string, string> = {
+    emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    amber: "bg-amber-50 text-amber-700 border-amber-200",
+    rose: "bg-rose-50 text-rose-700 border-rose-200",
+    slate: "bg-slate-50 text-slate-500 border-slate-200",
+  };
+  return (
+    <div className={`border rounded-xl p-3 ${palette[color]}`}>
+      <p className="text-[9px] font-black uppercase tracking-widest">{label}</p>
+      <p className="text-xl font-black mt-1">{value}</p>
+    </div>
+  );
+}
+
+interface BreakdownRow {
+  key: string;
+  label: string;
+  sublabel?: string;
+  health: { green: number; yellow: number; red: number; grey: number; critical: number };
+  compliance: { compliant: number; warning: number; overdue: number; unknown: number };
+  count: number;
+  avgScore: number | null;
+}
+
+function BreakdownTable({ rows }: { rows: BreakdownRow[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[11px]">
+        <thead className="bg-slate-50">
+          <tr>
+            <th className="text-left px-3 py-2 font-black text-slate-500 uppercase text-[9px] tracking-widest">Bucket</th>
+            <th className="text-center px-2 py-2 font-black text-slate-500 uppercase text-[9px] tracking-widest">Accounts</th>
+            <th className="text-center px-2 py-2 font-black text-slate-500 uppercase text-[9px] tracking-widest">Avg Score</th>
+            <th className="text-center px-2 py-2 font-black text-slate-500 uppercase text-[9px] tracking-widest" colSpan={4}>Health</th>
+            <th className="text-center px-2 py-2 font-black text-slate-500 uppercase text-[9px] tracking-widest" colSpan={4}>Compliance</th>
+          </tr>
+          <tr className="border-t border-slate-100 bg-slate-50/60">
+            <th colSpan={3}></th>
+            <th className="text-center px-1.5 py-1 font-bold text-emerald-700 text-[9px]">🟢</th>
+            <th className="text-center px-1.5 py-1 font-bold text-amber-700 text-[9px]">🟡</th>
+            <th className="text-center px-1.5 py-1 font-bold text-rose-700 text-[9px]">🔴</th>
+            <th className="text-center px-1.5 py-1 font-bold text-slate-500 text-[9px]">⚪</th>
+            <th className="text-center px-1.5 py-1 font-bold text-emerald-700 text-[9px]">✓</th>
+            <th className="text-center px-1.5 py-1 font-bold text-amber-700 text-[9px]">⚠</th>
+            <th className="text-center px-1.5 py-1 font-bold text-rose-700 text-[9px]">⌛</th>
+            <th className="text-center px-1.5 py-1 font-bold text-slate-500 text-[9px]">?</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.key} className="border-t border-slate-100 hover:bg-slate-50">
+              <td className="px-3 py-2">
+                <p className="font-bold text-slate-800">{r.label}</p>
+                {r.sublabel && <p className="text-[10px] text-slate-500 mt-0.5">{r.sublabel}</p>}
+              </td>
+              <td className="px-2 py-2 text-center font-bold text-slate-700">{r.count}</td>
+              <td className="px-2 py-2 text-center font-black text-slate-800">{r.avgScore !== null ? r.avgScore : "—"}</td>
+              <td className="px-1.5 py-2 text-center text-emerald-700 font-bold">{r.health.green || ""}</td>
+              <td className="px-1.5 py-2 text-center text-amber-700 font-bold">{r.health.yellow || ""}</td>
+              <td className="px-1.5 py-2 text-center text-rose-700 font-bold">{r.health.red || ""}</td>
+              <td className="px-1.5 py-2 text-center text-slate-500 font-bold">{r.health.grey || ""}</td>
+              <td className="px-1.5 py-2 text-center text-emerald-700 font-bold">{r.compliance.compliant || ""}</td>
+              <td className="px-1.5 py-2 text-center text-amber-700 font-bold">{r.compliance.warning || ""}</td>
+              <td className="px-1.5 py-2 text-center text-rose-700 font-bold">{r.compliance.overdue || ""}</td>
+              <td className="px-1.5 py-2 text-center text-slate-500 font-bold">{r.compliance.unknown || ""}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

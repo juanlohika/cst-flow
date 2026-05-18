@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/db";
-import { accountAssessments } from "@/db/schema";
+import { accountAssessments, clientProfiles } from "@/db/schema";
 import { desc, eq, inArray } from "drizzle-orm";
 import { ensureAccessSchema, listAccessibleClientIds } from "@/lib/access/accounts";
 import { computeHealth } from "@/lib/accounts/health-score";
+import { loadTierFrequencyMap, resolveAccountFrequency, callCompliance } from "@/lib/accounts/tier-frequency";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +69,21 @@ export async function GET() {
       }
     }
 
+    // Also load tier + lastCourtesyCall for compliance computation
+    const tierMap = await loadTierFrequencyMap();
+    const profileQuery = db
+      .select({
+        id: clientProfiles.id,
+        tier: clientProfiles.tier,
+        frequencyOverride: clientProfiles.frequencyOverride,
+        lastCourtesyCall: clientProfiles.lastCourtesyCall,
+      })
+      .from(clientProfiles);
+    const profileRows = allowedIds === null
+      ? await profileQuery
+      : await profileQuery.where(inArray(clientProfiles.id, allowedIds));
+    const profileMap = new Map(profileRows.map(p => [p.id, p]));
+
     const accounts: Record<string, any> = {};
     latestPerAccount.forEach((latest, accountId) => {
       const health = computeHealth({
@@ -79,13 +95,54 @@ export async function GET() {
         thirdPartySsot: latest.thirdPartySsot,
         contactChangeRecent: latest.contactChangeRecent,
       });
+      const profile = profileMap.get(accountId);
+      const freq = resolveAccountFrequency({
+        tier: profile?.tier || null,
+        frequencyOverride: profile?.frequencyOverride || null,
+        tierMap,
+      });
+      const compliance = callCompliance({
+        lastCourtesyCall: profile?.lastCourtesyCall || null,
+        frequencyDays: freq.days,
+      });
       accounts[accountId] = {
         color: health.color,
         score: health.score,
         reasons: health.reasons,
         isCritical: health.isCritical,
         lastAssessedAt: latest.submittedAt,
+        complianceStatus: compliance.status,
+        daysSinceCall: compliance.daysSince,
+        frequencyLabel: freq.label,
       };
+    });
+
+    // Also include accounts with NO assessments (so the list shows them with grey + compliance)
+    if (allowedIds !== null) {
+      // Already filtered above
+    }
+    profileMap.forEach((profile, accountId) => {
+      if (!accounts[accountId]) {
+        const freq = resolveAccountFrequency({
+          tier: profile.tier || null,
+          frequencyOverride: profile.frequencyOverride || null,
+          tierMap,
+        });
+        const compliance = callCompliance({
+          lastCourtesyCall: profile.lastCourtesyCall || null,
+          frequencyDays: freq.days,
+        });
+        accounts[accountId] = {
+          color: "grey",
+          score: 0,
+          reasons: ["No assessment yet"],
+          isCritical: false,
+          lastAssessedAt: null,
+          complianceStatus: compliance.status,
+          daysSinceCall: compliance.daysSince,
+          frequencyLabel: freq.label,
+        };
+      }
     });
 
     return NextResponse.json({ accounts });

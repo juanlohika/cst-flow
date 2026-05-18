@@ -28,6 +28,9 @@ export type InternalRole = (typeof VALID_INTERNAL_ROLES)[number];
 
 export const VALID_ENGAGEMENT_STATUSES = ["confirmed", "pilot", "exploratory", "inactive", "prospect"] as const;
 
+export const VALID_TIER_VALUES = ["VIP", "1", "2", "3", "4", "5"] as const;
+export const VALID_FREQUENCIES = ["monthly", "every-2-months", "every-3-months", "quarterly", "every-6-months", "yearly"] as const;
+
 export type RowStatus = "ok" | "warn" | "error";
 
 export interface ParsedAccountRow {
@@ -39,6 +42,18 @@ export interface ParsedAccountRow {
   engagementStatus?: string;
   primaryContact?: string;
   primaryContactEmail?: string;
+  // Phase E — CRM fields
+  clientShortName?: string;
+  clientLongName?: string;
+  groupName?: string;
+  tier?: string;
+  groupTier?: string;
+  frequencyOverride?: string;
+  pmEmail?: string;
+  baEmail?: string;
+  rmEmail?: string;
+  assignedOnMonth?: string;
+  lastCourtesyCall?: string;
 }
 
 export interface ParsedTeamRow {
@@ -95,6 +110,18 @@ export function parseXlsx(buffer: ArrayBuffer): {
         engagementStatus: stringOrEmpty(r.status || r.engagementStatus),
         primaryContact: stringOrEmpty(r.primary_contact || r.primaryContact),
         primaryContactEmail: stringOrEmpty(r.primary_contact_email || r.primaryContactEmail),
+        // Phase E CRM fields
+        clientShortName: stringOrEmpty(r.client_short_name || r.clientShortName),
+        clientLongName: stringOrEmpty(r.client_long_name || r.clientLongName),
+        groupName: stringOrEmpty(r.group_name || r.groupName),
+        tier: stringOrEmpty(r.tier),
+        groupTier: stringOrEmpty(r.group_tier || r.groupTier),
+        frequencyOverride: stringOrEmpty(r.frequency_override || r.frequencyOverride),
+        pmEmail: stringOrEmpty(r.pm_email || r.pmEmail),
+        baEmail: stringOrEmpty(r.ba_email || r.baEmail),
+        rmEmail: stringOrEmpty(r.rm_email || r.rmEmail),
+        assignedOnMonth: stringOrEmpty(r.assigned_on_month || r.assignedOnMonth),
+        lastCourtesyCall: stringOrEmpty(r.last_courtesy_call || r.lastCourtesyCall),
       });
     });
   }
@@ -175,6 +202,40 @@ export async function validateRows(input: {
     if (row.engagementStatus && !VALID_ENGAGEMENT_STATUSES.includes(row.engagementStatus as any)) {
       report.push({ sheet: "Accounts", rowNumber: row.rowNumber, status: "warn",
         message: `engagementStatus "${row.engagementStatus}" is not standard (expected: ${VALID_ENGAGEMENT_STATUSES.join(", ")}). Will be saved as-is.` });
+      warnCountAcc++;
+      continue;
+    }
+
+    // Validate tier values
+    if (row.tier && !VALID_TIER_VALUES.includes(row.tier as any)) {
+      report.push({ sheet: "Accounts", rowNumber: row.rowNumber, status: "error",
+        message: `tier "${row.tier}" is not valid. Expected: ${VALID_TIER_VALUES.join(", ")}.` });
+      errCountAcc++;
+      continue;
+    }
+    if (row.groupTier && !VALID_TIER_VALUES.includes(row.groupTier as any)) {
+      report.push({ sheet: "Accounts", rowNumber: row.rowNumber, status: "error",
+        message: `group_tier "${row.groupTier}" is not valid. Expected: ${VALID_TIER_VALUES.join(", ")}.` });
+      errCountAcc++;
+      continue;
+    }
+    if (row.frequencyOverride && !VALID_FREQUENCIES.includes(row.frequencyOverride as any)) {
+      report.push({ sheet: "Accounts", rowNumber: row.rowNumber, status: "warn",
+        message: `frequency_override "${row.frequencyOverride}" is non-standard. Expected: ${VALID_FREQUENCIES.join(", ")}. Will be saved as-is.` });
+      warnCountAcc++;
+      continue;
+    }
+    // Validate date format for lastCourtesyCall (YYYY-MM-DD)
+    if (row.lastCourtesyCall && !/^\d{4}-\d{2}-\d{2}$/.test(row.lastCourtesyCall)) {
+      report.push({ sheet: "Accounts", rowNumber: row.rowNumber, status: "warn",
+        message: `last_courtesy_call "${row.lastCourtesyCall}" should be YYYY-MM-DD. Will be saved as-is.` });
+      warnCountAcc++;
+      continue;
+    }
+    // Validate month format for assignedOnMonth (YYYY-MM)
+    if (row.assignedOnMonth && !/^\d{4}-\d{2}$/.test(row.assignedOnMonth)) {
+      report.push({ sheet: "Accounts", rowNumber: row.rowNumber, status: "warn",
+        message: `assigned_on_month "${row.assignedOnMonth}" should be YYYY-MM. Will be saved as-is.` });
       warnCountAcc++;
       continue;
     }
@@ -340,6 +401,18 @@ export async function applyValidated(args: {
             engagementStatus: row.engagementStatus || "confirmed",
             primaryContact: row.primaryContact || null,
             primaryContactEmail: row.primaryContactEmail || null,
+            // Phase E CRM fields
+            clientShortName: row.clientShortName || null,
+            clientLongName: row.clientLongName || null,
+            groupName: row.groupName || null,
+            tier: row.tier || null,
+            groupTier: row.groupTier || null,
+            frequencyOverride: row.frequencyOverride || null,
+            pmEmail: row.pmEmail || null,
+            baEmail: row.baEmail || null,
+            rmEmail: row.rmEmail || null,
+            assignedOnMonth: row.assignedOnMonth || null,
+            lastCourtesyCall: row.lastCourtesyCall || null,
           } as any);
         }
       }
@@ -457,6 +530,18 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
       engagementStatus: clientProfilesTable.engagementStatus,
       primaryContact: clientProfilesTable.primaryContact,
       primaryContactEmail: clientProfilesTable.primaryContactEmail,
+      // Phase E
+      clientShortName: clientProfilesTable.clientShortName,
+      clientLongName: clientProfilesTable.clientLongName,
+      groupName: clientProfilesTable.groupName,
+      tier: clientProfilesTable.tier,
+      groupTier: clientProfilesTable.groupTier,
+      frequencyOverride: clientProfilesTable.frequencyOverride,
+      pmEmail: clientProfilesTable.pmEmail,
+      baEmail: clientProfilesTable.baEmail,
+      rmEmail: clientProfilesTable.rmEmail,
+      assignedOnMonth: clientProfilesTable.assignedOnMonth,
+      lastCourtesyCall: clientProfilesTable.lastCourtesyCall,
     })
     .from(clientProfilesTable);
 
@@ -476,14 +561,25 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
   const accountNameById = new Map(accounts.map(a => [a.id, a.companyName]));
 
   // Sheet 1: Accounts
-  const accountsRows = accounts.map(a => ({
+  const accountsRows = accounts.map((a: any) => ({
     account_id: a.id,
     account_name: a.companyName,
+    client_short_name: a.clientShortName || "",
+    client_long_name: a.clientLongName || "",
     industry: a.industry,
     modules_in_use: parseModulesForTemplate(a.modulesAvailed),
     status: a.engagementStatus,
     primary_contact: a.primaryContact || "",
     primary_contact_email: a.primaryContactEmail || "",
+    group_name: a.groupName || "",
+    tier: a.tier || "",
+    group_tier: a.groupTier || "",
+    frequency_override: a.frequencyOverride || "",
+    rm_email: a.rmEmail || "",
+    pm_email: a.pmEmail || "",
+    ba_email: a.baEmail || "",
+    assigned_on_month: a.assignedOnMonth || "",
+    last_courtesy_call: a.lastCourtesyCall || "",
   }));
 
   // Sheet 2: InternalTeam — include only memberships with an internalRole set
@@ -500,10 +596,22 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
   const wb = XLSX.utils.book_new();
 
   const wsAccounts = XLSX.utils.json_to_sheet(accountsRows, {
-    header: ["account_id", "account_name", "industry", "modules_in_use", "status", "primary_contact", "primary_contact_email"],
+    header: [
+      "account_id", "account_name", "client_short_name", "client_long_name",
+      "industry", "modules_in_use", "status",
+      "primary_contact", "primary_contact_email",
+      "group_name", "tier", "group_tier", "frequency_override",
+      "rm_email", "pm_email", "ba_email",
+      "assigned_on_month", "last_courtesy_call",
+    ],
   });
   wsAccounts["!cols"] = [
-    { wch: 40 }, { wch: 30 }, { wch: 18 }, { wch: 40 }, { wch: 14 }, { wch: 22 }, { wch: 28 },
+    { wch: 40 }, { wch: 30 }, { wch: 22 }, { wch: 30 },
+    { wch: 18 }, { wch: 40 }, { wch: 14 },
+    { wch: 22 }, { wch: 28 },
+    { wch: 22 }, { wch: 8 }, { wch: 10 }, { wch: 18 },
+    { wch: 26 }, { wch: 26 }, { wch: 26 },
+    { wch: 14 }, { wch: 16 },
   ];
   XLSX.utils.book_append_sheet(wb, wsAccounts, "Accounts");
 
@@ -523,6 +631,16 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
     ["   - industry: required for new accounts."],
     ["   - modules_in_use: semicolon-separated list (e.g. Attendance;Inventory;Leads)."],
     ["   - status: confirmed | pilot | exploratory | inactive | prospect"],
+    [""],
+    ["   CRM fields (admin-managed):"],
+    ["   - client_short_name / client_long_name: identity at two sizes."],
+    ["   - group_name: free-text. Accounts with the same group_name are treated as siblings."],
+    ["   - tier: VIP | 1 | 2 | 3 | 4 | 5 (individual account tier)."],
+    ["   - group_tier: VIP | 1 | 2 | 3 | 4 | 5 (the parent group's tier)."],
+    ["   - frequency_override: monthly | every-2-months | every-3-months | quarterly | every-6-months | yearly. Leave blank to use the tier default."],
+    ["   - rm_email / pm_email / ba_email: metadata only (does NOT change account access — use InternalTeam sheet for that)."],
+    ["   - assigned_on_month: YYYY-MM (when current RM took over)."],
+    ["   - last_courtesy_call: YYYY-MM-DD."],
     [""],
     ["2. Edit the InternalTeam sheet to assign CST team members to accounts."],
     ["   - account_id OR account_name must reference an account (existing or being created)."],
@@ -568,6 +686,18 @@ function buildUpdatePatch(row: ParsedAccountRow): any {
   if (row.engagementStatus) patch.engagementStatus = row.engagementStatus;
   if (row.primaryContact !== undefined) patch.primaryContact = row.primaryContact || null;
   if (row.primaryContactEmail !== undefined) patch.primaryContactEmail = row.primaryContactEmail || null;
+  // Phase E CRM fields
+  if (row.clientShortName !== undefined) patch.clientShortName = row.clientShortName || null;
+  if (row.clientLongName !== undefined) patch.clientLongName = row.clientLongName || null;
+  if (row.groupName !== undefined) patch.groupName = row.groupName || null;
+  if (row.tier !== undefined) patch.tier = row.tier || null;
+  if (row.groupTier !== undefined) patch.groupTier = row.groupTier || null;
+  if (row.frequencyOverride !== undefined) patch.frequencyOverride = row.frequencyOverride || null;
+  if (row.pmEmail !== undefined) patch.pmEmail = row.pmEmail || null;
+  if (row.baEmail !== undefined) patch.baEmail = row.baEmail || null;
+  if (row.rmEmail !== undefined) patch.rmEmail = row.rmEmail || null;
+  if (row.assignedOnMonth !== undefined) patch.assignedOnMonth = row.assignedOnMonth || null;
+  if (row.lastCourtesyCall !== undefined) patch.lastCourtesyCall = row.lastCourtesyCall || null;
   return patch;
 }
 

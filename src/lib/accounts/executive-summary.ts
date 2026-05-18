@@ -17,8 +17,9 @@ import {
   users,
 } from "@/db/schema";
 import { desc, eq, inArray, and } from "drizzle-orm";
-import { computeHealth, type HealthResult } from "./health-score";
+import { computeHealth, type HealthResult, type HealthColor } from "./health-score";
 import { getModelForApp, generateWithRetry } from "@/lib/ai";
+import { loadTierFrequencyMap, resolveAccountFrequency, callCompliance } from "./tier-frequency";
 
 export interface AccountSnapshot {
   accountId: string;
@@ -41,6 +42,63 @@ export interface AccountSnapshot {
   isTarkieSsot: boolean | null;
   thirdPartySsot: string | null;
   contactChangeRecent: boolean;
+  // Phase E — CRM fields
+  clientShortName: string | null;
+  clientLongName: string | null;
+  groupName: string | null;
+  tier: string | null;
+  groupTier: string | null;
+  rmEmail: string | null;
+  pmEmail: string | null;
+  baEmail: string | null;
+  assignedOnMonth: string | null;
+  lastCourtesyCall: string | null;
+  // Compliance (derived)
+  frequencyLabel: string;
+  complianceStatus: "compliant" | "warning" | "overdue" | "unknown";
+  daysSinceCall: number | null;
+}
+
+export interface ColorCounts {
+  green: number;
+  yellow: number;
+  red: number;
+  grey: number;
+  critical: number;
+}
+
+export interface ComplianceCounts {
+  compliant: number;
+  warning: number;
+  overdue: number;
+  unknown: number;
+}
+
+export interface TierBreakdownRow {
+  tier: string;                // 'VIP' | '1'..'5' | 'Unset'
+  accountCount: number;
+  health: ColorCounts;
+  compliance: ComplianceCounts;
+  avgScore: number | null;     // mean health score across this tier
+}
+
+export interface GroupBreakdownRow {
+  groupName: string;
+  accountCount: number;
+  health: ColorCounts;
+  compliance: ComplianceCounts;
+  worstColor: HealthColor;     // any red → group is red; else any yellow → yellow; etc.
+  rollupScore: number | null;  // avg health score
+  members: string[];           // child account names (top 5)
+}
+
+export interface RmBreakdownRow {
+  rmEmail: string;
+  rmName: string | null;       // resolved from users table if email matches
+  accountCount: number;
+  health: ColorCounts;
+  compliance: ComplianceCounts;
+  avgScore: number | null;
 }
 
 export interface ExecutiveSummary {
@@ -67,6 +125,11 @@ export interface ExecutiveSummary {
   thirdPartyTools: Array<{ tool: string; count: number }>;
   // Top requested modules
   topRequestedModules: Array<{ module: string; count: number }>;
+  // Phase E — compliance + breakdowns
+  complianceCounts: ComplianceCounts;
+  byTier: TierBreakdownRow[];
+  byGroup: GroupBreakdownRow[];
+  byRm: RmBreakdownRow[];
   // Account snapshots (every account, sorted: critical → unassessed → yellow → green)
   accounts: AccountSnapshot[];
   // AI clustering — populated when clusterThemes() runs separately
@@ -77,12 +140,26 @@ export interface ExecutiveSummary {
 }
 
 export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
-  // 1. Load every active account
+  // Load tier-frequency map once (used in compliance calculation)
+  const tierMap = await loadTierFrequencyMap();
+
+  // 1. Load every active account (with CRM fields)
   const allAccounts = await db.select({
     id: clientProfiles.id,
     companyName: clientProfiles.companyName,
     industry: clientProfiles.industry,
     engagementStatus: clientProfiles.engagementStatus,
+    clientShortName: clientProfiles.clientShortName,
+    clientLongName: clientProfiles.clientLongName,
+    groupName: clientProfiles.groupName,
+    tier: clientProfiles.tier,
+    groupTier: clientProfiles.groupTier,
+    frequencyOverride: clientProfiles.frequencyOverride,
+    rmEmail: clientProfiles.rmEmail,
+    pmEmail: clientProfiles.pmEmail,
+    baEmail: clientProfiles.baEmail,
+    assignedOnMonth: clientProfiles.assignedOnMonth,
+    lastCourtesyCall: clientProfiles.lastCourtesyCall,
   }).from(clientProfiles);
 
   // 2. Load latest assessment per account (group + take first via ordering)
@@ -195,6 +272,17 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
     const primaryRmId = primaryByAccount.get(account.id);
     const rm = primaryRmId ? rmById.get(primaryRmId) : null;
 
+    // Compliance derived from tier + last courtesy call
+    const freq = resolveAccountFrequency({
+      tier: (account as any).tier || null,
+      frequencyOverride: (account as any).frequencyOverride || null,
+      tierMap,
+    });
+    const compliance = callCompliance({
+      lastCourtesyCall: (account as any).lastCourtesyCall || null,
+      frequencyDays: freq.days,
+    });
+
     snapshots.push({
       accountId: account.id,
       companyName: account.companyName,
@@ -216,6 +304,20 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
       isTarkieSsot: latest?.isTarkieSsot ?? null,
       thirdPartySsot: latest?.thirdPartySsot || null,
       contactChangeRecent: !!latest?.contactChangeRecent,
+      // CRM fields
+      clientShortName: (account as any).clientShortName || null,
+      clientLongName: (account as any).clientLongName || null,
+      groupName: (account as any).groupName || null,
+      tier: (account as any).tier || null,
+      groupTier: (account as any).groupTier || null,
+      rmEmail: (account as any).rmEmail || null,
+      pmEmail: (account as any).pmEmail || null,
+      baEmail: (account as any).baEmail || null,
+      assignedOnMonth: (account as any).assignedOnMonth || null,
+      lastCourtesyCall: (account as any).lastCourtesyCall || null,
+      frequencyLabel: freq.label,
+      complianceStatus: compliance.status,
+      daysSinceCall: compliance.daysSince,
     });
   }
 
@@ -228,6 +330,10 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
     if (ap !== bp) return ap - bp;
     return a.health.score - b.health.score;
   });
+
+  // Portfolio-level compliance counts
+  const complianceCounts: ComplianceCounts = { compliant: 0, warning: 0, overdue: 0, unknown: 0 };
+  for (const s of snapshots) complianceCounts[s.complianceStatus]++;
 
   return {
     generatedAt: new Date().toISOString(),
@@ -252,7 +358,148 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
       .map(([module, count]) => ({ module, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10),
+    complianceCounts,
+    byTier: buildTierBreakdown(snapshots),
+    byGroup: buildGroupBreakdown(snapshots),
+    byRm: buildRmBreakdown(snapshots, rmRows),
     accounts: snapshots,
+  };
+}
+
+// ─── Breakdown builders ────────────────────────────────────────────────────
+
+function emptyColorCounts(): ColorCounts {
+  return { green: 0, yellow: 0, red: 0, grey: 0, critical: 0 };
+}
+function emptyComplianceCounts(): ComplianceCounts {
+  return { compliant: 0, warning: 0, overdue: 0, unknown: 0 };
+}
+
+function buildTierBreakdown(accounts: AccountSnapshot[]): TierBreakdownRow[] {
+  const tierOrder = ["VIP", "1", "2", "3", "4", "5", "Unset"];
+  const buckets = new Map<string, { accounts: AccountSnapshot[]; }>();
+  for (const t of tierOrder) buckets.set(t, { accounts: [] });
+
+  for (const a of accounts) {
+    const key = a.tier && tierOrder.includes(a.tier) ? a.tier : "Unset";
+    buckets.get(key)!.accounts.push(a);
+  }
+
+  return tierOrder.map(tier => summarizeBucket({ label: tier, accounts: buckets.get(tier)!.accounts }))
+    .filter(row => row.accountCount > 0)
+    .map(row => ({
+      tier: row.label,
+      accountCount: row.accountCount,
+      health: row.health,
+      compliance: row.compliance,
+      avgScore: row.avgScore,
+    }));
+}
+
+function buildGroupBreakdown(accounts: AccountSnapshot[]): GroupBreakdownRow[] {
+  const buckets = new Map<string, AccountSnapshot[]>();
+  for (const a of accounts) {
+    if (!a.groupName) continue;   // Only accounts with a group are aggregated here
+    const key = a.groupName;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(a);
+  }
+
+  const rows: GroupBreakdownRow[] = [];
+  buckets.forEach((members, groupName) => {
+    const summary = summarizeBucket({ label: groupName, accounts: members });
+    // Worst color: red dominates yellow dominates green dominates grey
+    let worstColor: HealthColor = "grey";
+    if (summary.health.red > 0) worstColor = "red";
+    else if (summary.health.yellow > 0) worstColor = "yellow";
+    else if (summary.health.green > 0) worstColor = "green";
+    rows.push({
+      groupName,
+      accountCount: summary.accountCount,
+      health: summary.health,
+      compliance: summary.compliance,
+      worstColor,
+      rollupScore: summary.avgScore,
+      members: members.map(m => m.companyName).slice(0, 5),
+    });
+  });
+
+  // Sort: worst worstColor first, then by count descending
+  const colorPriority: Record<HealthColor, number> = { red: 0, yellow: 1, grey: 2, green: 3 };
+  rows.sort((a, b) => {
+    const ap = colorPriority[a.worstColor];
+    const bp = colorPriority[b.worstColor];
+    if (ap !== bp) return ap - bp;
+    return b.accountCount - a.accountCount;
+  });
+  return rows;
+}
+
+function buildRmBreakdown(accounts: AccountSnapshot[], rmRows: Array<{ id: string; name: string | null; email: string | null }>): RmBreakdownRow[] {
+  // Use rmEmail (CRM field) as the primary key — falls back to primaryRmEmail (membership).
+  const buckets = new Map<string, AccountSnapshot[]>();
+  for (const a of accounts) {
+    const key = (a.rmEmail || a.primaryRmEmail || "").toLowerCase().trim();
+    if (!key) continue;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(a);
+  }
+  const emailToUser = new Map(
+    rmRows
+      .filter(r => r.email)
+      .map(r => [String(r.email).toLowerCase(), r])
+  );
+
+  const rows: RmBreakdownRow[] = [];
+  buckets.forEach((accs, rmEmail) => {
+    const summary = summarizeBucket({ label: rmEmail, accounts: accs });
+    const user = emailToUser.get(rmEmail);
+    rows.push({
+      rmEmail,
+      rmName: user?.name || null,
+      accountCount: summary.accountCount,
+      health: summary.health,
+      compliance: summary.compliance,
+      avgScore: summary.avgScore,
+    });
+  });
+
+  // Sort: most critical RM first (highest red count), then by lowest avg score
+  rows.sort((a, b) => {
+    if (b.health.red !== a.health.red) return b.health.red - a.health.red;
+    const aScore = a.avgScore ?? 0;
+    const bScore = b.avgScore ?? 0;
+    return aScore - bScore;
+  });
+  return rows;
+}
+
+function summarizeBucket(args: { label: string; accounts: AccountSnapshot[] }): {
+  label: string;
+  accountCount: number;
+  health: ColorCounts;
+  compliance: ComplianceCounts;
+  avgScore: number | null;
+} {
+  const health = emptyColorCounts();
+  const compliance = emptyComplianceCounts();
+  let scoreSum = 0;
+  let scoreN = 0;
+  for (const a of args.accounts) {
+    health[a.health.color]++;
+    if (a.health.isCritical) health.critical++;
+    compliance[a.complianceStatus]++;
+    if (a.health.color !== "grey") {
+      scoreSum += a.health.score;
+      scoreN++;
+    }
+  }
+  return {
+    label: args.label,
+    accountCount: args.accounts.length,
+    health,
+    compliance,
+    avgScore: scoreN > 0 ? Math.round(scoreSum / scoreN) : null,
   };
 }
 

@@ -192,11 +192,11 @@ async function _syncImpl(opts: { includeAi?: boolean }, setStep: (s: string) => 
     if (!sheetId) throw new Error("Drive didn't return an id for the new Sheet");
 
     setStep("setup-tabs");
-    // Add the three required tabs (the Drive-created Sheet starts with one
+    // Add the required tabs (the Drive-created Sheet starts with one
     // default "Sheet1" — we'll add ours then delete the default).
     const meta = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
     const defaultSheet = meta.data.sheets?.[0]?.properties;
-    const tabsToCreate = ["Portfolio Overview", "Accounts", "Critical Accounts"];
+    const tabsToCreate = ["Portfolio Overview", "Accounts", "Critical Accounts", "By Tier", "By RM", "By Group"];
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId: sheetId,
       requestBody: {
@@ -215,7 +215,7 @@ async function _syncImpl(opts: { includeAi?: boolean }, setStep: (s: string) => 
     // Make sure the three tabs exist (no-op if they do)
     const existing = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
     const existingTitles = new Set((existing.data.sheets || []).map(s => s.properties?.title));
-    const required = ["Portfolio Overview", "Accounts", "Critical Accounts"];
+    const required = ["Portfolio Overview", "Accounts", "Critical Accounts", "By Tier", "By RM", "By Group"];
     const addRequests = required.filter(t => !existingTitles.has(t)).map(t => ({ addSheet: { properties: { title: t } } }));
     if (addRequests.length > 0) {
       await sheets.spreadsheets.batchUpdate({
@@ -230,6 +230,9 @@ async function _syncImpl(opts: { includeAi?: boolean }, setStep: (s: string) => 
   const overviewRows = buildOverviewRows(summary);
   const accountRows = buildAccountRows(summary);
   const criticalRows = buildCriticalRows(summary);
+  const tierRows = buildTierBreakdownRows(summary);
+  const rmRows = buildRmBreakdownRows(summary);
+  const groupRows = buildGroupBreakdownRows(summary);
 
   // Clear + write each tab. Using values.update with a range that covers
   // the full sheet width and clearing first via values.clear is the
@@ -238,6 +241,9 @@ async function _syncImpl(opts: { includeAi?: boolean }, setStep: (s: string) => 
     { range: "Portfolio Overview!A1:Z200", values: overviewRows },
     { range: "Accounts!A1:Z2000", values: accountRows },
     { range: "Critical Accounts!A1:Z2000", values: criticalRows },
+    { range: "By Tier!A1:Z200", values: tierRows },
+    { range: "By RM!A1:Z500", values: rmRows },
+    { range: "By Group!A1:Z500", values: groupRows },
   ];
 
   for (const { range } of tabs) {
@@ -262,7 +268,7 @@ async function _syncImpl(opts: { includeAi?: boolean }, setStep: (s: string) => 
   if (created) {
     try {
       const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
-      const tabsToFreeze = ["Portfolio Overview", "Accounts", "Critical Accounts"];
+      const tabsToFreeze = ["Portfolio Overview", "Accounts", "Critical Accounts", "By Tier", "By RM", "By Group"];
       const requests: any[] = [];
       for (const tab of tabsToFreeze) {
         const sheetIdNum = (sheetMeta.data.sheets || []).find(s => s.properties?.title === tab)?.properties?.sheetId;
@@ -351,6 +357,18 @@ function buildOverviewRows(s: ExecutiveSummary): any[][] {
     rows.push(["Top Requested Modules"]);
     rows.push(["Module", "Requested by"]);
     for (const m of s.topRequestedModules) rows.push([m.module, m.count]);
+    rows.push([]);
+  }
+
+  // Courtesy Call Compliance summary
+  if (s.complianceCounts) {
+    rows.push(["Courtesy Call Compliance"]);
+    rows.push(["Status", "Accounts"]);
+    rows.push(["✓ Compliant", s.complianceCounts.compliant]);
+    rows.push(["⚠ Warning", s.complianceCounts.warning]);
+    rows.push(["⌛ Overdue", s.complianceCounts.overdue]);
+    rows.push(["? Unknown", s.complianceCounts.unknown]);
+    rows.push([`Detailed breakdowns: see "By Tier", "By RM", and "By Group" tabs`]);
   }
 
   return rows;
@@ -363,6 +381,8 @@ function buildAccountRows(s: ExecutiveSummary): any[][] {
     "Health",
     "Score",
     "Account",
+    "Tier",
+    "Group",
     "Industry",
     "Engagement",
     "Primary RM",
@@ -373,7 +393,10 @@ function buildAccountRows(s: ExecutiveSummary): any[][] {
     "V5 Readiness",
     "SSOT",
     "Last Assessed",
-    "Days Since",
+    "Last Courtesy Call",
+    "Compliance",
+    "Days Since Call",
+    "Frequency",
     "Link",
   ]);
   // Data rows
@@ -409,26 +432,98 @@ function buildCriticalRows(s: ExecutiveSummary): any[][] {
 }
 
 function buildAccountRow(a: AccountSnapshot): any[] {
-  const daysSince = a.lastAssessedAt
+  const daysSinceAssessment = a.lastAssessedAt
     ? Math.floor((Date.now() - new Date(a.lastAssessedAt).getTime()) / (1000 * 60 * 60 * 24))
     : null;
   return [
     healthLabel(a.health.color),
     a.health.color === "grey" ? "" : a.health.score,
     a.companyName,
+    a.tier || "—",
+    a.groupName || "—",
     a.industry,
     a.engagementStatus,
     a.primaryRmName || "—",
-    a.primaryRmEmail || "",
+    a.primaryRmEmail || a.rmEmail || "",
     a.ebaDecisionMaker ?? "",
     a.ebaAdmin ?? "",
     a.satisfaction ?? "",
     a.v5Readiness ?? "",
     ssotLabel(a.isTarkieSsot, a.thirdPartySsot),
     a.lastAssessedAt ? new Date(a.lastAssessedAt).toLocaleDateString() : "—",
-    daysSince === null ? "" : daysSince,
+    a.lastCourtesyCall ? new Date(a.lastCourtesyCall).toLocaleDateString() : "—",
+    complianceLabel(a.complianceStatus),
+    a.daysSinceCall === null || a.daysSinceCall === undefined ? "" : a.daysSinceCall,
+    a.frequencyLabel || "—",
     accountLink(a.accountId),
   ];
+}
+
+function buildTierBreakdownRows(s: ExecutiveSummary): any[][] {
+  const rows: any[][] = [];
+  rows.push(["Tier", "Accounts", "Avg Score", "🟢 Healthy", "🟡 Watch", "🔴 Critical", "⚪ Unassessed", "✓ Compliant", "⚠ Warning", "⌛ Overdue", "? Unknown"]);
+  for (const r of s.byTier || []) {
+    rows.push([
+      r.tier === "Unset" ? "Unset" : r.tier === "VIP" ? "VIP" : `Tier ${r.tier}`,
+      r.accountCount,
+      r.avgScore ?? "—",
+      r.health.green, r.health.yellow, r.health.red, r.health.grey,
+      r.compliance.compliant, r.compliance.warning, r.compliance.overdue, r.compliance.unknown,
+    ]);
+  }
+  return rows;
+}
+
+function buildRmBreakdownRows(s: ExecutiveSummary): any[][] {
+  const rows: any[][] = [];
+  rows.push(["RM", "Email", "Accounts", "Avg Score", "🟢 Healthy", "🟡 Watch", "🔴 Critical", "⚪ Unassessed", "✓ Compliant", "⚠ Warning", "⌛ Overdue", "? Unknown"]);
+  for (const r of s.byRm || []) {
+    rows.push([
+      r.rmName || "(unknown user)",
+      r.rmEmail,
+      r.accountCount,
+      r.avgScore ?? "—",
+      r.health.green, r.health.yellow, r.health.red, r.health.grey,
+      r.compliance.compliant, r.compliance.warning, r.compliance.overdue, r.compliance.unknown,
+    ]);
+  }
+  return rows;
+}
+
+function buildGroupBreakdownRows(s: ExecutiveSummary): any[][] {
+  const rows: any[][] = [];
+  rows.push(["Group", "Worst Color", "Accounts", "Avg Score", "Members", "🟢", "🟡", "🔴", "⚪", "✓", "⚠", "⌛", "?"]);
+  for (const r of s.byGroup || []) {
+    const memberList = r.members.join(", ") + (r.accountCount > r.members.length ? ` (+${r.accountCount - r.members.length} more)` : "");
+    rows.push([
+      r.groupName,
+      colorEmoji(r.worstColor),
+      r.accountCount,
+      r.rollupScore ?? "—",
+      memberList,
+      r.health.green, r.health.yellow, r.health.red, r.health.grey,
+      r.compliance.compliant, r.compliance.warning, r.compliance.overdue, r.compliance.unknown,
+    ]);
+  }
+  return rows;
+}
+
+function complianceLabel(status: string | undefined): string {
+  switch (status) {
+    case "compliant": return "✓ Compliant";
+    case "warning": return "⚠ Warning";
+    case "overdue": return "⌛ Overdue";
+    default: return "—";
+  }
+}
+
+function colorEmoji(color: string): string {
+  switch (color) {
+    case "red": return "🔴 Critical";
+    case "yellow": return "🟡 Watch";
+    case "green": return "🟢 Healthy";
+    default: return "⚪ Unassessed";
+  }
 }
 
 function healthLabel(color: string): string {

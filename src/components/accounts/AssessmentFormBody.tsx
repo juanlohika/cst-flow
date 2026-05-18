@@ -30,6 +30,8 @@ export interface AssessmentValue {
   e1: string;
   e4: string;
   e5: string;
+  // Phase E — operational metadata that's also part of the assessment
+  lastCourtesyCall: string;
 }
 
 export const EMPTY_ASSESSMENT: AssessmentValue = {
@@ -51,6 +53,7 @@ export const EMPTY_ASSESSMENT: AssessmentValue = {
   e1: "",
   e4: "",
   e5: "",
+  lastCourtesyCall: "",
 };
 
 export function buildAssessmentBody(v: AssessmentValue) {
@@ -63,6 +66,7 @@ export function buildAssessmentBody(v: AssessmentValue) {
   if (v.e4.trim()) responses.e4_single_action = v.e4.trim();
   if (v.e5.trim()) responses.e5_other = v.e5.trim();
   return {
+    lastCourtesyCall: v.lastCourtesyCall ? v.lastCourtesyCall : null,
     satisfaction: v.satisfaction || null,
     ebaDecisionMaker: v.ebaDM || null,
     ebaDecisionMakerNote: v.ebaDMNote.trim() || null,
@@ -91,6 +95,12 @@ export default function AssessmentFormBody({ value, onChange }: Props) {
     <div className="space-y-8">
       {/* Section B */}
       <Section title="Account Health" letter="B" accent="indigo">
+        <DateField
+          label="Last Courtesy Call"
+          value={v.lastCourtesyCall}
+          onChange={s => update({ lastCourtesyCall: s })}
+          hint="When did you last connect with this client? Pre-filled from the account profile — update if there's been a more recent call."
+        />
         <LongText
           label="Overall, how would you describe the current state of this account?"
           value={v.b1}
@@ -257,6 +267,21 @@ function Section({ title, letter, accent, children }: { title: string; letter: s
         {children}
       </div>
     </section>
+  );
+}
+
+function DateField({ label, value, onChange, hint }: { label: string; value: string; onChange: (v: string) => void; hint?: string }) {
+  return (
+    <div>
+      <label className="text-[12px] font-bold text-slate-800 block mb-0.5">{label}</label>
+      {hint && <p className="text-[11px] text-slate-500 mb-1">{hint}</p>}
+      <input
+        type="date"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-[12px] text-slate-800 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+      />
+    </div>
   );
 }
 

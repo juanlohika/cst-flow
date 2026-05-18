@@ -156,7 +156,7 @@ function MeetingPrepContent() {
   const [selectedProfile, setSelectedProfile] = useState<ClientProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
-  const [healthMap, setHealthMap] = useState<Record<string, { color: HealthColor; score: number; reasons: string[]; isCritical: boolean; lastAssessedAt: string | null }>>({});
+  const [healthMap, setHealthMap] = useState<Record<string, { color: HealthColor; score: number; reasons: string[]; isCritical: boolean; lastAssessedAt: string | null; complianceStatus?: "compliant" | "warning" | "overdue" | "unknown"; daysSinceCall?: number | null; frequencyLabel?: string }>>({});
 
   // Table filters + pagination
   const [search, setSearch] = useState("");
@@ -532,7 +532,18 @@ function MeetingPrepContent() {
                               {(() => {
                                 const h = healthMap[profile.id];
                                 if (!h) return <HealthChip color="grey" showScore={false} />;
-                                return <HealthChip color={h.color} score={h.score} reasons={h.reasons} />;
+                                return (
+                                  <div className="flex flex-col items-start gap-1">
+                                    <HealthChip color={h.color} score={h.score} reasons={h.reasons} />
+                                    {h.complianceStatus && h.complianceStatus !== "unknown" && (
+                                      <ComplianceBadge
+                                        status={h.complianceStatus}
+                                        daysSince={h.daysSinceCall ?? null}
+                                        frequency={h.frequencyLabel}
+                                      />
+                                    )}
+                                  </div>
+                                );
                               })()}
                             </td>
                             <td className="px-3 py-3">
@@ -898,6 +909,27 @@ function SortHeader({ label, col, sortKey, sortDir, onSort }: {
 }
 
 // ─── Health Filter Pill ───────────────────────────────────────────────────────
+function ComplianceBadge({ status, daysSince, frequency }: { status: "compliant" | "warning" | "overdue" | "unknown"; daysSince: number | null; frequency?: string }) {
+  const palette: Record<string, { bg: string; text: string; label: string; icon: string }> = {
+    compliant: { bg: "bg-emerald-50 border-emerald-100", text: "text-emerald-700", label: "On schedule", icon: "✓" },
+    warning: { bg: "bg-amber-50 border-amber-100", text: "text-amber-700", label: "Call due soon", icon: "⚠" },
+    overdue: { bg: "bg-rose-50 border-rose-100", text: "text-rose-700", label: "Overdue", icon: "⌛" },
+    unknown: { bg: "bg-slate-50 border-slate-100", text: "text-slate-500", label: "No data", icon: "?" },
+  };
+  const p = palette[status];
+  const tooltip = daysSince === null
+    ? `Frequency: ${frequency || "—"}`
+    : `${daysSince} days since last call · ${frequency || "—"}`;
+  return (
+    <span
+      title={tooltip}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${p.bg} ${p.text} text-[9px] font-bold uppercase tracking-widest`}
+    >
+      {p.icon} {p.label}
+    </span>
+  );
+}
+
 function HealthFilterPill({ color, label, count, active, onClick }: {
   color: HealthColor; label: string; count: number; active: boolean; onClick: () => void;
 }) {

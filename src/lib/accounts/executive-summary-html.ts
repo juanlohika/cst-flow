@@ -57,6 +57,14 @@ ${renderCriticalAccountsSection(summary)}
 
 ${renderAiThemesSection(summary)}
 
+${renderComplianceSection(summary)}
+
+${renderTierBreakdown(summary)}
+
+${renderRmBreakdown(summary)}
+
+${renderGroupBreakdown(summary)}
+
 <h2>Distributions</h2>
 ${renderDistributionTable("EBA — Decision Maker", summary.ebaDMDistribution)}
 ${renderDistributionTable("EBA — Admin", summary.ebaAdminDistribution)}
@@ -140,6 +148,114 @@ ${criticals.map(a => `
   <p class="critical-card-reasons">${a.health.reasons.map(escapeHtml).join(" · ")}</p>
   ${a.aiSummary ? `<p style="margin: 4pt 0 0; color: #475569; font-size: 10pt; font-style: italic;">"${escapeHtml(a.aiSummary)}"</p>` : ""}
 </div>`).join("")}`;
+}
+
+function renderComplianceSection(s: ExecutiveSummary): string {
+  const c = s.complianceCounts;
+  if (!c) return "";
+  return `
+<h2>Courtesy Call Compliance</h2>
+<p class="meta">Based on each account's tier-derived call cadence vs the last courtesy call logged.</p>
+<table>
+  <thead><tr><th>Status</th><th style="width: 80pt;">Accounts</th></tr></thead>
+  <tbody>
+    <tr><td>✓ Compliant</td><td>${c.compliant}</td></tr>
+    <tr><td>⚠ Warning</td><td>${c.warning}</td></tr>
+    <tr><td>⌛ Overdue</td><td>${c.overdue}</td></tr>
+    <tr><td>Unknown</td><td>${c.unknown}</td></tr>
+  </tbody>
+</table>`;
+}
+
+function renderTierBreakdown(s: ExecutiveSummary): string {
+  if (!s.byTier || s.byTier.length === 0) return "";
+  return `
+<h2>Health by Tier</h2>
+${renderBreakdownTable(s.byTier.map(r => ({
+  label: r.tier === "Unset" ? "Unset" : r.tier === "VIP" ? "VIP" : `Tier ${r.tier}`,
+  count: r.accountCount,
+  avgScore: r.avgScore,
+  health: r.health,
+  compliance: r.compliance,
+})))}`;
+}
+
+function renderRmBreakdown(s: ExecutiveSummary): string {
+  if (!s.byRm || s.byRm.length === 0) return "";
+  return `
+<h2>Health by Relationship Manager</h2>
+${renderBreakdownTable(s.byRm.map(r => ({
+  label: r.rmName || r.rmEmail,
+  sublabel: r.rmName ? r.rmEmail : undefined,
+  count: r.accountCount,
+  avgScore: r.avgScore,
+  health: r.health,
+  compliance: r.compliance,
+})))}`;
+}
+
+function renderGroupBreakdown(s: ExecutiveSummary): string {
+  if (!s.byGroup || s.byGroup.length === 0) return "";
+  return `
+<h2>Health by Group</h2>
+<p class="meta">Accounts sharing a group name are aggregated as one parent unit. Group's color is its worst child color.</p>
+${renderBreakdownTable(s.byGroup.map(r => ({
+  label: r.groupName,
+  sublabel: r.members.length > 0 ? `Members: ${r.members.join(", ")}${r.accountCount > r.members.length ? ` (+${r.accountCount - r.members.length} more)` : ""}` : undefined,
+  count: r.accountCount,
+  avgScore: r.rollupScore,
+  health: r.health,
+  compliance: r.compliance,
+})))}`;
+}
+
+function renderBreakdownTable(rows: Array<{
+  label: string; sublabel?: string; count: number; avgScore: number | null;
+  health: { green: number; yellow: number; red: number; grey: number };
+  compliance: { compliant: number; warning: number; overdue: number; unknown: number };
+}>): string {
+  return `
+<table>
+  <thead>
+    <tr>
+      <th rowspan="2">Bucket</th>
+      <th rowspan="2" style="width: 50pt;">Accounts</th>
+      <th rowspan="2" style="width: 50pt;">Avg Score</th>
+      <th colspan="4" style="text-align: center;">Health</th>
+      <th colspan="4" style="text-align: center;">Compliance</th>
+    </tr>
+    <tr>
+      <th style="width: 30pt; text-align: center;">🟢</th>
+      <th style="width: 30pt; text-align: center;">🟡</th>
+      <th style="width: 30pt; text-align: center;">🔴</th>
+      <th style="width: 30pt; text-align: center;">⚪</th>
+      <th style="width: 30pt; text-align: center;">✓</th>
+      <th style="width: 30pt; text-align: center;">⚠</th>
+      <th style="width: 30pt; text-align: center;">⌛</th>
+      <th style="width: 30pt; text-align: center;">?</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${rows.map(r => `
+    <tr>
+      <td>
+        <strong>${escapeHtml(r.label)}</strong>
+        ${r.sublabel ? `<br/><span style="font-size: 9pt; color: #64748b;">${escapeHtml(r.sublabel)}</span>` : ""}
+      </td>
+      <td style="text-align: center; font-weight: 700;">${r.count}</td>
+      <td style="text-align: center; font-weight: 700;">${r.avgScore !== null ? r.avgScore : "—"}</td>
+      <td style="text-align: center;">${r.health.green || ""}</td>
+      <td style="text-align: center;">${r.health.yellow || ""}</td>
+      <td style="text-align: center;">${r.health.red || ""}</td>
+      <td style="text-align: center;">${r.health.grey || ""}</td>
+      <td style="text-align: center;">${r.compliance.compliant || ""}</td>
+      <td style="text-align: center;">${r.compliance.warning || ""}</td>
+      <td style="text-align: center;">${r.compliance.overdue || ""}</td>
+      <td style="text-align: center;">${r.compliance.unknown || ""}</td>
+    </tr>
+    `).join("")}
+  </tbody>
+</table>`;
 }
 
 function renderDistributionTable(label: string, dist: number[]): string {
