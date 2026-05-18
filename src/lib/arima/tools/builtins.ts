@@ -35,7 +35,7 @@ function noClientResult() {
 registerTool({
   name: "get_client_profile",
   category: "read",
-  description: "Returns basic profile info about the current client account (company name, industry, modules contracted, engagement status, primary contact). Use this to answer factual questions about the client.",
+  description: "Returns the full CRM profile of the current client account: company names (short + long), industry, modules contracted, engagement status, primary contact, plus Phase E CRM fields — tier (VIP|1-5), group name (parent group for sibling accounts), group tier, internal team (Relationship Manager / Project Manager / Business Analyst by email), assigned-on month, last courtesy call date, courtesy-call cadence and compliance status (compliant | warning | overdue based on tier-derived frequency vs days since last call). Use this to answer ANY factual question about the client: who their RM is, what tier they're on, how long they've been with us, when we last called them, are they due for a check-in, what group they belong to, what they're contracted on, etc.",
   inputSchema: {
     type: "object",
     properties: {},
@@ -47,19 +47,83 @@ registerTool({
     if (!c) return noClientResult();
     let modules: string[] = [];
     try { modules = JSON.parse(c.modulesAvailed || "[]"); } catch {}
+
+    // Resolve module slugs → labels (so "trade-check-form" comes back as "Trade Check Form")
+    let moduleLabels: string[] = modules;
+    try {
+      const { accountModules } = await import("@/db/schema");
+      const { inArray } = await import("drizzle-orm");
+      if (modules.length > 0) {
+        const rows = await db
+          .select({ slug: accountModules.slug, label: accountModules.label })
+          .from(accountModules)
+          .where(inArray(accountModules.slug, modules));
+        const labelBySlug = new Map(rows.map(r => [r.slug, r.label]));
+        moduleLabels = modules.map(s => labelBySlug.get(s) || s);
+      }
+    } catch { /* if master modules table doesn't exist, fall back to raw slugs */ }
+
+    // Compute courtesy-call compliance
+    let compliance: any = null;
+    try {
+      const { loadTierFrequencyMap, resolveAccountFrequency, callCompliance } = await import("@/lib/accounts/tier-frequency");
+      const tierMap = await loadTierFrequencyMap();
+      const freq = resolveAccountFrequency({
+        tier: (c as any).tier || null,
+        frequencyOverride: (c as any).frequencyOverride || null,
+        tierMap,
+      });
+      const cc = callCompliance({
+        lastCourtesyCall: (c as any).lastCourtesyCall || null,
+        frequencyDays: freq.days,
+      });
+      compliance = {
+        callFrequency: freq.label,
+        callFrequencyDays: freq.days,
+        callFrequencySource: freq.source,         // 'override' | 'tier' | 'unknown'
+        complianceStatus: cc.status,              // 'compliant' | 'warning' | 'overdue' | 'unknown'
+        daysSinceLastCall: cc.daysSince,
+      };
+    } catch { /* non-fatal */ }
+
+    const data: any = {
+      // Identity
+      companyName: c.companyName,
+      clientShortName: (c as any).clientShortName || null,
+      clientLongName: (c as any).clientLongName || null,
+      industry: c.industry,
+      companySize: c.companySize || null,
+      engagementStatus: c.engagementStatus,
+      // Modules
+      modulesAvailed: moduleLabels,
+      modulesAvailedSlugs: modules,
+      // Contact
+      primaryContact: c.primaryContact || null,
+      primaryContactEmail: c.primaryContactEmail || null,
+      specialConsiderations: c.specialConsiderations || null,
+      // CRM
+      tier: (c as any).tier || null,
+      groupTier: (c as any).groupTier || null,
+      groupName: (c as any).groupName || null,
+      relationshipManagerEmail: (c as any).rmEmail || null,
+      projectManagerEmail: (c as any).pmEmail || null,
+      businessAnalystEmail: (c as any).baEmail || null,
+      assignedOnMonth: (c as any).assignedOnMonth || null,   // YYYY-MM
+      lastCourtesyCall: (c as any).lastCourtesyCall || null, // YYYY-MM-DD
+      // Compliance
+      courtesyCall: compliance,
+    };
+
+    const summaryParts = [c.companyName];
+    if ((c as any).tier) summaryParts.push((c as any).tier === "VIP" ? "VIP tier" : `Tier ${(c as any).tier}`);
+    if ((c as any).groupName) summaryParts.push(`Group: ${(c as any).groupName}`);
+    summaryParts.push(c.industry);
+    summaryParts.push(`${moduleLabels.length} module(s)`);
+
     return {
       ok: true,
-      data: {
-        companyName: c.companyName,
-        industry: c.industry,
-        companySize: c.companySize || null,
-        modulesAvailed: modules,
-        engagementStatus: c.engagementStatus,
-        primaryContact: c.primaryContact || null,
-        primaryContactEmail: c.primaryContactEmail || null,
-        specialConsiderations: c.specialConsiderations || null,
-      },
-      summary: `${c.companyName} · ${c.industry} · ${modules.length} module(s)`,
+      data,
+      summary: summaryParts.join(" · "),
     };
   },
 });
@@ -91,6 +155,94 @@ registerTool({
       data: { scope: content.length > 4000 ? content.slice(0, 4000) + "\n[…truncated]" : content },
       summary: `Loaded ${content.length} chars of scope notes.`,
     };
+  },
+});
+
+// ─── get_account_health ──────────────────────────────────────────────
+registerTool({
+  name: "get_account_health",
+  category: "read",
+  description: "Returns the latest Health Assessment for the current client account, including the computed health color (green | yellow | red | grey), score (0-100), the structured scores (EBA Decision Maker, EBA Admin, satisfaction, V5 readiness, SSOT status), the AI-generated CEO summary, top risks, top opportunities, notable client requests, and requested modules. Use this when the user asks 'how is this account doing?', 'what's their EBA?', 'are they at risk?', 'are they V5-ready?', 'what do they want?', or anything about the strategic state of the relationship. Returns null assessment if no health check has been submitted yet.",
+  inputSchema: {
+    type: "object",
+    properties: {},
+  },
+  defaultEnabled: true,
+  defaultAutonomy: "auto",
+  handler: async (_input, ctx) => {
+    if (!ctx.clientProfileId) return noClientResult();
+    try {
+      const { accountAssessments } = await import("@/db/schema");
+      const { desc, eq } = await import("drizzle-orm");
+      const { computeHealth } = await import("@/lib/accounts/health-score");
+
+      const rows = await db
+        .select()
+        .from(accountAssessments)
+        .where(eq(accountAssessments.clientProfileId, ctx.clientProfileId))
+        .orderBy(desc(accountAssessments.submittedAt))
+        .limit(1);
+
+      if (rows.length === 0) {
+        return {
+          ok: true,
+          data: { hasAssessment: false },
+          summary: "No health assessment has been submitted for this account yet.",
+        };
+      }
+
+      const a: any = rows[0];
+      const health = computeHealth({
+        satisfaction: a.satisfaction,
+        ebaDecisionMaker: a.ebaDecisionMaker,
+        ebaAdmin: a.ebaAdmin,
+        v5Readiness: a.v5Readiness,
+        isTarkieSsot: a.isTarkieSsot,
+        thirdPartySsot: a.thirdPartySsot,
+        contactChangeRecent: a.contactChangeRecent,
+      });
+
+      const parseArr = (s: string | null) => {
+        if (!s) return [];
+        try { const v = JSON.parse(s); return Array.isArray(v) ? v : []; } catch { return []; }
+      };
+
+      const data = {
+        hasAssessment: true,
+        submittedAt: a.submittedAt,
+        // Computed color + score
+        healthColor: health.color,            // 'green' | 'yellow' | 'red' | 'grey'
+        healthScore: health.score,            // 0-100
+        isCritical: health.isCritical,
+        healthReasons: health.reasons,        // Human-readable bullets explaining the color
+        // Structured scores
+        satisfaction: a.satisfaction,         // 1-5
+        ebaDecisionMaker: a.ebaDecisionMaker, // 1-5
+        ebaDecisionMakerNote: a.ebaDecisionMakerNote || null,
+        ebaAdmin: a.ebaAdmin,                 // 1-5
+        ebaAdminNote: a.ebaAdminNote || null,
+        v5Readiness: a.v5Readiness,           // 1-5
+        // SSOT
+        isTarkieSsot: a.isTarkieSsot,
+        thirdPartySsot: a.thirdPartySsot || null,
+        // Contact churn
+        contactChangeRecent: !!a.contactChangeRecent,
+        contactChangeNote: a.contactChangeNote || null,
+        // AI rollup
+        aiSummary: a.aiSummary || null,
+        aiRisks: parseArr(a.aiRisks),
+        aiOpportunities: parseArr(a.aiOpportunities),
+        notableRequests: parseArr(a.notableRequests),
+        requestedModules: parseArr(a.requestedModules),
+        aiRollupStatus: a.aiRollupStatus,
+      };
+
+      const colorLabel = health.color === "grey" ? "unassessed" : health.color.toUpperCase();
+      const summary = `Health: ${colorLabel} (${health.score}/100)${health.isCritical ? " · CRITICAL" : ""}${a.aiSummary ? ` — ${String(a.aiSummary).slice(0, 120)}…` : ""}`;
+      return { ok: true, data, summary };
+    } catch (e: any) {
+      return { ok: false, error: `Failed to load health assessment: ${e?.message || e}` };
+    }
   },
 });
 

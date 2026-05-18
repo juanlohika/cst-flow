@@ -590,11 +590,20 @@ function buildClientContext(profile: any): string {
   lines.push("");
   lines.push(`You are talking ABOUT or ON BEHALF OF the following client account. Use this context to ground every reply. Do not invent fields that are not present.`);
   lines.push("");
-  lines.push(`- **Company:** ${profile.companyName || "Unknown"}`);
+  lines.push(`- **Company:** ${profile.companyName || "Unknown"}${profile.clientLongName ? ` (${profile.clientLongName})` : ""}`);
   lines.push(`- **Industry:** ${profile.industry || "Unknown"}`);
   if (profile.companySize) lines.push(`- **Company size:** ${profile.companySize}`);
   lines.push(`- **Modules contracted:** ${modules}`);
   lines.push(`- **Engagement status:** ${profile.engagementStatus || "unknown"}`);
+  // Phase E — CRM context
+  if (profile.tier) lines.push(`- **Tier:** ${profile.tier === "VIP" ? "VIP" : `Tier ${profile.tier}`}`);
+  if (profile.groupName) lines.push(`- **Group:** ${profile.groupName}${profile.groupTier ? ` (Group Tier: ${profile.groupTier === "VIP" ? "VIP" : profile.groupTier})` : ""}`);
+  if (profile.rmEmail) lines.push(`- **Relationship Manager:** ${profile.rmEmail}`);
+  if (profile.pmEmail) lines.push(`- **Project Manager:** ${profile.pmEmail}`);
+  if (profile.baEmail) lines.push(`- **Business Analyst:** ${profile.baEmail}`);
+  if (profile.assignedOnMonth) lines.push(`- **Assigned to RM since:** ${profile.assignedOnMonth}`);
+  if (profile.lastCourtesyCall) lines.push(`- **Last courtesy call:** ${profile.lastCourtesyCall}`);
+  if (profile.frequencyOverride) lines.push(`- **Courtesy call cadence (override):** ${profile.frequencyOverride}`);
   if (profile.primaryContact) lines.push(`- **Primary contact:** ${profile.primaryContact}${profile.primaryContactEmail ? ` (${profile.primaryContactEmail})` : ""}`);
   if (profile.specialConsiderations) {
     lines.push("");
