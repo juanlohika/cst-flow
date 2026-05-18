@@ -922,6 +922,23 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                   <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                 </a>
 
+                {/* Executive Summary callout — Phase D */}
+                <a
+                  href="/admin/executive-summary"
+                  className="flex items-center gap-3 p-4 rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50 to-blue-50 hover:from-indigo-100 hover:to-blue-100 transition-colors"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-indigo-500 flex items-center justify-center shrink-0">
+                    <FileText className="w-4 h-4 text-white" strokeWidth={2} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-semibold text-indigo-900">Account Health · Executive Summary</p>
+                    <p className="text-[11px] text-indigo-700">
+                      CEO-facing portfolio view. Red/yellow/green counts, critical accounts, AI-clustered risks & opportunities. Export to PDF.
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-indigo-400 shrink-0" />
+                </a>
+
                 {/* Access Codes callout */}
                 <a
                   href="/admin/access-codes"
