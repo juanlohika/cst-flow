@@ -140,6 +140,21 @@ function Content() {
     }
   };
 
+  const resetCachedSheet = async () => {
+    if (!confirm("Clear the cached Sheet ID? The next sync will create a fresh Sheet in your Dashboards folder. The old Sheet (if any) won't be deleted automatically — clean it up in Drive yourself.")) return;
+    try {
+      const res = await fetch("/api/admin/executive-summary/sync-sheet/reset", { method: "POST" });
+      if (res.ok) {
+        setSheetResult(null);
+        alert("Cached Sheet ID cleared. Click Sync to Google Sheet to create a fresh one.");
+      } else {
+        alert("Failed to clear cached Sheet ID.");
+      }
+    } catch (e: any) {
+      alert(e?.message || "Failed to clear cached Sheet ID.");
+    }
+  };
+
   if (!isAdmin) return <div className="max-w-3xl mx-auto p-8"><p className="text-rose-700 font-bold">Admin only</p></div>;
 
   return (
@@ -183,10 +198,17 @@ function Content() {
         sheetResult.error ? (
           <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-[11px] text-rose-700 flex items-start gap-2">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <div>
+            <div className="flex-1">
               <p className="font-bold">Sheet sync failed</p>
               <p className="mt-0.5">{sheetResult.error}</p>
-              <p className="text-[10px] mt-1 opacity-80">Make sure GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID is set under <Link href="/admin/google-integration" className="underline">/admin/google-integration</Link> and the folder is shared with the service account.</p>
+              <p className="text-[10px] mt-1 opacity-80">Make sure GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID is set under <Link href="/admin/google-integration" className="underline">/admin/google-integration</Link> and the folder is shared with the service account as Editor.</p>
+              <button
+                onClick={resetCachedSheet}
+                className="mt-2 px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest bg-white border border-rose-300 text-rose-700 hover:bg-rose-100"
+              >
+                Reset cached Sheet ID
+              </button>
+              <p className="text-[10px] mt-1 opacity-60">Try if a previous failed sync left a stale ID pointing at the wrong Sheet.</p>
             </div>
           </div>
         ) : (

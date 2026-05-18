@@ -76,6 +76,19 @@ export interface SyncResult {
 }
 
 export async function syncExecutiveSummaryToSheet(opts: { includeAi?: boolean } = {}): Promise<SyncResult> {
+  let step = "init";
+  try {
+    return await _syncImpl(opts, (s: string) => { step = s; });
+  } catch (e: any) {
+    const msg = e?.message || String(e);
+    const code = e?.code || e?.status || "";
+    console.error("[sheets-sync] failed at step:", step, "code:", code, msg);
+    return { ok: false, error: `${msg} (step: ${step}${code ? `, code: ${code}` : ""})` };
+  }
+}
+
+async function _syncImpl(opts: { includeAi?: boolean }, setStep: (s: string) => void): Promise<SyncResult> {
+  setStep("load-config");
   const cfg = await loadSheetsConfig();
   if (!cfg) {
     return { ok: false, error: "Dashboards Sheet sync is not configured. Add GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID in admin settings." };
@@ -88,11 +101,13 @@ export async function syncExecutiveSummaryToSheet(opts: { includeAi?: boolean } 
     return { ok: false, error: `Invalid GOOGLE_SERVICE_ACCOUNT_JSON: ${e?.message}` };
   }
 
+  setStep("build-summary");
   const summary = await buildExecutiveSummary();
   if (opts.includeAi) {
     try { await clusterThemes(summary); } catch { /* non-fatal */ }
   }
 
+  setStep("authorize");
   const { google } = await import("googleapis");
   const auth = new google.auth.JWT({
     email: credentials.client_email,
@@ -108,7 +123,7 @@ export async function syncExecutiveSummaryToSheet(opts: { includeAi?: boolean } 
   const drive = google.drive({ version: "v3", auth });
   const sheets = google.sheets({ version: "v4", auth });
 
-  // Verify dashboards folder access
+  setStep("verify-dashboards-folder");
   try {
     await drive.files.get({
       fileId: cfg.dashboardsFolderId,
@@ -127,39 +142,73 @@ export async function syncExecutiveSummaryToSheet(opts: { includeAi?: boolean } 
   }
 
   // Resolve or create the spreadsheet
+  setStep("verify-cached-sheet");
   let sheetId = cfg.sheetId;
   let created = false;
 
   if (sheetId) {
-    // Verify it still exists; if 404, fall through to create.
+    // Verify it still exists AND the service account can write to it.
+    // If the previous sync got stuck in a bad state (e.g. Sheet exists but
+    // outside the dashboards folder), fall through and create a fresh one.
     try {
-      await drive.files.get({ fileId: sheetId, fields: "id", supportsAllDrives: true });
+      const verify = await drive.files.get({
+        fileId: sheetId,
+        fields: "id, parents, capabilities/canEdit",
+        supportsAllDrives: true,
+      });
+      const canEdit = verify.data.capabilities?.canEdit;
+      const parents = verify.data.parents || [];
+      const inDashboardsFolder = parents.includes(cfg.dashboardsFolderId);
+      if (!canEdit || !inDashboardsFolder) {
+        // Either we can't write to it or it lives elsewhere. Drop the cached
+        // id and create a new Sheet in the right place.
+        console.warn("[sheets-sync] cached sheetId is unusable (canEdit=" + canEdit + ", inDashboardsFolder=" + inDashboardsFolder + "). Creating a fresh Sheet.");
+        sheetId = null;
+      }
     } catch (e: any) {
-      if (e?.code === 404 || e?.status === 404) sheetId = null;
-      else throw e;
+      if (e?.code === 404 || e?.status === 404 || e?.code === 403 || e?.status === 403) {
+        sheetId = null;
+      } else {
+        throw e;
+      }
     }
   }
 
   if (!sheetId) {
-    // Create a fresh Sheet in the dashboards folder
-    const createRes = await sheets.spreadsheets.create({
+    setStep("create-sheet-in-folder");
+    // Create the Sheet directly inside the dashboards folder via the Drive
+    // API. This avoids the "service accounts can't manipulate their own
+    // root" problem we'd hit with sheets.spreadsheets.create + later move.
+    const created_ = await drive.files.create({
       requestBody: {
-        properties: { title: SHEET_TITLE },
-        sheets: [
-          { properties: { title: "Portfolio Overview" } },
-          { properties: { title: "Accounts" } },
-          { properties: { title: "Critical Accounts" } },
+        name: SHEET_TITLE,
+        mimeType: "application/vnd.google-apps.spreadsheet",
+        parents: [cfg.dashboardsFolderId],
+      },
+      fields: "id",
+      supportsAllDrives: true,
+    });
+    sheetId = created_.data.id!;
+    if (!sheetId) throw new Error("Drive didn't return an id for the new Sheet");
+
+    setStep("setup-tabs");
+    // Add the three required tabs (the Drive-created Sheet starts with one
+    // default "Sheet1" — we'll add ours then delete the default).
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
+    const defaultSheet = meta.data.sheets?.[0]?.properties;
+    const tabsToCreate = ["Portfolio Overview", "Accounts", "Critical Accounts"];
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: sheetId,
+      requestBody: {
+        requests: [
+          ...tabsToCreate.map(title => ({ addSheet: { properties: { title } } })),
+          ...(defaultSheet?.sheetId != null
+            ? [{ deleteSheet: { sheetId: defaultSheet.sheetId } }]
+            : []),
         ],
       },
     });
-    sheetId = createRes.data.spreadsheetId!;
-    // Move to the dashboards folder
-    await drive.files.update({
-      fileId: sheetId,
-      addParents: cfg.dashboardsFolderId,
-      removeParents: "root",
-      supportsAllDrives: true,
-    });
+
     await saveSheetId(sheetId);
     created = true;
   } else {
@@ -176,6 +225,7 @@ export async function syncExecutiveSummaryToSheet(opts: { includeAi?: boolean } 
     }
   }
 
+  setStep("write-tabs");
   // Build rows for each tab
   const overviewRows = buildOverviewRows(summary);
   const accountRows = buildAccountRows(summary);
