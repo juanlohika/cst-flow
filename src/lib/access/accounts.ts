@@ -89,6 +89,45 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN assignedOnMonth TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN lastCourtesyCall TEXT`); } catch {}
 
+    // Phase E.3: master modules list
+    await db.run(sql`CREATE TABLE IF NOT EXISTS AccountModule (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      label TEXT NOT NULL,
+      description TEXT,
+      sortOrder INTEGER NOT NULL DEFAULT 0,
+      isActive INTEGER NOT NULL DEFAULT 1,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    // Seed defaults if the table is empty
+    try {
+      const existing = await db.run(sql`SELECT COUNT(*) as c FROM AccountModule`);
+      const count = (existing as any)?.rows?.[0]?.c ?? 0;
+      if (Number(count) === 0) {
+        const defaults = [
+          { slug: "attendance", label: "Attendance" },
+          { slug: "itinerary", label: "Itinerary" },
+          { slug: "expense", label: "Expense" },
+          { slug: "inventory", label: "Inventory" },
+          { slug: "digital-forms", label: "Digital Forms" },
+          { slug: "eta", label: "ETA" },
+          { slug: "hr", label: "HR" },
+          { slug: "hris", label: "HRIS" },
+          { slug: "sales", label: "Sales" },
+          { slug: "trade-check-form", label: "Trade Check Form" },
+        ];
+        for (let i = 0; i < defaults.length; i++) {
+          const m = defaults[i];
+          try {
+            await db.run(sql`INSERT INTO AccountModule (id, slug, label, sortOrder) VALUES (${`mod_${m.slug}`}, ${m.slug}, ${m.label}, ${i})`);
+          } catch { /* unique conflict — ignore */ }
+        }
+      }
+    } catch (e) {
+      console.warn("[ensureAccessSchema] failed to seed AccountModule defaults:", e);
+    }
+
     // Phase E: courtesy call history
     await db.run(sql`CREATE TABLE IF NOT EXISTS CourtesyCallHistory (
       id TEXT PRIMARY KEY,

@@ -25,6 +25,7 @@ import ProjectSettingsModal from "@/components/projects/ProjectSettingsModal";
 import ContactsTab from "@/components/accounts/ContactsTab";
 import HealthChip from "@/components/accounts/HealthChip";
 import AssessmentQueueBanner from "@/components/accounts/AssessmentQueueBanner";
+import ModulesPicker from "@/components/accounts/ModulesPicker";
 import type { HealthColor } from "@/lib/accounts/health-score";
 import { Share, Mail, Copy, Check, X, Settings } from "lucide-react";
 
@@ -654,25 +655,15 @@ function MeetingPrepContent() {
               </div>
 
               <div>
-                <label className="block text-[12px] font-medium text-text-primary mb-2">Modules Availed</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {MODULE_OPTIONS.map(mod => (
-                    <label key={mod.id} className={`flex items-center gap-2 px-3 py-2 rounded-md border cursor-pointer transition-colors ${formData.modulesAvailed.includes(mod.id) ? "border-primary bg-primary/5 text-primary" : "border-border-default hover:bg-surface-subtle"}`}>
-                      <input
-                        type="checkbox"
-                        checked={formData.modulesAvailed.includes(mod.id)}
-                        onChange={e => {
-                          const updated = e.target.checked
-                            ? [...formData.modulesAvailed, mod.id]
-                            : formData.modulesAvailed.filter(m => m !== mod.id);
-                          setFormData(f => ({ ...f, modulesAvailed: updated }));
-                        }}
-                        className="sr-only"
-                      />
-                      <span className="text-[12px] font-medium">{mod.label}</span>
-                    </label>
-                  ))}
-                </div>
+                <label className="block text-[12px] font-medium text-text-primary mb-1.5">Tarkie Modules Availed</label>
+                <p className="text-[10px] text-text-muted mb-2">
+                  Click to add modules. {isAdmin ? "Type a new name and click 'Add as new' to extend the master list." : "Ask an admin to add new modules to the master list."}
+                </p>
+                <ModulesPicker
+                  value={formData.modulesAvailed}
+                  onChange={(next) => setFormData(f => ({ ...f, modulesAvailed: next }))}
+                  allowAddNew={isAdmin}
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -704,29 +695,16 @@ function MeetingPrepContent() {
                   Account CRM · {isAdmin ? "Editable" : "Admin-managed (last courtesy call editable)"}
                 </p>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Client Short Name {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
-                    <input
-                      type="text"
-                      value={formData.clientShortName}
-                      onChange={e => setFormData(f => ({ ...f, clientShortName: e.target.value }))}
-                      disabled={!isAdmin}
-                      placeholder="e.g. MX"
-                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[12px] font-medium text-text-primary mb-1.5">Client Long Name {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
-                    <input
-                      type="text"
-                      value={formData.clientLongName}
-                      onChange={e => setFormData(f => ({ ...f, clientLongName: e.target.value }))}
-                      disabled={!isAdmin}
-                      placeholder="e.g. Mobile Optima Inc."
-                      className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-[12px] font-medium text-text-primary mb-1.5">Client Long Name <span className="text-[9px] text-text-muted">(full business name)</span> {!isAdmin && <span className="text-[9px] text-text-muted ml-1">(admin)</span>}</label>
+                  <input
+                    type="text"
+                    value={formData.clientLongName}
+                    onChange={e => setFormData(f => ({ ...f, clientLongName: e.target.value }))}
+                    disabled={!isAdmin}
+                    placeholder="e.g. Mobile Optima Inc."
+                    className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
+                  />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 mt-4">
@@ -1052,40 +1030,92 @@ export function AccountHub({ profile, onEdit, onBack }: {
 
 // ─── Profile Tab ──────────────────────────────────────────────────────────────
 
+/**
+ * Read-only view of the same fields that live in the Edit form. Provides a
+ * single canonical place to see all account metadata at a glance. Module
+ * labels are resolved against the AccountModule master list so we don't
+ * show raw slugs.
+ */
 export function ProfileTab({ profile, modules }: {
   profile: any;
   modules: string[];
 }) {
+  const [moduleLabels, setModuleLabels] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/account-modules");
+        if (res.ok) {
+          const data = await res.json();
+          const map: Record<string, string> = {};
+          for (const m of data.modules || []) map[m.slug] = m.label;
+          setModuleLabels(map);
+        }
+      } catch { /* silent */ }
+    })();
+  }, []);
+
+  const friendlyModules = modules.map(m => moduleLabels[m] || m);
 
   return (
-    <div className="max-w-3xl mx-auto p-5 space-y-5">
-      {/* Account details */}
-      <div className="border border-border-default rounded-md p-4">
-        <p className="text-[11px] font-bold text-text-muted uppercase tracking-widest mb-3">Account Details</p>
-        <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-[12px]">
-          {profile.primaryContact && (
-            <div className="flex gap-2"><span className="text-text-muted w-16 flex-shrink-0">Contact</span><span className="text-text-primary font-medium">{profile.primaryContact}</span></div>
-          )}
-          {profile.primaryContactEmail && (
-            <div className="flex gap-2"><span className="text-text-muted w-16 flex-shrink-0">Email</span><span className="text-text-primary font-medium">{profile.primaryContactEmail}</span></div>
-          )}
-          {modules.length > 0 && (
-            <div className="col-span-2 flex items-center gap-1.5 flex-wrap mt-1">
-              <span className="text-text-muted">Modules:</span>
-              {modules.map(m => (
-                <span key={m} className="px-1.5 py-0.5 bg-surface-muted text-text-secondary rounded text-[11px]">{m}</span>
-              ))}
-            </div>
-          )}
-          {profile.specialConsiderations && (
-            <div className="col-span-2 mt-1">
-              <span className="text-text-muted block mb-1">Notes</span>
-              <p className="text-text-primary text-[12px] leading-relaxed bg-surface-subtle px-3 py-2 rounded-md">{profile.specialConsiderations}</p>
-            </div>
-          )}
-        </div>
-      </div>
+    <div className="max-w-4xl mx-auto p-5 space-y-4">
+      {/* Account header */}
+      <Section title="Account">
+        <Field label="Company Name" value={profile.companyName} highlight />
+        {profile.clientLongName && <Field label="Client Long Name" value={profile.clientLongName} />}
+        <Field label="Industry" value={profile.industry} />
+        <Field label="Engagement Status" value={profile.engagementStatus} />
+        {friendlyModules.length > 0 && (
+          <Field label="Tarkie Modules" value={<div className="flex flex-wrap gap-1">{friendlyModules.map((m, i) => <span key={i} className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[11px] font-medium">{m}</span>)}</div>} />
+        )}
+        {profile.primaryContact && <Field label="Primary Contact" value={profile.primaryContact} />}
+        {profile.primaryContactEmail && <Field label="Email" value={profile.primaryContactEmail} />}
+      </Section>
 
+      {/* CRM panel */}
+      {(profile.groupName || profile.tier || profile.groupTier || profile.rmEmail || profile.pmEmail || profile.baEmail || profile.assignedOnMonth || profile.lastCourtesyCall || profile.frequencyOverride) && (
+        <Section title="Account CRM">
+          {profile.groupName && <Field label="Group" value={profile.groupName} />}
+          {profile.tier && <Field label="Tier" value={profile.tier === "VIP" ? "VIP" : `Tier ${profile.tier}`} />}
+          {profile.groupTier && <Field label="Group Tier" value={profile.groupTier === "VIP" ? "VIP" : `Tier ${profile.groupTier}`} />}
+          {profile.frequencyOverride && <Field label="Frequency Override" value={profile.frequencyOverride} />}
+          {profile.rmEmail && <Field label="Relationship Manager" value={profile.rmEmail} />}
+          {profile.pmEmail && <Field label="Project Manager" value={profile.pmEmail} />}
+          {profile.baEmail && <Field label="Business Analyst" value={profile.baEmail} />}
+          {profile.assignedOnMonth && <Field label="Assigned On" value={profile.assignedOnMonth} />}
+          {profile.lastCourtesyCall && <Field label="Last Courtesy Call" value={new Date(profile.lastCourtesyCall).toLocaleDateString(undefined, { dateStyle: "medium" })} />}
+        </Section>
+      )}
+
+      {/* Notes */}
+      {profile.specialConsiderations && (
+        <Section title="Notes from Acquisition">
+          <p className="text-[12.5px] text-slate-700 leading-relaxed whitespace-pre-wrap">{profile.specialConsiderations}</p>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+      <div className="px-5 py-2.5 border-b border-slate-100 bg-slate-50">
+        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">{title}</p>
+      </div>
+      <div className="p-5 space-y-2">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, value, highlight }: { label: string; value: React.ReactNode; highlight?: boolean }) {
+  return (
+    <div className="grid grid-cols-[140px_1fr] gap-3 items-start py-1.5 border-b border-slate-50 last:border-b-0">
+      <div className="text-[11px] font-bold text-slate-500">{label}</div>
+      <div className={`text-[12.5px] ${highlight ? "font-black text-slate-900" : "font-medium text-slate-800"}`}>{value || "—"}</div>
     </div>
   );
 }

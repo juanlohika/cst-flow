@@ -281,6 +281,21 @@ export const clientProfiles = sqliteTable("ClientProfile", {
   updatedAt:             text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+// Phase E.3: Master list of Tarkie modules that accounts can avail.
+// Replaces the hardcoded MODULE_OPTIONS array. Admin-managed via
+// /admin/account-modules. Used as the dropdown source for ClientProfile's
+// modulesAvailed (JSON array of moduleSlugs).
+export const accountModules = sqliteTable("AccountModule", {
+  id:           text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  slug:         text("slug").notNull().unique(),         // stable identifier (e.g. "attendance")
+  label:        text("label").notNull(),                  // display label (e.g. "Attendance")
+  description:  text("description"),                      // optional admin notes
+  sortOrder:    integer("sortOrder").default(0).notNull(),
+  isActive:     integer("isActive", { mode: "boolean" }).default(true).notNull(),
+  createdAt:    text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:    text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
 // Phase E: courtesy-call history. Append-only log of every call logged for an
 // account. The clientProfiles.lastCourtesyCall column is the cached latest
 // date for fast queries; this table is the source of truth for the history.
