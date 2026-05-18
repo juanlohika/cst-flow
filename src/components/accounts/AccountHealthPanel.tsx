@@ -45,7 +45,6 @@ export default function AccountHealthPanel({ accountId }: Props) {
 
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [regenerating, setRegenerating] = useState<string | null>(null);
 
@@ -63,28 +62,6 @@ export default function AccountHealthPanel({ accountId }: Props) {
   }, [accountId]);
 
   useEffect(() => { load(); }, [load]);
-
-  // Poll briefly after a new submission for the AI rollup status to flip
-  const poll = useCallback(async () => {
-    let attempts = 0;
-    while (attempts < 12) { // up to ~60s
-      await new Promise(r => setTimeout(r, 5000));
-      const res = await fetch(`/api/accounts/${accountId}/assessments`);
-      if (res.ok) {
-        const data = await res.json();
-        const latest = data?.assessments?.[0];
-        setAssessments(data.assessments || []);
-        if (latest && latest.aiRollupStatus !== "pending") return;
-      }
-      attempts++;
-    }
-  }, [accountId]);
-
-  const handleSubmitted = async () => {
-    setShowForm(false);
-    await load();
-    poll();
-  };
 
   const regenerate = async (assId: string) => {
     setRegenerating(assId);
@@ -135,13 +112,13 @@ export default function AccountHealthPanel({ accountId }: Props) {
               {latest.submittedByName ? ` · ${latest.submittedByName}` : ""}
             </span>
           )}
-          <button
-            onClick={() => setShowForm(true)}
+          <a
+            href={`/assessments/${accountId}`}
             className="flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100"
           >
             <Plus className="w-3 h-3" />
             {latest ? "Update" : "Start Assessment"}
-          </button>
+          </a>
         </div>
       </div>
 
@@ -194,14 +171,6 @@ export default function AccountHealthPanel({ accountId }: Props) {
         )}
       </div>
 
-      {showForm && (
-        <AssessmentFormModal
-          accountId={accountId}
-          existing={latest}
-          onClose={() => setShowForm(false)}
-          onSubmitted={handleSubmitted}
-        />
-      )}
     </div>
   );
 }
@@ -385,283 +354,4 @@ function formatDate(iso: string): string {
   } catch {
     return iso;
   }
-}
-
-// ─── Assessment form modal ──────────────────────────────────────────────────
-function AssessmentFormModal({
-  accountId,
-  existing,
-  onClose,
-  onSubmitted,
-}: {
-  accountId: string;
-  existing: Assessment | null;
-  onClose: () => void;
-  onSubmitted: () => void;
-}) {
-  // Pre-fill from latest if it exists (RM is updating)
-  const [satisfaction, setSatisfaction] = useState<number | "">(existing?.satisfaction ?? "");
-  const [ebaDM, setEbaDM] = useState<number | "">(existing?.ebaDecisionMaker ?? "");
-  const [ebaDMNote, setEbaDMNote] = useState<string>(existing?.ebaDecisionMakerNote || "");
-  const [ebaAdmin, setEbaAdmin] = useState<number | "">(existing?.ebaAdmin ?? "");
-  const [ebaAdminNote, setEbaAdminNote] = useState<string>(existing?.ebaAdminNote || "");
-  const [contactChange, setContactChange] = useState<boolean>(existing?.contactChangeRecent ?? false);
-  const [contactChangeNote, setContactChangeNote] = useState<string>(existing?.contactChangeNote || "");
-  const [isTarkieSsot, setIsTarkieSsot] = useState<"" | "yes" | "no">(existing?.isTarkieSsot === true ? "yes" : existing?.isTarkieSsot === false ? "no" : "");
-  const [thirdPartySsot, setThirdPartySsot] = useState<string>(existing?.thirdPartySsot || "");
-  const [v5Readiness, setV5Readiness] = useState<number | "">(existing?.v5Readiness ?? "");
-  const [requestedModules, setRequestedModules] = useState<string>(existing?.requestedModules?.join(", ") || "");
-
-  // Long-text answers — initialize from existing.responsesJson if present
-  const initialResponses = existing?.responsesJson ? safeJson(existing.responsesJson, {}) : {};
-  const [b1, setB1] = useState<string>(initialResponses.b1_overall_state || "");
-  const [b2, setB2] = useState<string>(initialResponses.b2_whats_working || "");
-  const [b3, setB3] = useState<string>(initialResponses.b3_gaps_pain_points || "");
-  const [d3, setD3] = useState<string>(initialResponses.d3_why_not_ssot || "");
-  const [e1, setE1] = useState<string>(initialResponses.e1_open_requests || "");
-  const [e4, setE4] = useState<string>(initialResponses.e4_single_action || "");
-  const [e5, setE5] = useState<string>(initialResponses.e5_other || "");
-
-  const [submitting, setSubmitting] = useState(false);
-
-  const submit = async () => {
-    setSubmitting(true);
-    try {
-      const responses: any = {};
-      if (b1.trim()) responses.b1_overall_state = b1.trim();
-      if (b2.trim()) responses.b2_whats_working = b2.trim();
-      if (b3.trim()) responses.b3_gaps_pain_points = b3.trim();
-      if (d3.trim() && isTarkieSsot === "no") responses.d3_why_not_ssot = d3.trim();
-      if (e1.trim()) responses.e1_open_requests = e1.trim();
-      if (e4.trim()) responses.e4_single_action = e4.trim();
-      if (e5.trim()) responses.e5_other = e5.trim();
-
-      const body: any = {
-        satisfaction: satisfaction || null,
-        ebaDecisionMaker: ebaDM || null,
-        ebaDecisionMakerNote: ebaDMNote.trim() || null,
-        ebaAdmin: ebaAdmin || null,
-        ebaAdminNote: ebaAdminNote.trim() || null,
-        contactChangeRecent: contactChange,
-        contactChangeNote: contactChange ? (contactChangeNote.trim() || null) : null,
-        isTarkieSsot: isTarkieSsot === "yes" ? true : isTarkieSsot === "no" ? false : null,
-        thirdPartySsot: isTarkieSsot === "no" ? (thirdPartySsot.trim() || null) : null,
-        v5Readiness: v5Readiness || null,
-        requestedModules: requestedModules.split(/[,;]/).map(s => s.trim()).filter(Boolean),
-        responses,
-      };
-      const res = await fetch(`/api/accounts/${accountId}/assessments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert(err?.error || "Submit failed");
-      } else {
-        onSubmitted();
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="px-5 py-3 border-b border-slate-100 sticky top-0 bg-white flex items-center gap-2 z-10">
-          <Activity className="w-4 h-4 text-indigo-500" />
-          <h3 className="text-[13px] font-black text-slate-900">Health Assessment</h3>
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">~5 min</span>
-          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-700">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="bg-indigo-50/40 border-b border-indigo-100 px-5 py-2.5">
-          <p className="text-[11px] text-indigo-900">
-            Capture your honest read on this account. The AI rolls this up into a CEO-facing summary on submit — accuracy matters more than length.
-          </p>
-        </div>
-
-        <div className="p-5 space-y-5">
-          {/* Section B — Account Health */}
-          <Section title="Account Health" letter="B" accent="indigo">
-            <LongText label="Overall, how would you describe the current state of this account?" value={b1} onChange={setB1} hint="2-3 sentences. Include both wins and concerns." />
-            <LongText label="What is working well for this client on current Tarkie modules?" value={b2} onChange={setB2} />
-            <LongText label="What gaps or pain points does the client repeatedly raise?" value={b3} onChange={setB3} />
-            <Rating label="Overall satisfaction with Tarkie today" value={satisfaction} onChange={setSatisfaction} hint="1 = very dissatisfied · 5 = champion" />
-          </Section>
-
-          {/* Section C — Relationship Strength */}
-          <Section title="Relationship Strength (EBA)" letter="C" accent="emerald">
-            <p className="text-[10px] text-slate-500 -mt-1 mb-2">
-              How strong is your Executive Business Alignment with the two key contacts?
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
-              <Rating label="EBA — Decision Maker" value={ebaDM} onChange={setEbaDM} hint="The person who signs off on contracts and budget" />
-              <ShortText label="Describe the DM relationship" value={ebaDMNote} onChange={setEbaDMNote} placeholder="In 1-2 sentences" />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
-              <Rating label="EBA — Admin / day-to-day" value={ebaAdmin} onChange={setEbaAdmin} hint="Your primary day-to-day contact" />
-              <ShortText label="Describe the Admin relationship" value={ebaAdminNote} onChange={setEbaAdminNote} placeholder="In 1-2 sentences" />
-            </div>
-            <label className="flex items-start gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100 cursor-pointer hover:border-slate-200">
-              <input type="checkbox" checked={contactChange} onChange={e => setContactChange(e.target.checked)} className="mt-0.5 rounded" />
-              <div>
-                <p className="text-[11px] font-bold text-slate-700">Leadership or admin contact change in the last 6 months?</p>
-                <p className="text-[10px] text-slate-500">Check if a key contact joined/left/changed roles</p>
-              </div>
-            </label>
-            {contactChange && (
-              <ShortText label="What changed?" value={contactChangeNote} onChange={setContactChangeNote} placeholder="e.g. New CFO took over the relationship in March" />
-            )}
-          </Section>
-
-          {/* Section D — SSOT */}
-          <Section title="System of Record" letter="D" accent="amber">
-            <div>
-              <label className="text-[11.5px] font-bold text-slate-800 block mb-1.5">
-                Is Tarkie the Single Source of Truth (SSOT) for this client's field operations data?
-              </label>
-              <p className="text-[10px] text-slate-500 mb-2">
-                SSOT = where their team checks first for the latest field data, not a backup
-              </p>
-              <div className="flex items-center gap-2">
-                <RadioOption checked={isTarkieSsot === "yes"} onChange={() => setIsTarkieSsot("yes")} label="Yes — Tarkie is SSOT" />
-                <RadioOption checked={isTarkieSsot === "no"} onChange={() => setIsTarkieSsot("no")} label="No — third-party tool is SSOT" />
-              </div>
-            </div>
-            {isTarkieSsot === "no" && (
-              <div className="bg-amber-50/40 border border-amber-100 rounded-xl p-3 space-y-3">
-                <ShortText label="Which third-party tool serves as their SSOT?" value={thirdPartySsot} onChange={setThirdPartySsot} placeholder="e.g. Salesforce, Hubspot, internal spreadsheet…" />
-                <LongText label="Why is Tarkie not the SSOT, and what would it take to make it so?" value={d3} onChange={setD3} />
-              </div>
-            )}
-          </Section>
-
-          {/* Section E — Demand & V5 */}
-          <Section title="Demand Signals & V5 Outlook" letter="E" accent="blue">
-            <LongText label="What are the client's most notable open requests right now?" value={e1} onChange={setE1} hint="High-level themes, not a ticket list" />
-            <ShortText label="Which Tarkie capabilities does this client most want to expand into?" value={requestedModules} onChange={setRequestedModules} placeholder="Attendance, Inventory, Audit Forms…" hint="Comma-separated" />
-            <Rating label="How ready is this account for V5 in your judgement?" value={v5Readiness} onChange={setV5Readiness} hint="1 = not now · 5 = ready to migrate" />
-            <LongText label="What single action from Tarkie would most strengthen this account in the next 90 days?" value={e4} onChange={setE4} />
-            <LongText label="Anything else the CEO should know about this account?" value={e5} onChange={setE5} optional />
-          </Section>
-        </div>
-
-        <div className="px-5 py-3 border-t border-slate-100 sticky bottom-0 bg-white flex items-center gap-2">
-          <button onClick={onClose} className="px-3 py-2 rounded-xl border border-slate-200 text-slate-600 text-[11px] font-black uppercase tracking-widest hover:border-rose-300">
-            Cancel
-          </button>
-          <button
-            onClick={submit}
-            disabled={submitting}
-            className="ml-auto flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 text-white text-[11px] font-black uppercase tracking-widest shadow-md disabled:opacity-50"
-          >
-            {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-            Submit Assessment
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Section({ title, letter, accent, children }: { title: string; letter?: string; accent?: "indigo" | "emerald" | "amber" | "blue"; children: React.ReactNode }) {
-  const palette: Record<string, string> = {
-    indigo: "bg-indigo-500",
-    emerald: "bg-emerald-500",
-    amber: "bg-amber-500",
-    blue: "bg-blue-500",
-  };
-  const dotColor = accent ? palette[accent] : "bg-slate-400";
-  return (
-    <div className="space-y-3 pt-1">
-      <div className="flex items-center gap-2 pb-1 border-b border-slate-100">
-        {letter && (
-          <span className={`w-5 h-5 rounded-full ${dotColor} text-white text-[10px] font-black flex items-center justify-center`}>{letter}</span>
-        )}
-        <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-widest">{title}</h4>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function ShortText({ label, value, onChange, placeholder, hint }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; hint?: string }) {
-  return (
-    <div>
-      <label className="text-[11.5px] font-bold text-slate-800 block mb-1">{label}</label>
-      {hint && <p className="text-[10px] text-slate-500 -mt-0.5 mb-1">{hint}</p>}
-      <input
-        type="text"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-[12px] text-slate-800 placeholder:text-slate-300 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-100"
-      />
-    </div>
-  );
-}
-
-function LongText({ label, value, onChange, optional, hint }: { label: string; value: string; onChange: (v: string) => void; optional?: boolean; hint?: string }) {
-  return (
-    <div>
-      <label className="text-[11.5px] font-bold text-slate-800 block mb-1">
-        {label}
-        {optional && <span className="ml-1 text-[9px] font-bold text-slate-400 uppercase tracking-widest">(optional)</span>}
-      </label>
-      {hint && <p className="text-[10px] text-slate-500 -mt-0.5 mb-1">{hint}</p>}
-      <textarea
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        rows={3}
-        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-[12px] text-slate-800 placeholder:text-slate-300 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-100 resize-y leading-relaxed"
-      />
-    </div>
-  );
-}
-
-function Rating({ label, value, onChange, hint }: { label: string; value: number | ""; onChange: (v: number | "") => void; hint?: string }) {
-  return (
-    <div>
-      <label className="text-[11.5px] font-bold text-slate-800 block mb-1">{label}</label>
-      {hint && <p className="text-[10px] text-slate-500 -mt-0.5 mb-1.5">{hint}</p>}
-      <div className="flex items-center gap-1.5">
-        {[1, 2, 3, 4, 5].map(n => (
-          <button
-            key={n}
-            type="button"
-            onClick={() => onChange(value === n ? "" : n)}
-            className={`w-9 h-9 rounded-lg text-[13px] font-black border-2 transition-all ${value === n ? "bg-indigo-500 text-white border-indigo-500 shadow-md scale-110" : "bg-white text-slate-500 border-slate-200 hover:border-indigo-300 hover:text-indigo-700"}`}
-          >
-            {n}
-          </button>
-        ))}
-        {value && (
-          <button type="button" onClick={() => onChange("")} className="ml-1.5 text-[10px] font-bold text-slate-400 hover:text-rose-500 underline">
-            clear
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function RadioOption({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onChange}
-      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-bold ${checked ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-white border-slate-200 text-slate-600 hover:border-indigo-300"}`}
-    >
-      <span className={`w-3 h-3 rounded-full border ${checked ? "bg-indigo-500 border-indigo-500" : "border-slate-300"}`} />
-      {label}
-    </button>
-  );
-}
-
-function safeJson(raw: string, fb: any): any {
-  try { return JSON.parse(raw); } catch { return fb; }
 }

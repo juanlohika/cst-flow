@@ -313,11 +313,13 @@ function composeCampaignEmail(args: {
   const deadline = args.closesAt ? new Date(args.closesAt).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : null;
   const subject = `Action needed: assess ${args.accounts.length} account${args.accounts.length === 1 ? "" : "s"} — ${args.campaignTitle}`;
 
+  // Link each account directly to its dedicated assessment page so the RM
+  // lands on the focused form, not the cluttered account detail view.
   const accountListHtml = args.accounts.map(a =>
-    `<li style="margin: 4px 0;"><a href="${args.appUrl}/accounts/${a.id}" style="color:#4f46e5;text-decoration:none;font-weight:600;">${escapeHtml(a.name)}</a></li>`
+    `<li style="margin: 4px 0;"><a href="${args.appUrl}/assessments/${a.id}" style="color:#4f46e5;text-decoration:none;font-weight:600;">${escapeHtml(a.name)}</a></li>`
   ).join("");
 
-  const accountListText = args.accounts.map(a => `  • ${a.name} — ${args.appUrl}/accounts/${a.id}`).join("\n");
+  const accountListText = args.accounts.map(a => `  • ${a.name} — ${args.appUrl}/assessments/${a.id}`).join("\n");
 
   const html = `
 <!DOCTYPE html>
