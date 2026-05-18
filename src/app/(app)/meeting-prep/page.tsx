@@ -249,31 +249,44 @@ function MeetingPrepContent() {
     setView("form");
   };
 
-  const openEdit = (profile: ClientProfile) => {
+  const openEdit = async (profile: ClientProfile) => {
+    // Always re-fetch the full profile from the server before opening the
+    // edit form. The list endpoint may not include every CRM column, and
+    // even if it does, the data may be stale after another tab edited it.
     setEditingProfile(profile);
-    const p = profile as any;
-    setFormData({
-      companyName: profile.companyName,
-      industry: profile.industry,
-      modulesAvailed: (() => { try { return JSON.parse(profile.modulesAvailed); } catch { return []; } })(),
-      engagementStatus: profile.engagementStatus,
-      primaryContact: profile.primaryContact || "",
-      primaryContactEmail: profile.primaryContactEmail || "",
-      specialConsiderations: profile.specialConsiderations || "",
-      // Phase E
-      clientShortName: p.clientShortName || "",
-      clientLongName: p.clientLongName || "",
-      groupName: p.groupName || "",
-      tier: p.tier || "",
-      groupTier: p.groupTier || "",
-      frequencyOverride: p.frequencyOverride || "",
-      pmEmail: p.pmEmail || "",
-      baEmail: p.baEmail || "",
-      rmEmail: p.rmEmail || "",
-      assignedOnMonth: p.assignedOnMonth || "",
-      lastCourtesyCall: p.lastCourtesyCall || "",
-    });
     setView("form");
+    setFormData(EMPTY_FORM);   // Show blank fields while loading
+    try {
+      const res = await fetch(`/api/meeting-prep/profiles/${profile.id}`);
+      if (!res.ok) throw new Error("Failed to load profile");
+      const fresh = await res.json();
+      // Update the row in our local list with the fresh data
+      setProfiles(prev => prev.map(p => p.id === profile.id ? { ...p, ...fresh, modulesAvailed: typeof fresh.modulesAvailed === "string" ? fresh.modulesAvailed : JSON.stringify(fresh.modulesAvailed || []) } : p));
+      const p = fresh as any;
+      setFormData({
+        companyName: fresh.companyName || "",
+        industry: fresh.industry || "general",
+        modulesAvailed: Array.isArray(fresh.modulesAvailed) ? fresh.modulesAvailed : (() => { try { return JSON.parse(fresh.modulesAvailed || "[]"); } catch { return []; } })(),
+        engagementStatus: fresh.engagementStatus || "confirmed",
+        primaryContact: fresh.primaryContact || "",
+        primaryContactEmail: fresh.primaryContactEmail || "",
+        specialConsiderations: fresh.specialConsiderations || "",
+        // Phase E
+        clientShortName: p.clientShortName || "",
+        clientLongName: p.clientLongName || "",
+        groupName: p.groupName || "",
+        tier: p.tier || "",
+        groupTier: p.groupTier || "",
+        frequencyOverride: p.frequencyOverride || "",
+        pmEmail: p.pmEmail || "",
+        baEmail: p.baEmail || "",
+        rmEmail: p.rmEmail || "",
+        assignedOnMonth: p.assignedOnMonth || "",
+        lastCourtesyCall: p.lastCourtesyCall || "",
+      });
+    } catch (e) {
+      showToast("Couldn't load latest account data. Try again.", "error");
+    }
   };
 
   const handleSaveProfile = async () => {
@@ -312,9 +325,27 @@ function MeetingPrepContent() {
     setSavingProfile(false);
   };
 
-  const openProfile = (profile: ClientProfile) => {
+  const openProfile = async (profile: ClientProfile) => {
+    // Show the detail view immediately with the list row, then refetch
+    // the full profile in the background so the Profile tab has every
+    // CRM field. Otherwise the read-only Profile view would be stuck
+    // showing only the fields the list endpoint returns.
     setSelectedProfile(profile);
     setView("profile-detail");
+    try {
+      const res = await fetch(`/api/meeting-prep/profiles/${profile.id}`);
+      if (res.ok) {
+        const fresh = await res.json();
+        setSelectedProfile(prev => prev && prev.id === profile.id ? {
+          ...prev,
+          ...fresh,
+          modulesAvailed: typeof fresh.modulesAvailed === "string"
+            ? fresh.modulesAvailed
+            : JSON.stringify(fresh.modulesAvailed || []),
+          meetingPrepSessions: prev.meetingPrepSessions,
+        } : prev);
+      }
+    } catch { /* silent — the detail view is at least functional with the row data */ }
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────

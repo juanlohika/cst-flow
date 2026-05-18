@@ -53,6 +53,18 @@ export async function GET(req: Request) {
             primaryContactEmail: clientProfilesTable.primaryContactEmail,
             specialConsiderations: clientProfilesTable.specialConsiderations,
             intelligenceContent: clientProfilesTable.intelligenceContent,
+            // Phase E — CRM fields
+            clientShortName: clientProfilesTable.clientShortName,
+            clientLongName: clientProfilesTable.clientLongName,
+            groupName: clientProfilesTable.groupName,
+            tier: clientProfilesTable.tier,
+            groupTier: clientProfilesTable.groupTier,
+            frequencyOverride: clientProfilesTable.frequencyOverride,
+            pmEmail: clientProfilesTable.pmEmail,
+            baEmail: clientProfilesTable.baEmail,
+            rmEmail: clientProfilesTable.rmEmail,
+            assignedOnMonth: clientProfilesTable.assignedOnMonth,
+            lastCourtesyCall: clientProfilesTable.lastCourtesyCall,
             createdAt: clientProfilesTable.createdAt,
             updatedAt: clientProfilesTable.updatedAt,
           }).from(clientProfilesTable).orderBy(desc(clientProfilesTable.createdAt))
