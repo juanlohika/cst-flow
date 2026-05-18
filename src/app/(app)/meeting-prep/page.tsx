@@ -23,6 +23,7 @@ import BufferModal from "@/components/timeline/BufferModal";
 import ProjectSettingsModal from "@/components/projects/ProjectSettingsModal";
 import ContactsTab from "@/components/accounts/ContactsTab";
 import HealthChip from "@/components/accounts/HealthChip";
+import AssessmentQueueBanner from "@/components/accounts/AssessmentQueueBanner";
 import type { HealthColor } from "@/lib/accounts/health-score";
 import { Share, Mail, Copy, Check, X, Settings } from "lucide-react";
 
@@ -296,6 +297,11 @@ function MeetingPrepContent() {
 
       {view === "list" && (
         <>
+          {/* ── Assessment queue banner — only shows if RM has pending work ── */}
+          <div className="px-4 pt-3">
+            <AssessmentQueueBanner />
+          </div>
+
           {/* ── Tabs Bar (40px) ────────────────────────────────────────────────── */}
           <div className="h-[40px] flex-shrink-0 flex items-center justify-between border-b border-border-default px-4 bg-white">
             <div className="flex items-end h-full gap-4">

@@ -8,6 +8,7 @@ import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import { AccountHub } from "@/app/(app)/meeting-prep/page";
 import AccountAccessControl from "@/components/accounts/AccountAccessControl";
 import AccountHealthPanel from "@/components/accounts/AccountHealthPanel";
+import AssessmentQueueBanner from "@/components/accounts/AssessmentQueueBanner";
 
 export default function AccountDetailPage() {
   const params = useParams();
@@ -75,6 +76,7 @@ export default function AccountDetailPage() {
           the top of the scrollable content area. */}
       <div className="bg-surface-subtle">
         <div className="px-6 pt-6 pb-2 max-w-5xl mx-auto w-full space-y-4">
+          <AssessmentQueueBanner />
           <AccountAccessControl accountId={accountId} companyName={profile.companyName} />
           <AccountHealthPanel accountId={accountId} />
         </div>

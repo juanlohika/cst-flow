@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/db";
-import { accountAssessments, users as usersTable } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { accountAssessments, users as usersTable, assessmentCampaignTargets, assessmentCampaigns } from "@/db/schema";
+import { eq, desc, and, isNull } from "drizzle-orm";
 import { canAccessClient, ensureAccessSchema } from "@/lib/access/accounts";
 import { rollupAssessment } from "@/lib/accounts/assessment-rollup";
 
@@ -104,11 +104,43 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const id = `assess_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
     const now = new Date().toISOString();
 
+    // Auto-bind to a published campaign target if one exists for
+    // (this RM, this account, not yet submitted). Picks the most recent.
+    let resolvedCampaignId: string | null = body?.campaignId || null;
+    let targetIdToMark: string | null = null;
+    if (!resolvedCampaignId) {
+      try {
+        const candidateTargets = await db
+          .select({
+            id: assessmentCampaignTargets.id,
+            campaignId: assessmentCampaignTargets.campaignId,
+            status: assessmentCampaigns.status,
+          })
+          .from(assessmentCampaignTargets)
+          .leftJoin(assessmentCampaigns, eq(assessmentCampaigns.id, assessmentCampaignTargets.campaignId))
+          .where(and(
+            eq(assessmentCampaignTargets.rmUserId, session.user.id),
+            eq(assessmentCampaignTargets.clientProfileId, params.id),
+            isNull(assessmentCampaignTargets.submittedAt),
+          ))
+          .orderBy(desc(assessmentCampaignTargets.createdAt))
+          .limit(1);
+        const target = candidateTargets.find(t => t.status === "published");
+        if (target) {
+          resolvedCampaignId = target.campaignId;
+          targetIdToMark = target.id;
+        }
+      } catch (e) {
+        // Non-fatal — assessment still gets stored without campaign linkage.
+        console.warn("[assessments POST] auto-bind lookup failed:", e);
+      }
+    }
+
     await db.insert(accountAssessments).values({
       id,
       clientProfileId: params.id,
       submittedByUserId: session.user.id,
-      campaignId: body?.campaignId || null,
+      campaignId: resolvedCampaignId,
       status: "submitted",
       satisfaction: clampScore(body?.satisfaction),
       ebaDecisionMaker: clampScore(body?.ebaDecisionMaker),
@@ -126,6 +158,17 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       submittedAt: now,
       updatedAt: now,
     });
+
+    // Mark the campaign target as submitted (if we found one)
+    if (targetIdToMark) {
+      try {
+        await db.update(assessmentCampaignTargets)
+          .set({ submittedAt: now, submittedAssessmentId: id })
+          .where(eq(assessmentCampaignTargets.id, targetIdToMark));
+      } catch (e) {
+        console.warn("[assessments POST] failed to mark campaign target submitted:", e);
+      }
+    }
 
     // Fire-and-forget AI rollup. Don't await — the API returns quickly and
     // the UI polls for status.
