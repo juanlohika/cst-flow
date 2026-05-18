@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Shield, Loader2, Plus, X, Copy, Check, RefreshCw, KeyRound, AlertTriangle, Users, Star,
+  ChevronDown, ChevronUp,
 } from "lucide-react";
 
 // Phase A: internal-role taxonomy from accountMemberships.internalRole
@@ -39,6 +40,9 @@ export default function AccountAccessControl({ accountId, companyName }: Props) 
   const { data: session } = useSession();
   const isAdmin = (session?.user as any)?.role === "admin";
 
+  // Collapsed by default — Access Control is a utility surface; we don't
+  // want it competing with the Health panel for visual attention.
+  const [expanded, setExpanded] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(true);
   const [access, setAccess] = useState<{ clientCode?: string; accessToken?: string } | null>(null);
@@ -205,16 +209,25 @@ export default function AccountAccessControl({ accountId, companyName }: Props) 
 
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-      <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        className={`w-full px-5 py-3 ${expanded ? "border-b border-slate-100" : ""} flex items-center gap-2 hover:bg-slate-50 transition-colors`}
+      >
         <Shield className="w-4 h-4 text-rose-500" />
         <h3 className="text-[11px] font-black text-slate-800 uppercase tracking-widest">
           Access Control
         </h3>
+        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+          · {members.length} member{members.length === 1 ? "" : "s"}
+        </span>
         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-auto">
           Admin only
         </span>
-      </div>
+        {expanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+      </button>
 
+      {expanded && (
       <div className="p-5 space-y-5">
         {/* Client codes section */}
         <section>
@@ -462,6 +475,7 @@ export default function AccountAccessControl({ accountId, companyName }: Props) 
           )}
         </section>
       </div>
+      )}
     </div>
   );
 }

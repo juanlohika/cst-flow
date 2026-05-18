@@ -471,64 +471,82 @@ function AssessmentFormModal({
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-slate-100 sticky top-0 bg-white flex items-center gap-2 z-10">
           <Activity className="w-4 h-4 text-indigo-500" />
-          <h3 className="text-[13px] font-black text-slate-900">Update Health Assessment</h3>
+          <h3 className="text-[13px] font-black text-slate-900">Health Assessment</h3>
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">~5 min</span>
           <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-700">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="p-5 space-y-6">
+        <div className="bg-indigo-50/40 border-b border-indigo-100 px-5 py-2.5">
+          <p className="text-[11px] text-indigo-900">
+            Capture your honest read on this account. The AI rolls this up into a CEO-facing summary on submit — accuracy matters more than length.
+          </p>
+        </div>
+
+        <div className="p-5 space-y-5">
           {/* Section B — Account Health */}
-          <Section title="B. Account Health">
-            <LongText label="B1. Overall, how would you describe the current state of this account?" value={b1} onChange={setB1} />
-            <LongText label="B2. What is working well for this client on current Tarkie modules?" value={b2} onChange={setB2} />
-            <LongText label="B3. What gaps or pain points does the client repeatedly raise?" value={b3} onChange={setB3} />
-            <Rating label="B4. Overall satisfaction with Tarkie today (1-5)" value={satisfaction} onChange={setSatisfaction} />
+          <Section title="Account Health" letter="B" accent="indigo">
+            <LongText label="Overall, how would you describe the current state of this account?" value={b1} onChange={setB1} hint="2-3 sentences. Include both wins and concerns." />
+            <LongText label="What is working well for this client on current Tarkie modules?" value={b2} onChange={setB2} />
+            <LongText label="What gaps or pain points does the client repeatedly raise?" value={b3} onChange={setB3} />
+            <Rating label="Overall satisfaction with Tarkie today" value={satisfaction} onChange={setSatisfaction} hint="1 = very dissatisfied · 5 = champion" />
           </Section>
 
           {/* Section C — Relationship Strength */}
-          <Section title="C. Relationship Strength (EBA)">
-            <Rating label="C1. EBA with the Decision Maker (1-5)" value={ebaDM} onChange={setEbaDM} />
-            <ShortText label="C2. Describe the Decision Maker relationship in 1-2 sentences" value={ebaDMNote} onChange={setEbaDMNote} />
-            <Rating label="C3. EBA with the Admin / day-to-day contact (1-5)" value={ebaAdmin} onChange={setEbaAdmin} />
-            <ShortText label="C4. Describe the Admin relationship in 1-2 sentences" value={ebaAdminNote} onChange={setEbaAdminNote} />
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="contactChange" checked={contactChange} onChange={e => setContactChange(e.target.checked)} className="rounded" />
-              <label htmlFor="contactChange" className="text-[11px] font-bold text-slate-700">
-                C5. Leadership or admin contact change in the last 6 months?
-              </label>
+          <Section title="Relationship Strength (EBA)" letter="C" accent="emerald">
+            <p className="text-[10px] text-slate-500 -mt-1 mb-2">
+              How strong is your Executive Business Alignment with the two key contacts?
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+              <Rating label="EBA — Decision Maker" value={ebaDM} onChange={setEbaDM} hint="The person who signs off on contracts and budget" />
+              <ShortText label="Describe the DM relationship" value={ebaDMNote} onChange={setEbaDMNote} placeholder="In 1-2 sentences" />
             </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+              <Rating label="EBA — Admin / day-to-day" value={ebaAdmin} onChange={setEbaAdmin} hint="Your primary day-to-day contact" />
+              <ShortText label="Describe the Admin relationship" value={ebaAdminNote} onChange={setEbaAdminNote} placeholder="In 1-2 sentences" />
+            </div>
+            <label className="flex items-start gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100 cursor-pointer hover:border-slate-200">
+              <input type="checkbox" checked={contactChange} onChange={e => setContactChange(e.target.checked)} className="mt-0.5 rounded" />
+              <div>
+                <p className="text-[11px] font-bold text-slate-700">Leadership or admin contact change in the last 6 months?</p>
+                <p className="text-[10px] text-slate-500">Check if a key contact joined/left/changed roles</p>
+              </div>
+            </label>
             {contactChange && (
-              <ShortText label="If yes — what changed?" value={contactChangeNote} onChange={setContactChangeNote} />
+              <ShortText label="What changed?" value={contactChangeNote} onChange={setContactChangeNote} placeholder="e.g. New CFO took over the relationship in March" />
             )}
           </Section>
 
           {/* Section D — SSOT */}
-          <Section title="D. System of Record (SSOT)">
+          <Section title="System of Record" letter="D" accent="amber">
             <div>
-              <label className="text-[11px] font-bold text-slate-700 block mb-1.5">
-                D1. Is Tarkie the Single Source of Truth (SSOT) for this client's field operations data?
+              <label className="text-[11.5px] font-bold text-slate-800 block mb-1.5">
+                Is Tarkie the Single Source of Truth (SSOT) for this client's field operations data?
               </label>
-              <div className="flex items-center gap-3">
-                <RadioOption checked={isTarkieSsot === "yes"} onChange={() => setIsTarkieSsot("yes")} label="Yes" />
-                <RadioOption checked={isTarkieSsot === "no"} onChange={() => setIsTarkieSsot("no")} label="No" />
+              <p className="text-[10px] text-slate-500 mb-2">
+                SSOT = where their team checks first for the latest field data, not a backup
+              </p>
+              <div className="flex items-center gap-2">
+                <RadioOption checked={isTarkieSsot === "yes"} onChange={() => setIsTarkieSsot("yes")} label="Yes — Tarkie is SSOT" />
+                <RadioOption checked={isTarkieSsot === "no"} onChange={() => setIsTarkieSsot("no")} label="No — third-party tool is SSOT" />
               </div>
             </div>
             {isTarkieSsot === "no" && (
-              <>
-                <ShortText label="D2. Which third-party tool serves as their SSOT?" value={thirdPartySsot} onChange={setThirdPartySsot} />
-                <LongText label="D3. Why is Tarkie not the SSOT, and what would it take to make it so?" value={d3} onChange={setD3} />
-              </>
+              <div className="bg-amber-50/40 border border-amber-100 rounded-xl p-3 space-y-3">
+                <ShortText label="Which third-party tool serves as their SSOT?" value={thirdPartySsot} onChange={setThirdPartySsot} placeholder="e.g. Salesforce, Hubspot, internal spreadsheet…" />
+                <LongText label="Why is Tarkie not the SSOT, and what would it take to make it so?" value={d3} onChange={setD3} />
+              </div>
             )}
           </Section>
 
           {/* Section E — Demand & V5 */}
-          <Section title="E. Demand Signals & V5 Outlook">
-            <LongText label="E1. What are the client's most notable open requests right now?" value={e1} onChange={setE1} />
-            <ShortText label="E2. Which Tarkie capabilities does this client most want to expand into? (comma-separated)" value={requestedModules} onChange={setRequestedModules} placeholder="Attendance, Inventory, Audit Forms…" />
-            <Rating label="E3. How ready is this account for V5 in your judgement? (1-5)" value={v5Readiness} onChange={setV5Readiness} />
-            <LongText label="E4. What single action from Tarkie would most strengthen this account in the next 90 days?" value={e4} onChange={setE4} />
-            <LongText label="E5. Anything else the CEO should know about this account?" value={e5} onChange={setE5} optional />
+          <Section title="Demand Signals & V5 Outlook" letter="E" accent="blue">
+            <LongText label="What are the client's most notable open requests right now?" value={e1} onChange={setE1} hint="High-level themes, not a ticket list" />
+            <ShortText label="Which Tarkie capabilities does this client most want to expand into?" value={requestedModules} onChange={setRequestedModules} placeholder="Attendance, Inventory, Audit Forms…" hint="Comma-separated" />
+            <Rating label="How ready is this account for V5 in your judgement?" value={v5Readiness} onChange={setV5Readiness} hint="1 = not now · 5 = ready to migrate" />
+            <LongText label="What single action from Tarkie would most strengthen this account in the next 90 days?" value={e4} onChange={setE4} />
+            <LongText label="Anything else the CEO should know about this account?" value={e5} onChange={setE5} optional />
           </Section>
         </div>
 
@@ -550,64 +568,79 @@ function AssessmentFormModal({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, letter, accent, children }: { title: string; letter?: string; accent?: "indigo" | "emerald" | "amber" | "blue"; children: React.ReactNode }) {
+  const palette: Record<string, string> = {
+    indigo: "bg-indigo-500",
+    emerald: "bg-emerald-500",
+    amber: "bg-amber-500",
+    blue: "bg-blue-500",
+  };
+  const dotColor = accent ? palette[accent] : "bg-slate-400";
   return (
-    <div className="space-y-3">
-      <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 border-b border-slate-100 pb-1">{title}</h4>
+    <div className="space-y-3 pt-1">
+      <div className="flex items-center gap-2 pb-1 border-b border-slate-100">
+        {letter && (
+          <span className={`w-5 h-5 rounded-full ${dotColor} text-white text-[10px] font-black flex items-center justify-center`}>{letter}</span>
+        )}
+        <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-widest">{title}</h4>
+      </div>
       {children}
     </div>
   );
 }
 
-function ShortText({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+function ShortText({ label, value, onChange, placeholder, hint }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; hint?: string }) {
   return (
     <div>
-      <label className="text-[11px] font-bold text-slate-700 block mb-1">{label}</label>
+      <label className="text-[11.5px] font-bold text-slate-800 block mb-1">{label}</label>
+      {hint && <p className="text-[10px] text-slate-500 -mt-0.5 mb-1">{hint}</p>}
       <input
         type="text"
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[12px] text-slate-800 placeholder:text-slate-300 outline-none focus:border-indigo-300"
+        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-[12px] text-slate-800 placeholder:text-slate-300 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-100"
       />
     </div>
   );
 }
 
-function LongText({ label, value, onChange, optional }: { label: string; value: string; onChange: (v: string) => void; optional?: boolean }) {
+function LongText({ label, value, onChange, optional, hint }: { label: string; value: string; onChange: (v: string) => void; optional?: boolean; hint?: string }) {
   return (
     <div>
-      <label className="text-[11px] font-bold text-slate-700 block mb-1">
+      <label className="text-[11.5px] font-bold text-slate-800 block mb-1">
         {label}
         {optional && <span className="ml-1 text-[9px] font-bold text-slate-400 uppercase tracking-widest">(optional)</span>}
       </label>
+      {hint && <p className="text-[10px] text-slate-500 -mt-0.5 mb-1">{hint}</p>}
       <textarea
         value={value}
         onChange={e => onChange(e.target.value)}
         rows={3}
-        className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[12px] text-slate-800 placeholder:text-slate-300 outline-none focus:border-indigo-300 resize-y"
+        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-[12px] text-slate-800 placeholder:text-slate-300 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-100 resize-y leading-relaxed"
       />
     </div>
   );
 }
 
-function Rating({ label, value, onChange }: { label: string; value: number | ""; onChange: (v: number | "") => void }) {
+function Rating({ label, value, onChange, hint }: { label: string; value: number | ""; onChange: (v: number | "") => void; hint?: string }) {
   return (
     <div>
-      <label className="text-[11px] font-bold text-slate-700 block mb-1.5">{label}</label>
-      <div className="flex items-center gap-1">
+      <label className="text-[11.5px] font-bold text-slate-800 block mb-1">{label}</label>
+      {hint && <p className="text-[10px] text-slate-500 -mt-0.5 mb-1.5">{hint}</p>}
+      <div className="flex items-center gap-1.5">
         {[1, 2, 3, 4, 5].map(n => (
           <button
             key={n}
             type="button"
             onClick={() => onChange(value === n ? "" : n)}
-            className={`w-8 h-8 rounded-lg text-[12px] font-black border transition-colors ${value === n ? "bg-indigo-500 text-white border-indigo-500" : "bg-white text-slate-500 border-slate-200 hover:border-indigo-300"}`}
+            className={`w-9 h-9 rounded-lg text-[13px] font-black border-2 transition-all ${value === n ? "bg-indigo-500 text-white border-indigo-500 shadow-md scale-110" : "bg-white text-slate-500 border-slate-200 hover:border-indigo-300 hover:text-indigo-700"}`}
           >
             {n}
           </button>
         ))}
         {value && (
-          <button type="button" onClick={() => onChange("")} className="ml-1 text-[10px] font-bold text-slate-400 hover:text-slate-600">
+          <button type="button" onClick={() => onChange("")} className="ml-1.5 text-[10px] font-bold text-slate-400 hover:text-rose-500 underline">
             clear
           </button>
         )}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Key, LayoutTemplate, Users, Calendar, Plus, Trash2, GripVertical, Save, Loader2, ChevronDown, ChevronRight, BookOpen, Pencil, X, RefreshCw, ToggleLeft, ToggleRight, Shield, Sparkles, ExternalLink, Tag, Download, Upload, Building2, AlertCircle, CheckCircle2, Network, KeyRound, UserCircle, Send, Server, Zap, Brain, Lock } from "lucide-react";
+import { Key, LayoutTemplate, Users, Calendar, Plus, Trash2, GripVertical, Save, Loader2, ChevronDown, ChevronRight, BookOpen, Pencil, X, RefreshCw, ToggleLeft, ToggleRight, Shield, Sparkles, ExternalLink, Tag, Download, Upload, Building2, AlertCircle, CheckCircle2, Network, KeyRound, UserCircle, Send, Server, Zap, Brain, Lock, FileText } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 
