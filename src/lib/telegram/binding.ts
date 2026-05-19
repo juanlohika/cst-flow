@@ -76,6 +76,8 @@ export async function createBinding(args: {
   chatTitle: string | null;
   clientProfileId: string;
   boundByUserId: string;
+  /** Phase E.8 — the ClientBindKey this binding was created from. Null in legacy paths. */
+  bindKeyId?: string | null;
 }): Promise<void> {
   const now = new Date().toISOString();
   const id = `bnd_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
@@ -98,6 +100,7 @@ export async function createBinding(args: {
     chatId: String(args.chatId),
     chatTitle: args.chatTitle,
     clientProfileId: args.clientProfileId,
+    bindKeyId: args.bindKeyId || null,
     boundByUserId: args.boundByUserId,
     status: "active",
     boundAt: now,

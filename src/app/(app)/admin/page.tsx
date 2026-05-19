@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Key, LayoutTemplate, Users, Calendar, Plus, Trash2, GripVertical, Save, Loader2, ChevronDown, ChevronRight, BookOpen, Pencil, X, RefreshCw, ToggleLeft, ToggleRight, Shield, Sparkles, ExternalLink, Tag, Download, Upload, Building2, AlertCircle, CheckCircle2, Network, KeyRound, UserCircle, Send, Server, Zap, Brain, Lock, FileText } from "lucide-react";
+import { Key, LayoutTemplate, Users, Calendar, Plus, Trash2, GripVertical, Save, Loader2, ChevronDown, ChevronRight, BookOpen, Pencil, X, RefreshCw, ToggleLeft, ToggleRight, Shield, Sparkles, ExternalLink, Tag, Download, Upload, Building2, AlertCircle, CheckCircle2, Network, KeyRound, UserCircle, Send, Server, Zap, Brain, Lock, FileText, MessageSquare } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 
@@ -988,6 +988,23 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                     </p>
                   </div>
                   <ChevronRight className="w-4 h-4 text-rose-400 shrink-0" />
+                </a>
+
+                {/* Telegram Bindings callout — Phase E.8 */}
+                <a
+                  href="/admin/telegram-bindings"
+                  className="flex items-center gap-3 p-4 rounded-xl border border-sky-200 bg-gradient-to-r from-sky-50 to-blue-50 hover:from-sky-100 hover:to-blue-100 transition-colors"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-sky-500 flex items-center justify-center shrink-0">
+                    <MessageSquare className="w-4 h-4 text-white" strokeWidth={2} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-semibold text-sky-900">Telegram Bindings</p>
+                    <p className="text-[11px] text-sky-700">
+                      One-tap bind links per account. Each account can have multiple labeled keys (e.g. "Internal RM" + "Client-facing"). Scales the GC-per-account workflow.
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-sky-400 shrink-0" />
                 </a>
 
                 {/* Access Codes callout */}

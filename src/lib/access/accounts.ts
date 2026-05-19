@@ -95,6 +95,55 @@ export async function ensureAccessSchema(): Promise<void> {
     // Phase E.7: user-level Account Health module access flag
     try { await db.run(sql`ALTER TABLE User ADD COLUMN canAccessAccountHealth INTEGER DEFAULT 0 NOT NULL`); } catch {}
 
+    // Phase E.8: multiple labeled bind keys per account
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ClientBindKey (
+      id TEXT PRIMARY KEY,
+      clientProfileId TEXT NOT NULL,
+      label TEXT NOT NULL,
+      accessToken TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'active',
+      createdBy TEXT,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      revokedAt TEXT,
+      FOREIGN KEY (clientProfileId) REFERENCES ClientProfile(id) ON DELETE CASCADE
+    )`);
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS ClientBindKey_clientProfile_idx ON ClientBindKey(clientProfileId)`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN bindKeyId TEXT`); } catch {}
+
+    // Backfill: every existing account with an accessToken gets a "Primary" key
+    // mirroring that token. Active bindings get pinned to that key. Idempotent —
+    // we skip accounts that already have at least one key.
+    try {
+      const profiles = await db.run(sql`
+        SELECT cp.id, cp.accessToken
+          FROM ClientProfile cp
+          LEFT JOIN ClientBindKey k ON k.clientProfileId = cp.id
+         WHERE cp.accessToken IS NOT NULL
+           AND k.id IS NULL
+      `) as any;
+      const rows = Array.isArray(profiles?.rows) ? profiles.rows : (Array.isArray(profiles) ? profiles : []);
+      for (const r of rows) {
+        const id = String(r.id ?? r[0] ?? "");
+        const token = String(r.accessToken ?? r[1] ?? "");
+        if (!id || !token) continue;
+        const keyId = `bk_${id}_primary`;
+        await db.run(sql`
+          INSERT OR IGNORE INTO ClientBindKey (id, clientProfileId, label, accessToken, status, createdAt)
+          VALUES (${keyId}, ${id}, 'Primary', ${token}, 'active', datetime('now'))
+        `);
+        // Pin existing active bindings on that token to this key.
+        await db.run(sql`
+          UPDATE ArimaChannelBinding
+             SET bindKeyId = ${keyId}
+           WHERE clientProfileId = ${id}
+             AND bindKeyId IS NULL
+             AND status = 'active'
+        `);
+      }
+    } catch (e) {
+      console.warn("[ensureAccessSchema] ClientBindKey backfill failed:", e);
+    }
+
     // Phase E.3: master modules list
     await db.run(sql`CREATE TABLE IF NOT EXISTS AccountModule (
       id TEXT PRIMARY KEY,

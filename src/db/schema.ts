@@ -857,6 +857,7 @@ export const arimaChannelBindings = sqliteTable("ArimaChannelBinding", {
   chatId:          text("chatId").notNull(),                // Telegram chat ID as string (can be negative for groups)
   chatTitle:       text("chatTitle"),                       // cached group title for display
   clientProfileId: text("clientProfileId").notNull(),       // the bound client account
+  bindKeyId:       text("bindKeyId"),                       // Phase E.8 — which ClientBindKey this binding was created from. Null for pre-keys legacy bindings.
   boundByUserId:   text("boundByUserId"),                   // CST OS user who ran /bind
   status:          text("status").default("active").notNull(), // active | revoked
   agentMode:       text("agentMode").default("arima").notNull(), // arima (RM) | eliana (BA) — which agent leads this room
@@ -865,6 +866,23 @@ export const arimaChannelBindings = sqliteTable("ArimaChannelBinding", {
 }, (table) => ({
   uniqueBinding: { columns: [table.channel, table.chatId], name: "ArimaChannelBinding_unique" },
 }));
+
+// Phase E.8 — Multiple labeled bind keys per account.
+// Each row is a (client × purpose) secret. A GC binds against one specific key,
+// and contact access is granted per binding so contacts invited via one key
+// don't leak into a GC bound by a different key. Legacy code that used
+// clientProfiles.accessToken keeps working — that token becomes the "Primary"
+// key on first migration.
+export const clientBindKeys = sqliteTable("ClientBindKey", {
+  id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  clientProfileId: text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
+  label:           text("label").notNull(),                 // e.g. "Primary", "Internal RM Room", "Client-facing"
+  accessToken:     text("accessToken").notNull().unique(),  // 64-char random hex, used in /bind <token> and deep links
+  status:          text("status").default("active").notNull(), // active | revoked
+  createdBy:       text("createdBy"),                       // CST OS userId who created the key
+  createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  revokedAt:       text("revokedAt"),
+});
 
 // TelegramAccountLink: maps a Telegram user ID to a CST OS user ID.
 // Required before an admin can run sensitive commands (/bind, /unbind) in any group.

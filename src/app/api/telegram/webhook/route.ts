@@ -27,6 +27,7 @@ import {
   createBinding,
   revokeBinding,
 } from "@/lib/telegram/binding";
+import { lookupKeyByToken, findActiveBindingForKey } from "@/lib/telegram/bind-keys";
 import { runArima, shouldArimaRespond, shouldElianaRespond, type MessageAttachment, type MentionRef } from "@/lib/arima/runtime";
 import { loadActiveSuperAdminContext, extendSuperAdminContext } from "@/lib/super-admin/context";
 import { superAdminContext as saCtxTable, superAdminUsers as saUsersTable } from "@/db/schema";
@@ -73,6 +74,81 @@ async function safeReply(token: string, chatId: number, text: string, replyToMes
       console.error("[telegram/webhook] plain reply also failed:", e2?.message);
     }
   }
+}
+
+/**
+ * Phase E.8 — Shared bind handler for both /bind <token> and /start BIND_<token>.
+ * Validates: caller is a Telegram group admin AND a linked CST OS admin AND
+ * the token matches a key whose key is not already bound elsewhere.
+ * On success, creates the binding and posts a confirmation + capabilities msg.
+ */
+async function performKeyAwareBind(args: {
+  botToken: string;
+  chat: { id: number; title?: string };
+  fromTelegramUserId: number;
+  replyToMessageId: number;
+  token: string;
+}): Promise<void> {
+  const { botToken, chat, fromTelegramUserId, replyToMessageId, token } = args;
+  const isGroupAdmin = await isUserGroupAdmin(botToken, chat.id, fromTelegramUserId);
+  if (!isGroupAdmin) {
+    await safeReply(botToken, chat.id, "❌ You must be a Telegram group admin to bind this group.", replyToMessageId);
+    return;
+  }
+  const cst = await resolveCstUserFromTelegram(fromTelegramUserId);
+  if (!cst) {
+    await safeReply(botToken, chat.id, "❌ Your Telegram isn't linked to a CST OS account.\nDM me `/link <code>` first (generate the code in CST OS → Admin → Channels → Telegram → My Account).", replyToMessageId);
+    return;
+  }
+  if (cst.role !== "admin") {
+    await safeReply(botToken, chat.id, "❌ Only CST OS admins can bind groups.", replyToMessageId);
+    return;
+  }
+
+  const resolved = await lookupKeyByToken(token);
+  if (!resolved) {
+    await safeReply(botToken, chat.id, "❌ That bind token isn't valid or has been revoked. Generate a fresh one in CST OS → Admin → Telegram Bindings.", replyToMessageId);
+    return;
+  }
+
+  // Refuse if this key is already actively bound to a DIFFERENT chat. Same chat
+  // re-binding the same key is fine (no-op refresh).
+  const existing = await findActiveBindingForKey(resolved.key.id);
+  if (existing && existing.chatId !== String(chat.id)) {
+    const where = existing.chatTitle ? `"${existing.chatTitle}"` : `chat ${existing.chatId}`;
+    await safeReply(
+      botToken,
+      chat.id,
+      `❌ This bind key is already in use by ${where}.\n\nIn CST OS → Admin → Telegram Bindings you can either:\n• Revoke that key (the old GC will stop receiving messages) and try again, or\n• Add a NEW key for this account ("+ Add Key") and use that link here instead.`,
+      replyToMessageId,
+    );
+    return;
+  }
+
+  await createBinding({
+    chatId: chat.id,
+    chatTitle: chat.title || null,
+    clientProfileId: resolved.account.id,
+    boundByUserId: cst.cstUserId,
+    bindKeyId: resolved.key.id,
+  });
+
+  const codeBit = resolved.account.clientCode ? ` (${resolved.account.clientCode})` : "";
+  await safeReply(
+    botToken,
+    chat.id,
+    [
+      `✅ This group is bound to **${resolved.account.companyName}**${codeBit} via key "**${resolved.key.label}**".`,
+      ``,
+      `I'm **ARIMA**, this account's AI Relationship Manager. I can help with:`,
+      `• Pulling the account profile, meeting history, intelligence notes`,
+      `• Scheduling meetings + capturing action items`,
+      `• Drafting requests / BRDs (switch with \`/mode eliana\`)`,
+      ``,
+      `Just chat normally and @mention me when you want a reply. Type \`/help\` for the full command list.`,
+    ].join("\n"),
+    replyToMessageId,
+  );
 }
 
 /**
@@ -127,6 +203,19 @@ export async function POST(req: Request) {
       const argText = (cmdMatch[2] || "").trim();
 
       if (cmd === "start" || cmd === "help") {
+        // Phase E.8 — Deep-link bind. The CST OS admin generates a
+        // t.me/<bot>?startgroup=BIND_<token> link; when an admin taps it
+        // and picks a group, Telegram fires `/start BIND_<token>` here.
+        if (cmd === "start" && argText.startsWith("BIND_") && isGroup) {
+          await performKeyAwareBind({
+            botToken: config.botToken,
+            chat,
+            fromTelegramUserId: from.id,
+            replyToMessageId: message.message_id,
+            token: argText.slice("BIND_".length),
+          });
+          return NextResponse.json({ ok: true });
+        }
         // Phase 21: /start <consentToken> means a user tapped the permission-grant
         // button. Honor it ONLY in private chat (consent has to come from the
         // target themselves, not by anyone tapping in a group).
@@ -145,9 +234,9 @@ export async function POST(req: Request) {
           // Not a valid consent token → fall through to generic help
         }
         const replyText = isGroup
-          ? "Hi! I'm ARIMA. " + (await getActiveBindingForChat(chat.id))
-              ? "This group is bound and ready. Just chat with me normally."
-              : "This group isn't bound yet. " + HELP_TEXT
+          ? ((await getActiveBindingForChat(chat.id))
+              ? "Hi! I'm ARIMA. This group is bound and ready. Just chat with me normally."
+              : "Hi! I'm ARIMA. This group isn't bound yet. " + HELP_TEXT)
           : HELP_TEXT;
         await safeReply(config.botToken, chat.id, String(replyText), message.message_id);
         return NextResponse.json({ ok: true });
@@ -187,44 +276,16 @@ export async function POST(req: Request) {
           return NextResponse.json({ ok: true });
         }
         if (!argText) {
-          await safeReply(config.botToken, chat.id, "Usage: `/bind <accessToken>`\nGet the token from CST OS → Accounts → [client] → Access Control.", message.message_id);
+          await safeReply(config.botToken, chat.id, "Usage: `/bind <accessToken>`\nGet the token from CST OS → Admin → Telegram Bindings.", message.message_id);
           return NextResponse.json({ ok: true });
         }
-        // 1) Caller must be a Telegram group admin
-        const isGroupAdmin = await isUserGroupAdmin(config.botToken, chat.id, from.id);
-        if (!isGroupAdmin) {
-          await safeReply(config.botToken, chat.id, "❌ You must be a Telegram group admin to run `/bind`.", message.message_id);
-          return NextResponse.json({ ok: true });
-        }
-        // 2) Caller's Telegram account must be linked to a CST OS admin
-        const cst = await resolveCstUserFromTelegram(from.id);
-        if (!cst) {
-          await safeReply(config.botToken, chat.id, "❌ Your Telegram isn't linked to a CST OS account.\nDM me `/link <code>` first (generate the code in CST OS → Admin → Channels → Telegram → My Account).", message.message_id);
-          return NextResponse.json({ ok: true });
-        }
-        if (cst.role !== "admin") {
-          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can bind groups. Ask an admin to do this for you.", message.message_id);
-          return NextResponse.json({ ok: true });
-        }
-        // 3) Token must match a real client
-        const client = await findClientByAccessToken(argText);
-        if (!client) {
-          await safeReply(config.botToken, chat.id, "❌ That access token doesn't match any client account. Double-check it in CST OS.", message.message_id);
-          return NextResponse.json({ ok: true });
-        }
-        // All checks pass → create binding
-        await createBinding({
-          chatId: chat.id,
-          chatTitle: chat.title || null,
-          clientProfileId: client.id,
-          boundByUserId: cst.cstUserId,
+        await performKeyAwareBind({
+          botToken: config.botToken,
+          chat,
+          fromTelegramUserId: from.id,
+          replyToMessageId: message.message_id,
+          token: argText,
         });
-        await safeReply(
-          config.botToken,
-          chat.id,
-          `✅ This group is now bound to **${client.companyName}** (${client.clientCode || "no code"}).\nI'll respond as their AI Relationship Manager. Type a message to start.`,
-          message.message_id
-        );
         return NextResponse.json({ ok: true });
       }
 
