@@ -108,6 +108,9 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
             <ForceLink href="/accounts" className={`left-nav-item ${isActive("/accounts") ? "active" : ""}`}>
               <Building2 size={14} /> <span>Accounts</span>
             </ForceLink>
+            <ForceLink href="/account-health" className={`left-nav-item ${isActive("/account-health") ? "active" : ""}`}>
+              <Heart size={14} /> <span>Account Health</span>
+            </ForceLink>
 
             <div className="mt-1">
               <button 
@@ -219,6 +222,7 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
           <div className="flex flex-col items-center gap-2 pt-1">
             <ForceLink href="/" className={`p-2.5 rounded-xl ${isActive("/") ? "bg-primary text-white" : "text-slate-400 hover:bg-slate-100"}`} title="Explore"><Compass size={20}/></ForceLink>
             <ForceLink href="/accounts" className={`p-2.5 rounded-xl ${isActive("/accounts") ? "bg-primary text-white" : "text-slate-400 hover:bg-slate-100"}`} title="Accounts"><Building2 size={20}/></ForceLink>
+            <ForceLink href="/account-health" className={`p-2.5 rounded-xl ${isActive("/account-health") ? "bg-primary text-white" : "text-slate-400 hover:bg-slate-100"}`} title="Account Health"><Heart size={20}/></ForceLink>
             <button onClick={() => { setIsCollapsed(false); setAiAppsOpen(true); }} className={`p-2.5 rounded-xl ${isInsideAiApp ? "bg-primary text-white" : "text-slate-400 hover:bg-slate-100"}`} title="AI Intelligence"><Sparkles size={20}/></button>
             <ForceLink href="/tasks" className={`p-2.5 rounded-xl ${isActive("/tasks") ? "bg-primary text-white" : "text-slate-400 hover:bg-slate-100"}`} title="Tasks"><Zap size={20}/></ForceLink>
             {user.role === "admin" && (

@@ -36,6 +36,7 @@ export const users = sqliteTable("User", {
   canAccessMeetings:  integer("canAccessMeetings", { mode: "boolean" }).default(false).notNull(),
   canAccessAccounts:  integer("canAccessAccounts", { mode: "boolean" }).default(false).notNull(),
   canAccessSolutions: integer("canAccessSolutions", { mode: "boolean" }).default(false).notNull(),
+  canAccessAccountHealth: integer("canAccessAccountHealth", { mode: "boolean" }).default(false).notNull(),
 
   // Functional role
   profileRole: text("profileRole"),
@@ -279,6 +280,11 @@ export const clientProfiles = sqliteTable("ClientProfile", {
   lastCourtesyCall:      text("lastCourtesyCall"),      // YYYY-MM-DD of the most recent courtesy call (any channel)
   lastF2FVisit:          text("lastF2FVisit"),          // YYYY-MM-DD of the most recent in-person visit (separate target from CC)
   f2fFrequencyOverride:  text("f2fFrequencyOverride"),  // Override the default once-per-year F2F target (label like 'monthly', 'every-6-months', 'yearly')
+  // Phase E.7: lifecycle stage tracking
+  // engagementStatus now uses the canonical set:
+  //   exploration | pending | new-client-implementation | hypercare | maintenance
+  // (Legacy values 'confirmed' / 'exploratory' are normalized at read time.)
+  goLiveDate:            text("goLiveDate"),            // YYYY-MM-DD when the account went live (drives the 90-day hypercare window)
   createdAt:             text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:             text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });

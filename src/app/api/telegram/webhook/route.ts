@@ -324,6 +324,50 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true });
       }
 
+      if (cmd === "ccstatus" || cmd === "maintenanceupdate" || cmd === "maintenance" || cmd === "hypercarecheck") {
+        // Gate: must be in active SA GC + caller on allowlist
+        if (!isGroup) {
+          await safeReply(config.botToken, chat.id, "This command only works in the Super Admin group.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const saCtx = await loadActiveSuperAdminContext();
+        if (!saCtx || saCtx.telegramChatId !== String(chat.id)) {
+          await safeReply(config.botToken, chat.id, "❌ This group isn't the bound Super Admin Context.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const cst = await resolveCstUserFromTelegram(from.id);
+        if (!cst) {
+          await safeReply(config.botToken, chat.id, "❌ Your Telegram account isn't linked to a CST OS account.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const allow = await db.select({ id: saUsersTable.id }).from(saUsersTable).where(eq(saUsersTable.cstUserId, cst.cstUserId)).limit(1);
+        if (!allow[0]) {
+          await safeReply(config.botToken, chat.id, "❌ You aren't on the Super Admin allowlist.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        // Build and post the requested report
+        const { runCcStatus, runMaintenanceUpdate, runHypercareOverdueSweep } = await import("@/lib/arima/proactive-portfolio");
+        try {
+          if (cmd === "ccstatus") {
+            const r = await runCcStatus();
+            if (!r.ok) await safeReply(config.botToken, chat.id, `❌ Couldn't post CC status: ${r.reason || "unknown"}`, message.message_id);
+          } else if (cmd === "hypercarecheck") {
+            const r = await runHypercareOverdueSweep();
+            if (!r.ok && !r.groupPosted) {
+              await safeReply(config.botToken, chat.id, `❌ Hypercare sweep failed: ${r.reason || "unknown"}`, message.message_id);
+            } else if (r.dmStats.length === 0) {
+              await safeReply(config.botToken, chat.id, "✅ No accounts are past the hypercare window.", message.message_id);
+            }
+          } else {
+            const r = await runMaintenanceUpdate();
+            if (!r.ok) await safeReply(config.botToken, chat.id, `❌ Couldn't post maintenance update: ${r.reason || "unknown"}`, message.message_id);
+          }
+        } catch (e: any) {
+          await safeReply(config.botToken, chat.id, `❌ Command failed: ${e?.message || "unknown"}`, message.message_id);
+        }
+        return NextResponse.json({ ok: true });
+      }
+
       if (cmd === "unbind") {
         if (!isGroup) {
           await safeReply(config.botToken, chat.id, "`/unbind` only works in a group.", message.message_id);
@@ -437,9 +481,35 @@ export async function POST(req: Request) {
     // ─── NORMAL CHAT MESSAGE ─────────────────────────────────────────
     if (isGroup) {
       const binding = await getActiveBindingForChat(chat.id);
+      // If no client binding, check whether this is the bound Super Admin GC.
+      // SA GC has its own dedicated routing — portfolio mode (no clientProfileId).
       if (!binding) {
-        // Only send the welcome on the first un-bound message to avoid spam
-        // (skip — Telegram doesn't penalize silence, and we don't want to nag).
+        const saCtx = await loadActiveSuperAdminContext();
+        if (saCtx && saCtx.telegramChatId === String(chat.id)) {
+          // Resolve the sender's CST user id — we need a real userId to own the
+          // arimaConversations row (NOT NULL FK). If the sender isn't linked,
+          // the SA gate inside handleArimaChat will refuse politely anyway.
+          const senderCst = await resolveCstUserFromTelegram(from.id);
+          await handleArimaChat({
+            botToken: config.botToken,
+            chatId: chat.id,
+            chatTitle: chat.title || null,
+            userMessage: text,
+            replyToMessageId: message.message_id,
+            clientProfileId: null,                          // portfolio mode — no client scope
+            bindingId: `sa-${saCtx.id}`,
+            agentMode: "arima",
+            cstUserId: senderCst?.cstUserId || "",          // empty triggers the unauthenticated refusal path
+            senderName: from.first_name || from.username || "Telegram user",
+            senderTelegramId: String(from.id),
+            senderTelegramUsername: from.username || null,
+            channel: "telegram",
+            photos,
+            entities,
+            isGroup: true,
+          });
+          return NextResponse.json({ ok: true });
+        }
         return NextResponse.json({ ok: true, ignored: "unbound-group" });
       }
       await handleArimaChat({
@@ -523,7 +593,7 @@ async function handleArimaChat(args: {
   chatTitle: string | null;
   userMessage: string;
   replyToMessageId: number;
-  clientProfileId: string;
+  clientProfileId: string | null;
   bindingId: string;
   agentMode: "arima" | "eliana";
   cstUserId: string;
@@ -547,15 +617,29 @@ async function handleArimaChat(args: {
     }
   } catch {}
 
+  // Portfolio (SA) mode short-circuit: if there's no client scope AND the
+  // sender isn't a CST OS user, refuse politely and bail (we can't create the
+  // conversation row without a valid userId FK).
+  if (!args.clientProfileId && !args.cstUserId && !senderCstUserId) {
+    try {
+      await tgSendMessage(args.botToken, args.chatId, "Hi — this is a restricted Super Admin group. I can only respond to authorized members. Link your Telegram account first via DM with `/link <code>` and ask an admin to add you to the allowlist.", { replyToMessageId: args.replyToMessageId });
+    } catch {}
+    return;
+  }
+  // In portfolio mode, use the sender as the conversation owner.
+  const conversationOwnerId = args.cstUserId || senderCstUserId || "";
+
   // Parse @mentions out of the message entities + plain text. bindingId scopes
   // portal-contact resolution so a tag in group A can only resolve to contacts
-  // routed to group A.
-  const mentions: MentionRef[] = await resolveTelegramMentions({
-    text: args.userMessage,
-    entities: args.entities,
-    clientProfileId: args.clientProfileId,
-    bindingId: args.bindingId,
-  }).catch(() => [] as MentionRef[]);
+  // routed to group A. Skipped in portfolio (SA) mode — no client scope.
+  const mentions: MentionRef[] = args.clientProfileId
+    ? await resolveTelegramMentions({
+        text: args.userMessage,
+        entities: args.entities,
+        clientProfileId: args.clientProfileId,
+        bindingId: args.bindingId,
+      }).catch(() => [] as MentionRef[])
+    : [];
 
   // Pull the largest photo (Telegram sends multiple sizes); download to bytes.
   const attachments: MessageAttachment[] = [];
@@ -602,7 +686,7 @@ async function handleArimaChat(args: {
     const now = new Date().toISOString();
     await db.insert(arimaConversations).values({
       id: convoId,
-      userId: args.cstUserId,
+      userId: conversationOwnerId,
       clientProfileId: args.clientProfileId,
       channel: args.channel,
       // Use the external key as title so we can find this convo again
@@ -692,7 +776,7 @@ async function handleArimaChat(args: {
   try {
     const result = await runArima({
       conversationId: convoId,
-      userId: args.cstUserId,
+      userId: conversationOwnerId,
       clientProfileId: args.clientProfileId,
       userMessage: args.userMessage || (attachments.length > 0 ? "(photo)" : ""),
       priorContents,
@@ -711,7 +795,10 @@ async function handleArimaChat(args: {
     });
 
     // Notify portal viewers for this client so they refresh and see the message
-    broadcastToClient(args.clientProfileId, { type: "refresh" });
+    // (Skipped in portfolio mode — no per-client portal channel.)
+    if (args.clientProfileId) {
+      broadcastToClient(args.clientProfileId, { type: "refresh" });
+    }
 
     if (!shouldReply) return; // silent listener mode — message stored, no reply
 

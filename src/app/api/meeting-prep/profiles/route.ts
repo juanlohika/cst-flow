@@ -65,6 +65,9 @@ export async function GET(req: Request) {
             rmEmail: clientProfilesTable.rmEmail,
             assignedOnMonth: clientProfilesTable.assignedOnMonth,
             lastCourtesyCall: clientProfilesTable.lastCourtesyCall,
+            lastF2FVisit: clientProfilesTable.lastF2FVisit,
+            f2fFrequencyOverride: clientProfilesTable.f2fFrequencyOverride,
+            goLiveDate: clientProfilesTable.goLiveDate,
             createdAt: clientProfilesTable.createdAt,
             updatedAt: clientProfilesTable.updatedAt,
           }).from(clientProfilesTable).orderBy(desc(clientProfilesTable.createdAt))

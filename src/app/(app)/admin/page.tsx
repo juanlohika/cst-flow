@@ -922,9 +922,9 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                   <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                 </a>
 
-                {/* Executive Summary callout — Phase D */}
+                {/* Account Health shortcut — now a top-level app */}
                 <a
-                  href="/admin/executive-summary"
+                  href="/account-health"
                   className="flex items-center gap-3 p-4 rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50 to-blue-50 hover:from-indigo-100 hover:to-blue-100 transition-colors"
                 >
                   <div className="w-9 h-9 rounded-lg bg-indigo-500 flex items-center justify-center shrink-0">
@@ -933,7 +933,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px] font-semibold text-indigo-900">Account Health · Executive Summary</p>
                     <p className="text-[11px] text-indigo-700">
-                      CEO-facing portfolio view. Red/yellow/green counts, critical accounts, AI-clustered risks & opportunities. Export to PDF.
+                      Now in the main left nav for everyone. Admins see all accounts; RMs see only the accounts they're assigned to.
                     </p>
                   </div>
                   <ChevronRight className="w-4 h-4 text-indigo-400 shrink-0" />

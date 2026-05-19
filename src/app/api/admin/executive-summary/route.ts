@@ -17,13 +17,18 @@ export async function GET(req: Request) {
   try {
     const session = await auth();
     if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Admin only" }, { status: 403 });
+    const isAdmin = (session.user as any).role === "admin";
     await ensureAccessSchema();
 
-    const summary = await buildExecutiveSummary();
+    // Admins → full portfolio. Non-admins → only accounts they have a
+    // membership for (RM, PM, BA, Developer, Other). Empty membership = empty
+    // portfolio with a polite empty state on the UI.
+    const summary = await buildExecutiveSummary({ userId: session.user.id, isAdmin });
 
     const { searchParams } = new URL(req.url);
-    if (searchParams.get("ai") === "1") {
+    // AI clustering only runs for admins — it's a portfolio-wide pass that's
+    // wasted (and noisy) on a single-RM slice.
+    if (isAdmin && searchParams.get("ai") === "1") {
       await clusterThemes(summary);
     }
 

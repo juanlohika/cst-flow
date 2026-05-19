@@ -106,9 +106,25 @@ const MEETING_TYPES = [
 ];
 
 const STATUS_STYLES: Record<string, string> = {
-  confirmed: "bg-[#F0FDF4] text-[#16A34A] border-[#BBF7D0]",
-  pending: "bg-yellow-50 text-yellow-700 border-yellow-200",
-  exploratory: "bg-[#F1F7FF] text-[#2162F9] border-[#BFDBFE]",
+  // Legacy
+  confirmed: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  exploratory: "bg-slate-50 text-slate-600 border-slate-200",
+  // Phase E.7 canonical
+  exploration: "bg-slate-50 text-slate-600 border-slate-200",
+  pending: "bg-amber-50 text-amber-700 border-amber-200",
+  "new-client-implementation": "bg-blue-50 text-blue-700 border-blue-200",
+  hypercare: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  maintenance: "bg-emerald-50 text-emerald-700 border-emerald-200",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  confirmed: "Confirmed",
+  exploratory: "Exploratory",
+  exploration: "Exploration",
+  pending: "Pending",
+  "new-client-implementation": "New Client Implementation",
+  hypercare: "Hypercare",
+  maintenance: "Maintenance",
 };
 
 const PAGE_SIZE = 15;
@@ -117,7 +133,8 @@ const EMPTY_FORM = {
   companyName: "",
   industry: "general",
   modulesAvailed: [] as string[],
-  engagementStatus: "confirmed",
+  engagementStatus: "exploration",
+  goLiveDate: "",
   primaryContact: "",
   primaryContactEmail: "",
   specialConsiderations: "",
@@ -269,7 +286,8 @@ function MeetingPrepContent() {
         companyName: fresh.companyName || "",
         industry: fresh.industry || "general",
         modulesAvailed: Array.isArray(fresh.modulesAvailed) ? fresh.modulesAvailed : (() => { try { return JSON.parse(fresh.modulesAvailed || "[]"); } catch { return []; } })(),
-        engagementStatus: fresh.engagementStatus || "confirmed",
+        engagementStatus: fresh.engagementStatus || "exploration",
+        goLiveDate: (fresh as any).goLiveDate || "",
         primaryContact: fresh.primaryContact || "",
         primaryContactEmail: fresh.primaryContactEmail || "",
         specialConsiderations: fresh.specialConsiderations || "",
@@ -377,19 +395,19 @@ function MeetingPrepContent() {
           </div>
 
           {/* ── Tabs Bar (40px) ────────────────────────────────────────────────── */}
-          <div className="h-[40px] flex-shrink-0 flex items-center justify-between border-b border-border-default px-4 bg-white">
-            <div className="flex items-end h-full gap-4">
-              {(["all", "confirmed", "pending", "exploratory"] as const).map((s) => (
+          <div className="h-[40px] flex-shrink-0 flex items-center justify-between border-b border-border-default px-4 bg-white overflow-x-auto">
+            <div className="flex items-end h-full gap-4 shrink-0">
+              {(["all", "exploration", "pending", "new-client-implementation", "hypercare", "maintenance"] as const).map((s) => (
                 <button
                   key={s}
                   onClick={() => { setFilterStatus(s === "all" ? "" : s); setPage(1); }}
-                  className={`h-full flex items-center px-1 text-[12px] border-b-2 transition-colors relative ${
+                  className={`h-full flex items-center px-1 text-[12px] border-b-2 transition-colors relative whitespace-nowrap ${
                     (s === "all" && !filterStatus) || filterStatus === s
                       ? "border-primary text-primary font-medium"
                       : "border-transparent text-text-secondary hover:text-text-primary font-regular"
                   }`}
                 >
-                  <span className="capitalize">{s}</span>
+                  <span>{s === "all" ? "All" : STATUS_LABEL[s] || s}</span>
                   {(s === "all" && !filterStatus) || filterStatus === s ? (
                     <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-primary" />
                   ) : null}
@@ -584,7 +602,7 @@ function MeetingPrepContent() {
                             </td>
                             <td className="px-3 py-3">
                                <div className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[11px] font-medium ${STATUS_STYLES[profile.engagementStatus] || "bg-slate-50 text-slate-500 border-slate-200"}`}>
-                                 {profile.engagementStatus}
+                                 {STATUS_LABEL[profile.engagementStatus] || profile.engagementStatus}
                                </div>
                             </td>
                             <td className="px-3 py-3">
@@ -676,16 +694,30 @@ function MeetingPrepContent() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[12px] font-medium text-text-primary mb-1.5">Engagement Status</label>
+                  <label className="block text-[12px] font-medium text-text-primary mb-1.5">Lifecycle Status</label>
                   <select
                     value={formData.engagementStatus}
                     onChange={e => setFormData(f => ({ ...f, engagementStatus: e.target.value }))}
                     className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
                   >
-                    <option value="confirmed">Confirmed</option>
-                    <option value="pending">Pending</option>
-                    <option value="exploratory">Exploratory</option>
+                    <option value="exploration">Exploration · pre-contract</option>
+                    <option value="pending">Pending · endorsed, awaiting CST assignment</option>
+                    <option value="new-client-implementation">New Client Implementation · active rollout</option>
+                    <option value="hypercare">Hypercare · first 90 days post-Go-live</option>
+                    <option value="maintenance">Maintenance · steady state</option>
                   </select>
+                  {(formData.engagementStatus === "hypercare" || formData.engagementStatus === "maintenance" || formData.engagementStatus === "new-client-implementation") && (
+                    <div className="mt-2">
+                      <label className="block text-[11px] font-medium text-text-secondary mb-1">Go-live Date <span className="text-[9px] text-text-muted">(required for hypercare)</span></label>
+                      <input
+                        type="date"
+                        value={formData.goLiveDate}
+                        onChange={e => setFormData(f => ({ ...f, goLiveDate: e.target.value }))}
+                        className="w-full px-3 py-2 border border-border-default rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                      <p className="text-[10px] text-text-muted mt-0.5">90-day hypercare clock starts from this date.</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1127,7 +1159,8 @@ export function ProfileTab({ profile, modules }: {
         <Field label="Company Name" value={profile.companyName} highlight />
         {profile.clientLongName && <Field label="Client Long Name" value={profile.clientLongName} />}
         <Field label="Industry" value={profile.industry} />
-        <Field label="Engagement Status" value={profile.engagementStatus} />
+        <Field label="Lifecycle Status" value={STATUS_LABEL[profile.engagementStatus] || profile.engagementStatus} />
+        {profile.goLiveDate && <Field label="Go-live Date" value={new Date(profile.goLiveDate).toLocaleDateString(undefined, { dateStyle: "medium" })} />}
         {friendlyModules.length > 0 && (
           <Field label="Tarkie Modules" value={<div className="flex flex-wrap gap-1">{friendlyModules.map((m, i) => <span key={i} className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[11px] font-medium">{m}</span>)}</div>} />
         )}

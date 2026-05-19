@@ -20,6 +20,7 @@ const ADMIN_ONLY_FIELDS = new Set([
   "engagementStatus",
   "specialConsiderations",
   "f2fFrequencyOverride",
+  "goLiveDate",
 ]);
 
 // Fields any team member with account access can edit.
@@ -115,6 +116,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       lastCourtesyCall,
       lastF2FVisit,
       f2fFrequencyOverride,
+      goLiveDate,
     } = body;
 
     // Reject if any admin-only field is being touched by a non-admin
@@ -150,6 +152,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
         ...(lastCourtesyCall !== undefined && { lastCourtesyCall }),
         ...(lastF2FVisit !== undefined && { lastF2FVisit }),
         ...(f2fFrequencyOverride !== undefined && { f2fFrequencyOverride }),
+        ...(goLiveDate !== undefined && { goLiveDate }),
         updatedAt: new Date().toISOString(),
       } as any)
       .where(eq(clientProfilesTable.id, params.id));

@@ -26,7 +26,21 @@ import { eq, and } from "drizzle-orm";
 export const VALID_INTERNAL_ROLES = ["RM", "PM", "BA", "Developer", "Other"] as const;
 export type InternalRole = (typeof VALID_INTERNAL_ROLES)[number];
 
-export const VALID_ENGAGEMENT_STATUSES = ["confirmed", "pilot", "exploratory", "inactive", "prospect"] as const;
+// Phase E.7: canonical lifecycle statuses. Legacy values still accepted
+// during import (silently normalized at read time elsewhere).
+export const VALID_ENGAGEMENT_STATUSES = [
+  "exploration",
+  "pending",
+  "new-client-implementation",
+  "hypercare",
+  "maintenance",
+  // Legacy — accepted for backward compatibility
+  "confirmed",
+  "pilot",
+  "exploratory",
+  "inactive",
+  "prospect",
+] as const;
 
 export const VALID_TIER_VALUES = ["VIP", "1", "2", "3", "4", "5"] as const;
 export const VALID_FREQUENCIES = ["monthly", "every-2-months", "every-3-months", "quarterly", "every-6-months", "yearly"] as const;
@@ -38,10 +52,11 @@ export interface ParsedAccountRow {
   accountId?: string;
   companyName?: string;
   industry?: string;
-  modulesAvailed?: string;    // raw value, semicolon-separated
+  modulesAvailed?: string;
   engagementStatus?: string;
   primaryContact?: string;
   primaryContactEmail?: string;
+  goLiveDate?: string;
   // Phase E — CRM fields
   clientShortName?: string;
   clientLongName?: string;
@@ -126,6 +141,7 @@ export function parseXlsx(buffer: ArrayBuffer): {
         lastCourtesyCall: stringOrEmpty(r.last_courtesy_call || r.lastCourtesyCall),
         lastF2FVisit: stringOrEmpty(r.last_f2f_visit || r.lastF2FVisit),
         f2fFrequencyOverride: stringOrEmpty(r.f2f_frequency_override || r.f2fFrequencyOverride),
+        goLiveDate: stringOrEmpty(r.go_live_date || r.goLiveDate),
       });
     });
   }
@@ -461,6 +477,7 @@ export async function applyValidated(args: {
             lastCourtesyCall: row.lastCourtesyCall || null,
             lastF2FVisit: row.lastF2FVisit || null,
             f2fFrequencyOverride: row.f2fFrequencyOverride || null,
+            goLiveDate: row.goLiveDate || null,
           } as any);
           resolvedAccountId = newId;
         }
@@ -616,6 +633,7 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
       lastCourtesyCall: clientProfilesTable.lastCourtesyCall,
       lastF2FVisit: clientProfilesTable.lastF2FVisit,
       f2fFrequencyOverride: clientProfilesTable.f2fFrequencyOverride,
+      goLiveDate: clientProfilesTable.goLiveDate,
     })
     .from(clientProfilesTable);
 
@@ -682,6 +700,7 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
       last_courtesy_call: a.lastCourtesyCall || "",
       last_f2f_visit: a.lastF2FVisit || "",
       f2f_frequency_override: a.f2fFrequencyOverride || "",
+      go_live_date: a.goLiveDate || "",
     };
   });
 
@@ -707,6 +726,7 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
       "rm_email", "pm_email", "ba_email",
       "assigned_on_month", "last_courtesy_call",
       "last_f2f_visit", "f2f_frequency_override",
+      "go_live_date",
     ],
   });
   wsAccounts["!cols"] = [
@@ -717,6 +737,7 @@ export async function generateTemplateXlsx(): Promise<Buffer> {
     { wch: 26 }, { wch: 26 }, { wch: 26 },
     { wch: 14 }, { wch: 16 },
     { wch: 14 }, { wch: 18 },
+    { wch: 14 },
   ];
   XLSX.utils.book_append_sheet(wb, wsAccounts, "Accounts");
 
@@ -917,6 +938,7 @@ function buildUpdatePatch(row: ParsedAccountRow): any {
   if (row.lastCourtesyCall !== undefined) patch.lastCourtesyCall = row.lastCourtesyCall || null;
   if (row.lastF2FVisit !== undefined) patch.lastF2FVisit = row.lastF2FVisit || null;
   if (row.f2fFrequencyOverride !== undefined) patch.f2fFrequencyOverride = row.f2fFrequencyOverride || null;
+  if (row.goLiveDate !== undefined) patch.goLiveDate = row.goLiveDate || null;
   return patch;
 }
 

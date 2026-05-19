@@ -90,6 +90,10 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN lastCourtesyCall TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN lastF2FVisit TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN f2fFrequencyOverride TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN goLiveDate TEXT`); } catch {}
+
+    // Phase E.7: user-level Account Health module access flag
+    try { await db.run(sql`ALTER TABLE User ADD COLUMN canAccessAccountHealth INTEGER DEFAULT 0 NOT NULL`); } catch {}
 
     // Phase E.3: master modules list
     await db.run(sql`CREATE TABLE IF NOT EXISTS AccountModule (

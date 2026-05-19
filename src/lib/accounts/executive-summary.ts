@@ -20,6 +20,8 @@ import { desc, eq, inArray, and } from "drizzle-orm";
 import { computeHealth, type HealthResult, type HealthColor } from "./health-score";
 import { getModelForApp, generateWithRetry } from "@/lib/ai";
 import { loadTierFrequencyMap, resolveAccountFrequency, callCompliance, resolveF2FFrequency, f2fCompliance } from "./tier-frequency";
+import { normalizeStatus, hypercareInfo, type LifecycleStatus, type HypercareStatus } from "./lifecycle";
+import { listAccessibleClientIds, type AccessActor } from "@/lib/access/accounts";
 
 export interface AccountSnapshot {
   accountId: string;
@@ -62,6 +64,13 @@ export interface AccountSnapshot {
   f2fFrequencyLabel: string;
   f2fComplianceStatus: "compliant" | "warning" | "overdue" | "unknown";
   daysSinceF2F: number | null;
+  // Lifecycle (Phase E.7)
+  lifecycleStatus: LifecycleStatus;
+  goLiveDate: string | null;
+  hypercareStatus: HypercareStatus;
+  hypercareDaysIn: number | null;
+  hypercareDaysRemaining: number | null;
+  hypercareReason: string;
 }
 
 export interface ColorCounts {
@@ -136,6 +145,10 @@ export interface ExecutiveSummary {
   // Phase E — compliance + breakdowns
   complianceCounts: ComplianceCounts;
   f2fComplianceCounts: ComplianceCounts;
+  // Phase E.7 — lifecycle distribution
+  lifecycleCounts: Record<LifecycleStatus, number>;
+  hypercareOverdueCount: number;
+  hypercareApproachingEndCount: number;
   byTier: TierBreakdownRow[];
   byGroup: GroupBreakdownRow[];
   byRm: RmBreakdownRow[];
@@ -148,12 +161,18 @@ export interface ExecutiveSummary {
   aiClusteringError?: string;
 }
 
-export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
+export async function buildExecutiveSummary(actor?: AccessActor): Promise<ExecutiveSummary> {
   // Load tier-frequency map once (used in compliance calculation)
   const tierMap = await loadTierFrequencyMap();
 
+  // Scope: admins (or no actor — proactive cron jobs) see everything. Non-admins
+  // see only accounts they have a membership for. An RM with no memberships
+  // gets an empty portfolio.
+  const allowedIds = actor && !actor.isAdmin ? await listAccessibleClientIds(actor) : null;
+  const isScoped = allowedIds !== null;
+
   // 1. Load every active account (with CRM fields)
-  const allAccounts = await db.select({
+  const baseSelect = db.select({
     id: clientProfiles.id,
     companyName: clientProfiles.companyName,
     industry: clientProfiles.industry,
@@ -171,7 +190,12 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
     lastCourtesyCall: clientProfiles.lastCourtesyCall,
     lastF2FVisit: clientProfiles.lastF2FVisit,
     f2fFrequencyOverride: clientProfiles.f2fFrequencyOverride,
+    goLiveDate: clientProfiles.goLiveDate,
   }).from(clientProfiles);
+
+  const allAccounts = isScoped
+    ? (allowedIds!.length === 0 ? [] : await baseSelect.where(inArray(clientProfiles.id, allowedIds!)))
+    : await baseSelect;
 
   // 2. Load latest assessment per account (group + take first via ordering)
   const allAssessments = await db.select({
@@ -301,6 +325,12 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
       lastF2FVisit: (account as any).lastF2FVisit || null,
       frequencyDays: f2fFreq.days,
     });
+    // Lifecycle + hypercare
+    const lifecycleStatus = normalizeStatus(account.engagementStatus);
+    const hypercare = hypercareInfo({
+      engagementStatus: account.engagementStatus,
+      goLiveDate: (account as any).goLiveDate || null,
+    });
 
     snapshots.push({
       accountId: account.id,
@@ -342,6 +372,13 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
       f2fFrequencyLabel: f2fFreq.label,
       f2fComplianceStatus: f2fComp.status,
       daysSinceF2F: f2fComp.daysSince,
+      // Lifecycle
+      lifecycleStatus,
+      goLiveDate: (account as any).goLiveDate || null,
+      hypercareStatus: hypercare.status,
+      hypercareDaysIn: hypercare.daysInHypercare,
+      hypercareDaysRemaining: hypercare.daysRemaining,
+      hypercareReason: hypercare.reason,
     });
   }
 
@@ -358,9 +395,21 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
   // Portfolio-level compliance counts (both CC and F2F)
   const complianceCounts: ComplianceCounts = { compliant: 0, warning: 0, overdue: 0, unknown: 0 };
   const f2fComplianceCounts: ComplianceCounts = { compliant: 0, warning: 0, overdue: 0, unknown: 0 };
+  const lifecycleCounts: Record<LifecycleStatus, number> = {
+    "exploration": 0,
+    "pending": 0,
+    "new-client-implementation": 0,
+    "hypercare": 0,
+    "maintenance": 0,
+  };
+  let hypercareOverdueCount = 0;
+  let hypercareApproachingEndCount = 0;
   for (const s of snapshots) {
     complianceCounts[s.complianceStatus]++;
     f2fComplianceCounts[s.f2fComplianceStatus]++;
+    lifecycleCounts[s.lifecycleStatus]++;
+    if (s.hypercareStatus === "overdue") hypercareOverdueCount++;
+    if (s.hypercareStatus === "approaching-end") hypercareApproachingEndCount++;
   }
 
   return {
@@ -388,6 +437,9 @@ export async function buildExecutiveSummary(): Promise<ExecutiveSummary> {
       .slice(0, 10),
     complianceCounts,
     f2fComplianceCounts,
+    lifecycleCounts,
+    hypercareOverdueCount,
+    hypercareApproachingEndCount,
     byTier: buildTierBreakdown(snapshots),
     byGroup: buildGroupBreakdown(snapshots),
     byRm: buildRmBreakdown(snapshots, rmRows),

@@ -113,8 +113,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           if (dbUser) {
             token.id = dbUser.id;
             token.role = dbUser.role || (isAdmin ? "admin" : "user");
+            token.canAccessAccountHealth = !!(dbUser as any).canAccessAccountHealth;
           }
-          
+
           // MASTER OVERRIDE: Whitelist always wins
           if (isAdmin) {
             token.role = "admin";
@@ -129,6 +130,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (session.user && token) {
         session.user.id = token.id;
         session.user.role = token.role;
+        session.user.canAccessAccountHealth = !!token.canAccessAccountHealth;
       }
       return session;
     }
