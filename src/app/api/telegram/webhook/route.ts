@@ -269,6 +269,16 @@ export async function POST(req: Request) {
         await db.update(saCtxTable)
           .set({ telegramChatId: String(chat.id), boundAt: new Date().toISOString() })
           .where(eq(saCtxTable.id, ctx.id));
+
+        // Auto-enable the Super Admin tools so ARIMA can actually answer
+        // portfolio questions in this GC without an extra admin step.
+        try {
+          const { ensureSuperAdminToolsEnabled } = await import("@/lib/arima/tools/registry");
+          await ensureSuperAdminToolsEnabled();
+        } catch (e) {
+          console.warn("[sabind] failed to auto-enable SA tools:", e);
+        }
+
         const expiryStr = new Date(ctx.expiresAt).toLocaleString();
         await safeReply(
           config.botToken,

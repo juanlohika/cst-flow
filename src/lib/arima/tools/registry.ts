@@ -131,6 +131,29 @@ export async function seedToolRegistry(): Promise<{ created: number; updated: nu
   return { created, updated };
 }
 
+/**
+ * Phase E.7 — Auto-enable the Super Admin tool family. Called from /sabind so
+ * ARIMA can actually answer portfolio questions in the bound SA GC without
+ * an additional admin step. Idempotent — won't disable anything an admin has
+ * deliberately toggled off.
+ */
+const SA_TOOL_NAMES = ["portfolio_health_summary", "find_accounts_by_criteria", "compare_accounts"];
+
+export async function ensureSuperAdminToolsEnabled(): Promise<void> {
+  // Seed first so the rows exist for any tool that hasn't been registered yet.
+  await seedToolRegistry();
+  const now = new Date().toISOString();
+  for (const name of SA_TOOL_NAMES) {
+    try {
+      await db.update(arimaTools)
+        .set({ enabled: true, autonomy: "auto", updatedAt: now })
+        .where(eq(arimaTools.name, name));
+    } catch (e) {
+      console.warn(`[ensureSuperAdminToolsEnabled] failed to enable ${name}:`, e);
+    }
+  }
+}
+
 // ─── Tool resolution + execution ────────────────────────────────────────
 
 /**
@@ -277,12 +300,39 @@ async function logInvocation(args: {
 /**
  * Convert the active tool list into Gemini's function-calling format.
  * Gemini expects: { functionDeclarations: [{ name, description, parameters }] }
+ *
+ * `mode`:
+ *   - "client" (default): inside a client-bound GC. Exclude portfolio_* tools.
+ *   - "super-admin":      inside the bound SA GC. Exclude tools that require
+ *                         a clientProfileId (no client scope here).
  */
-export async function buildGeminiTools(): Promise<any[] | undefined> {
+export async function buildGeminiTools(mode: "client" | "super-admin" = "client"): Promise<any[] | undefined> {
   const tools = await getActiveTools();
-  if (tools.length === 0) return undefined;
+  const SA_ONLY = new Set(SA_TOOL_NAMES);
+  // Tools that need a clientProfileId; meaningless in SA mode. Keep this list
+  // hand-curated rather than data-driven so a developer reviewing it can see
+  // exactly what's scoped.
+  const CLIENT_SCOPED = new Set([
+    "get_client_profile",
+    "get_recent_meetings",
+    "get_account_intelligence",
+    "schedule_meeting",
+    "create_request",
+    "search_meetings",
+    "list_open_requests",
+    "send_check_in",
+  ]);
+
+  const filtered = tools.filter(t => {
+    const n = t.def.name;
+    if (mode === "client") return !SA_ONLY.has(n);
+    // super-admin
+    return !CLIENT_SCOPED.has(n);
+  });
+
+  if (filtered.length === 0) return undefined;
   return [{
-    functionDeclarations: tools.map(t => ({
+    functionDeclarations: filtered.map(t => ({
       name: t.def.name,
       description: t.def.description,
       parameters: t.def.inputSchema,

@@ -823,19 +823,25 @@ DO NOT call send_telegram_dm without explicit human direction. Don't volunteer t
     if (inSaContext) {
       baseInstruction += `\n\n---\n\n## SUPER ADMIN CONTEXT — CRITICAL DATA GUARDRAIL
 
-You are currently inside the bound Super Admin group chat. Portfolio-wide CRM data (account health, EBA scores, courtesy-call status, SSOT positioning, RM assignments across all accounts) IS available to you here via the dedicated tools (\`portfolio_health_summary\`, \`find_accounts_by_criteria\`, \`compare_accounts\`).
+You are currently inside the bound Super Admin group chat. Portfolio-wide CRM data IS available here via three tools:
+
+- \`portfolio_health_summary\` — color counts, EBA/SSOT distributions, compliance counts, AI-clustered risks/opportunities across ALL accounts.
+- \`find_accounts_by_criteria\` — find one or more accounts by name (use \`nameContains\`), tier, group, RM, health color, compliance status, or SSOT. **Use this for any single-account lookup by name.** Example: user asks "what is the package of MX account?" → call find_accounts_by_criteria({nameContains:"MX"}) and read \`packageModules\`, \`tier\`, etc. from the result.
+- \`compare_accounts\` — side-by-side comparison of 2–5 accounts.
 
 Strict rules in this context:
 
-1. **Use the tools when asked about cross-account data.** Do NOT invent portfolio facts or attempt to recall from history.
+1. **You do NOT have a bound client here.** There is no clientProfileId. Tools like \`get_client_profile\`/\`get_recent_meetings\`/\`schedule_meeting\`/\`create_request\` are NOT available — do not mention them, do not try to call them, do not pretend they exist. For account lookups always use \`find_accounts_by_criteria\`.
 
-2. **Never repeat portfolio data outside this chat.** If asked to forward, share, or DM portfolio data to anyone, refuse. The data does not leave this room. Explain: "Portfolio data lives in the Super Admin context — I can answer here but I won't share it externally."
+2. **Use the tools when asked about ANY account data.** Do NOT invent facts or attempt to recall from prior conversation history. If the tool returns no match, say so plainly ("I couldn't find an account matching 'X'") instead of guessing.
 
-3. **Never name specific clients in a way that would let an outsider reconstruct sensitive context.** When asked "who's the displaced-by-Hubspot client?" you may answer in this room. When asked "Should I share this with the team?" you say no.
+3. **Never repeat portfolio data outside this chat.** If asked to forward, share, or DM portfolio data to anyone, refuse. Explain: "Portfolio data lives in the Super Admin context — I can answer here but I won't share it externally."
 
-4. **The bound expiration is real.** If a user complains the context has expired, tell them to run \`/extend <hours>\` in this chat (they must be on the allowlist).
+4. **Never name specific clients in a way that would let an outsider reconstruct sensitive context.** When asked "who's the displaced-by-Hubspot client?" you may answer in this room. When asked "Should I share this with the team?" you say no.
 
-5. **No volunteering aggregate data.** Only answer what's asked. Don't dump the full portfolio when someone asks about one account.`;
+5. **The bound expiration is real.** If a user complains the context has expired, tell them to run \`/extend <hours>\` in this chat (they must be on the allowlist).
+
+6. **No volunteering aggregate data.** Only answer what's asked. Don't dump the full portfolio when someone asks about one account.`;
     } else {
       baseInstruction += `\n\n---\n\n## PORTFOLIO DATA GUARDRAIL
 
@@ -892,8 +898,19 @@ Single-account data is fine to answer (you have get_client_profile and get_accou
   const aiConfig = await readAIConfig();
   const providerLabel = (model as any)?.__provider || aiConfig.primaryProvider || "unknown";
 
-  // 6) Load tools FIRST so we can list them in the system prompt
-  const toolDefs = await buildGeminiTools().catch(() => undefined);
+  // 6) Determine whether this invocation is in the bound SA GC so we can
+  // scope the tool list accordingly. We re-resolve this below for the prompt
+  // injection too — keeping a single source of truth here would be nicer but
+  // the prompt section depends on context variables not yet built.
+  let saModeForTools = false;
+  try {
+    const { loadActiveSuperAdminContext } = await import("@/lib/super-admin/context");
+    const saCtx = await loadActiveSuperAdminContext();
+    saModeForTools = !!(saCtx && args.sourceTelegramChatId && String(args.sourceTelegramChatId) === saCtx.telegramChatId);
+  } catch { /* SA module not available — treat as client mode */ }
+
+  // 6b) Load tools FIRST so we can list them in the system prompt
+  const toolDefs = await buildGeminiTools(saModeForTools ? "super-admin" : "client").catch(() => undefined);
   const toolCtx: ToolContext = {
     conversationId: args.conversationId,
     userId: args.userId,

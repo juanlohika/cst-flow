@@ -156,10 +156,11 @@ registerTool({
 registerTool({
   name: "find_accounts_by_criteria",
   category: "external",
-  description: "Find accounts matching CRM criteria from the portfolio. Filters: tier (VIP|1-5), groupName, rmEmail or rmName partial match, healthColor (red|yellow|green|grey), ccCompliance/f2fCompliance status, ssot (tarkie|displaced|unknown). Returns a list of matching accounts with their key fields. ONLY callable in the Super Admin context.",
+  description: "Find accounts matching CRM criteria from the portfolio. Filters: nameContains (partial company / short / long name match — use this for 'what's the tier of MX?'), tier (VIP|1-5), groupName, rmEmail or rmName partial match, healthColor (red|yellow|green|grey), ccCompliance/f2fCompliance status, ssot (tarkie|displaced|unknown). Returns a list of matching accounts with their key fields. ONLY callable in the Super Admin context. Use this tool for any single-account lookup by name when you don't have a clientProfileId.",
   inputSchema: {
     type: "object",
     properties: {
+      nameContains: { type: "string", description: "Partial match against companyName / clientShortName / clientLongName. Case-insensitive." },
       tier: { type: "string" },
       groupName: { type: "string" },
       rmEmailContains: { type: "string", description: "Partial email match for the Primary RM" },
@@ -186,6 +187,14 @@ registerTool({
       const summary = await buildExecutiveSummary();
       let results = summary.accounts;
 
+      if (input?.nameContains) {
+        const needle = String(input.nameContains).toLowerCase();
+        results = results.filter(a =>
+          (a.companyName || "").toLowerCase().includes(needle) ||
+          (a.clientShortName || "").toLowerCase().includes(needle) ||
+          (a.clientLongName || "").toLowerCase().includes(needle)
+        );
+      }
       if (input?.tier) results = results.filter(a => a.tier === input.tier);
       if (input?.groupName) results = results.filter(a => (a.groupName || "").toLowerCase().includes(String(input.groupName).toLowerCase()));
       if (input?.rmEmailContains) results = results.filter(a => (a.primaryRmEmail || a.rmEmail || "").toLowerCase().includes(String(input.rmEmailContains).toLowerCase()));
@@ -207,9 +216,17 @@ registerTool({
         returnedCount: trimmed.length,
         accounts: trimmed.map(a => ({
           name: a.companyName,
+          shortName: a.clientShortName || null,
+          longName: a.clientLongName || null,
           tier: a.tier || null,
           group: a.groupName || null,
           rm: a.primaryRmName || a.rmEmail || null,
+          pm: a.pmEmail || null,
+          ba: a.baEmail || null,
+          lifecycle: a.lifecycleStatus,
+          goLiveDate: a.goLiveDate || null,
+          hypercare: a.hypercareStatus,
+          packageModules: a.packageModules || [],   // modules currently availed (the "package")
           health: a.health.color,
           healthScore: a.health.score,
           ccCompliance: a.complianceStatus,

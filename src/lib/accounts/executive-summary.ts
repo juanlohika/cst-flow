@@ -37,6 +37,8 @@ export interface AccountSnapshot {
   topOpportunities: string[];
   notableRequests: string[];
   requestedModules: string[];
+  /** Modules the account already has (from clientProfiles.modulesAvailed). */
+  packageModules: string[];
   satisfaction: number | null;
   ebaDecisionMaker: number | null;
   ebaAdmin: number | null;
@@ -191,6 +193,7 @@ export async function buildExecutiveSummary(actor?: AccessActor): Promise<Execut
     lastF2FVisit: clientProfiles.lastF2FVisit,
     f2fFrequencyOverride: clientProfiles.f2fFrequencyOverride,
     goLiveDate: clientProfiles.goLiveDate,
+    modulesAvailed: clientProfiles.modulesAvailed,
   }).from(clientProfiles);
 
   const allAccounts = isScoped
@@ -346,6 +349,7 @@ export async function buildExecutiveSummary(actor?: AccessActor): Promise<Execut
       topOpportunities: safeJsonArray(latest?.aiOpportunities),
       notableRequests: safeJsonArray(latest?.notableRequests),
       requestedModules: safeJsonArray(latest?.requestedModules),
+      packageModules: safeJsonArray((account as any).modulesAvailed),
       satisfaction: latest?.satisfaction ?? null,
       ebaDecisionMaker: latest?.ebaDecisionMaker ?? null,
       ebaAdmin: latest?.ebaAdmin ?? null,
