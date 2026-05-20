@@ -7,6 +7,7 @@ import { ensureAccessSchema, canAccessClient } from "@/lib/access/accounts";
 import { renderProposalToPdf } from "@/lib/proposal/render-pdf";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";   // react-dom/server + googleapis need Node, not Edge
 export const maxDuration = 60;
 
 /**

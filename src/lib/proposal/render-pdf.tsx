@@ -15,7 +15,6 @@
  * sticks to table-based + inline-style HTML (no flexbox-only layouts).
  */
 import * as React from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { Readable } from "stream";
 import { loadDriveCtx, ensureAccountFolder, type DriveCtx } from "./drive";
 import ProposalDocument from "@/components/proposal/ProposalDocument";
@@ -32,7 +31,10 @@ export async function renderProposalToPdf(args: {
 }): Promise<{ pdfFileId: string; pdfWebViewLink: string }> {
   const ctx = await loadDriveCtx();
 
-  // 1. React → HTML
+  // 1. React → HTML. react-dom/server can't be a top-level import in Next.js
+  // (the bundler refuses since it can't prove the module never reaches the
+  // client). Dynamic import keeps it strictly server-side.
+  const { renderToStaticMarkup } = await import("react-dom/server");
   const html = wrapHtml(renderToStaticMarkup(<ProposalDocument content={args.content} />));
 
   // 2. Ensure the per-account folder exists
