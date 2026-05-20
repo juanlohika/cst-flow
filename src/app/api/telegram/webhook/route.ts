@@ -53,6 +53,13 @@ const HELP_TEXT = (
   "• `/contacts` — list portal users + team members you can @mention\n" +
   "• `/mode` — see / switch the AI agent for this room (admin only)\n" +
   "• Just chat normally and I'll respond when @arima'd.\n\n" +
+  "In RM team rooms (or the Super Admin GC):\n" +
+  "• `/myaccounts` — list your accounts grouped by health\n" +
+  "• `/redaccounts` — flagged-red accounts only\n" +
+  "• `/overdue` — accounts overdue for CC or F2F\n" +
+  "• `/ccstatus` — courtesy-call compliance snapshot\n" +
+  "• `/maintenanceupdate` — maintenance-status update\n" +
+  "• `/hypercarecheck` — accounts past 90-day hypercare window\n\n" +
   "Private DM with the bot:\n" +
   "• `/link LK-XXXX-YYYY` — link your Telegram account to CST OS (generate the code from CST OS → Admin → Channels → Telegram → My Account)."
 );
@@ -128,27 +135,52 @@ async function performKeyAwareBind(args: {
   await createBinding({
     chatId: chat.id,
     chatTitle: chat.title || null,
-    clientProfileId: resolved.account.id,
+    clientProfileId: resolved.clientProfileId,
     boundByUserId: cst.cstUserId,
     bindKeyId: resolved.key.id,
+    scopeType: resolved.key.scopeType,
+    scopeRef: resolved.key.scopeRef,
   });
 
-  const codeBit = resolved.account.clientCode ? ` (${resolved.account.clientCode})` : "";
-  await safeReply(
-    botToken,
-    chat.id,
-    [
-      `✅ This group is bound to **${resolved.account.companyName}**${codeBit} via key "**${resolved.key.label}**".`,
-      ``,
-      `I'm **ARIMA**, this account's AI Relationship Manager. I can help with:`,
-      `• Pulling the account profile, meeting history, intelligence notes`,
-      `• Scheduling meetings + capturing action items`,
-      `• Drafting requests / BRDs (switch with \`/mode eliana\`)`,
-      ``,
-      `Just chat normally and @mention me when you want a reply. Type \`/help\` for the full command list.`,
-    ].join("\n"),
-    replyToMessageId,
-  );
+  // Scope-aware confirmation message.
+  if (resolved.key.scopeType === "rm-team") {
+    await safeReply(
+      botToken,
+      chat.id,
+      [
+        `✅ This group is bound as **${resolved.key.label}**.`,
+        `_${resolved.display.secondaryLine}_`,
+        ``,
+        `I'm **ARIMA**. I can see ${resolved.display.primaryLine.split("—")[1]?.trim() || "the RM's accounts"} and answer questions about any of them.`,
+        ``,
+        `Try:`,
+        `• \`/myaccounts\` — full list with health colors`,
+        `• \`/redaccounts\` — accounts that need attention`,
+        `• \`/overdue\` — courtesy-call overdue accounts`,
+        `• \`/ccstatus\` — full CC compliance snapshot`,
+        `• \`@arima_tarkie_bot what's the package of MX?\` — natural-language single-account lookup`,
+        ``,
+        `Type \`/help\` for the full command list.`,
+      ].join("\n"),
+      replyToMessageId,
+    );
+  } else {
+    await safeReply(
+      botToken,
+      chat.id,
+      [
+        `✅ This group is bound to **${resolved.display.primaryLine}** via key "**${resolved.key.label}**".`,
+        ``,
+        `I'm **ARIMA**, this account's AI Relationship Manager. I can help with:`,
+        `• Pulling the account profile, meeting history, intelligence notes`,
+        `• Scheduling meetings + capturing action items`,
+        `• Drafting requests / BRDs (switch with \`/mode eliana\`)`,
+        ``,
+        `Just chat normally and @mention me when you want a reply. Type \`/help\` for the full command list.`,
+      ].join("\n"),
+      replyToMessageId,
+    );
+  }
 }
 
 /**
@@ -395,43 +427,56 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true });
       }
 
-      if (cmd === "ccstatus" || cmd === "maintenanceupdate" || cmd === "maintenance" || cmd === "hypercarecheck") {
-        // Gate: must be in active SA GC + caller on allowlist
+      // Phase E.7/E.9 — portfolio snapshot commands.
+      // Works in SA GC (full portfolio) and in any RM team room (auto-scoped to that RM's accounts).
+      const portfolioCommands = new Set([
+        "ccstatus",
+        "maintenanceupdate", "maintenance",
+        "hypercarecheck",
+        "myaccounts", "redaccounts", "overdue",
+      ]);
+      if (portfolioCommands.has(cmd)) {
         if (!isGroup) {
-          await safeReply(config.botToken, chat.id, "This command only works in the Super Admin group.", message.message_id);
+          await safeReply(config.botToken, chat.id, "This command only works in a bound group.", message.message_id);
           return NextResponse.json({ ok: true });
         }
+        // Figure out scope: SA GC vs team room vs anything else
         const saCtx = await loadActiveSuperAdminContext();
-        if (!saCtx || saCtx.telegramChatId !== String(chat.id)) {
-          await safeReply(config.botToken, chat.id, "❌ This group isn't the bound Super Admin Context.", message.message_id);
+        const inSaChat = !!(saCtx && saCtx.telegramChatId === String(chat.id));
+        const binding = inSaChat ? null : await getActiveBindingForChat(chat.id);
+        const inTeamRoom = !!(binding && binding.scopeType === "rm-team" && binding.scopeRef);
+
+        if (!inSaChat && !inTeamRoom) {
+          await safeReply(config.botToken, chat.id, "These commands only work in the Super Admin group or an RM team room.", message.message_id);
           return NextResponse.json({ ok: true });
         }
-        const cst = await resolveCstUserFromTelegram(from.id);
-        if (!cst) {
-          await safeReply(config.botToken, chat.id, "❌ Your Telegram account isn't linked to a CST OS account.", message.message_id);
-          return NextResponse.json({ ok: true });
+        // SA GC: only allowlisted users
+        if (inSaChat) {
+          const cst = await resolveCstUserFromTelegram(from.id);
+          if (!cst) {
+            await safeReply(config.botToken, chat.id, "❌ Your Telegram account isn't linked to a CST OS account.", message.message_id);
+            return NextResponse.json({ ok: true });
+          }
+          const allow = await db.select({ id: saUsersTable.id }).from(saUsersTable).where(eq(saUsersTable.cstUserId, cst.cstUserId)).limit(1);
+          if (!allow[0]) {
+            await safeReply(config.botToken, chat.id, "❌ You aren't on the Super Admin allowlist.", message.message_id);
+            return NextResponse.json({ ok: true });
+          }
         }
-        const allow = await db.select({ id: saUsersTable.id }).from(saUsersTable).where(eq(saUsersTable.cstUserId, cst.cstUserId)).limit(1);
-        if (!allow[0]) {
-          await safeReply(config.botToken, chat.id, "❌ You aren't on the Super Admin allowlist.", message.message_id);
-          return NextResponse.json({ ok: true });
-        }
-        // Build and post the requested report
-        const { runCcStatus, runMaintenanceUpdate, runHypercareOverdueSweep } = await import("@/lib/arima/proactive-portfolio");
+        // Team room: any member of the GC can run these; scope is already enforced by the binding
+
         try {
-          if (cmd === "ccstatus") {
-            const r = await runCcStatus();
-            if (!r.ok) await safeReply(config.botToken, chat.id, `❌ Couldn't post CC status: ${r.reason || "unknown"}`, message.message_id);
-          } else if (cmd === "hypercarecheck") {
-            const r = await runHypercareOverdueSweep();
-            if (!r.ok && !r.groupPosted) {
-              await safeReply(config.botToken, chat.id, `❌ Hypercare sweep failed: ${r.reason || "unknown"}`, message.message_id);
-            } else if (r.dmStats.length === 0) {
-              await safeReply(config.botToken, chat.id, "✅ No accounts are past the hypercare window.", message.message_id);
-            }
-          } else {
-            const r = await runMaintenanceUpdate();
-            if (!r.ok) await safeReply(config.botToken, chat.id, `❌ Couldn't post maintenance update: ${r.reason || "unknown"}`, message.message_id);
+          const rmUserId = inTeamRoom ? (binding!.scopeRef as string) : null;
+          const { handlePortfolioCommand } = await import("@/lib/arima/portfolio-commands");
+          const result = await handlePortfolioCommand({
+            command: cmd,
+            rmUserId,
+            botToken: config.botToken,
+            chatId: chat.id,
+            replyToMessageId: message.message_id,
+          });
+          if (!result.posted && result.errorReason) {
+            await safeReply(config.botToken, chat.id, `❌ ${result.errorReason}`, message.message_id);
           }
         } catch (e: any) {
           await safeReply(config.botToken, chat.id, `❌ Command failed: ${e?.message || "unknown"}`, message.message_id);
@@ -539,6 +584,10 @@ export async function POST(req: Request) {
           await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound yet. Run `/bind <token>` first.", message.message_id);
           return NextResponse.json({ ok: true });
         }
+        if (!current.clientProfileId) {
+          await safeReply(config.botToken, chat.id, "`/contacts` only works in a client-bound group. Team rooms span multiple accounts, so there's no single contact directory.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
         const reply = await buildContactsDirectory(current.id, current.clientProfileId, current.clientName);
         await safeReply(config.botToken, chat.id, reply, message.message_id);
         return NextResponse.json({ ok: true });
@@ -582,6 +631,31 @@ export async function POST(req: Request) {
           return NextResponse.json({ ok: true });
         }
         return NextResponse.json({ ok: true, ignored: "unbound-group" });
+      }
+      // Team-room bindings (rm-team) — clientProfileId is null. Resolve the
+      // sender's cst user id so we have a valid conversation owner FK.
+      if (binding.scopeType === "rm-team") {
+        const senderCst = await resolveCstUserFromTelegram(from.id);
+        await handleArimaChat({
+          botToken: config.botToken,
+          chatId: chat.id,
+          chatTitle: chat.title || null,
+          userMessage: text,
+          replyToMessageId: message.message_id,
+          clientProfileId: null,
+          bindingId: binding.id,
+          agentMode: binding.agentMode,
+          cstUserId: senderCst?.cstUserId || binding.boundByUserId || "",
+          senderName: from.first_name || from.username || "Telegram user",
+          senderTelegramId: String(from.id),
+          senderTelegramUsername: from.username || null,
+          channel: "telegram",
+          photos,
+          entities,
+          isGroup: true,
+          rmTeamUserId: binding.scopeRef,
+        });
+        return NextResponse.json({ ok: true });
       }
       await handleArimaChat({
         botToken: config.botToken,
@@ -675,6 +749,8 @@ async function handleArimaChat(args: {
   photos: any[];
   entities: any[];
   isGroup: boolean;
+  /** Phase E.9 — team-room scope. When set, ARIMA is scoped to this RM's primary accounts. */
+  rmTeamUserId?: string | null;
 }) {
   // Resolve the sender to a CST OS internal user if they've linked their Telegram.
   // Falls back to "external" attribution if no link exists (treats it as a client speaker).
@@ -863,6 +939,9 @@ async function handleArimaChat(args: {
       // and post permission-grant buttons back into the originating group.
       speakerTelegramUserId: args.senderTelegramId,
       sourceTelegramChatId: String(args.chatId),
+      // Phase E.9 — team-room scope. runArima uses this to enable rm-team mode
+      // (auto-filters portfolio tools to the RM's primary accounts).
+      rmTeamUserId: args.rmTeamUserId || null,
     });
 
     // Notify portal viewers for this client so they refresh and see the message

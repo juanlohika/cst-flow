@@ -43,6 +43,11 @@ export interface ToolContext {
   sourceTelegramChatId?: string | null;
   /** Phase 21: which agent persona is active. */
   agentMode?: "arima" | "eliana";
+  /**
+   * Phase E.9 — team-room scope. When set, portfolio tools must filter their
+   * results to this user's primary-membership accounts ONLY.
+   */
+  rmTeamUserId?: string | null;
 }
 
 export interface ToolResult {
@@ -305,13 +310,16 @@ async function logInvocation(args: {
  *   - "client" (default): inside a client-bound GC. Exclude portfolio_* tools.
  *   - "super-admin":      inside the bound SA GC. Exclude tools that require
  *                         a clientProfileId (no client scope here).
+ *   - "rm-team":          inside an RM team-room. Same surface as super-admin
+ *                         (lookup-by-name + compare) but the handlers apply
+ *                         a per-RM filter via ToolContext.rmTeamUserId. We
+ *                         deliberately exclude portfolio_health_summary —
+ *                         a 10-account "portfolio summary" is just /myaccounts.
  */
-export async function buildGeminiTools(mode: "client" | "super-admin" = "client"): Promise<any[] | undefined> {
+export async function buildGeminiTools(mode: "client" | "super-admin" | "rm-team" = "client"): Promise<any[] | undefined> {
   const tools = await getActiveTools();
   const SA_ONLY = new Set(SA_TOOL_NAMES);
-  // Tools that need a clientProfileId; meaningless in SA mode. Keep this list
-  // hand-curated rather than data-driven so a developer reviewing it can see
-  // exactly what's scoped.
+  // Tools that need a clientProfileId; meaningless in SA / team-room mode.
   const CLIENT_SCOPED = new Set([
     "get_client_profile",
     "get_recent_meetings",
@@ -326,6 +334,14 @@ export async function buildGeminiTools(mode: "client" | "super-admin" = "client"
   const filtered = tools.filter(t => {
     const n = t.def.name;
     if (mode === "client") return !SA_ONLY.has(n);
+    if (mode === "rm-team") {
+      if (CLIENT_SCOPED.has(n)) return false;
+      // Hide portfolio_health_summary in team rooms — it's a portfolio-wide
+      // summary, not what an RM needs. find_accounts_by_criteria already
+      // covers their scope when filtered.
+      if (n === "portfolio_health_summary") return false;
+      return true;
+    }
     // super-admin
     return !CLIENT_SCOPED.has(n);
   });

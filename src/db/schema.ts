@@ -856,8 +856,17 @@ export const arimaChannelBindings = sqliteTable("ArimaChannelBinding", {
   channel:         text("channel").notNull(),               // telegram | facebook | whatsapp (future)
   chatId:          text("chatId").notNull(),                // Telegram chat ID as string (can be negative for groups)
   chatTitle:       text("chatTitle"),                       // cached group title for display
-  clientProfileId: text("clientProfileId").notNull(),       // the bound client account
+  // Phase E.9: clientProfileId is now nullable. Team-room (rm-team) bindings
+  // do NOT have a single client — they're scoped to all of an RM's accounts
+  // via memberships at runtime. Existing client bindings keep their value.
+  clientProfileId: text("clientProfileId"),
   bindKeyId:       text("bindKeyId"),                       // Phase E.8 — which ClientBindKey this binding was created from. Null for pre-keys legacy bindings.
+  // Phase E.9 — scope discriminator. "client" (default, legacy) | "rm-team".
+  // Future-proof for "tier", "group", "portfolio".
+  scopeType:       text("scopeType").default("client").notNull(),
+  // Foreign-id for the scope. For "client" rooms this mirrors clientProfileId.
+  // For "rm-team" rooms this is the userId of the RM whose accounts are in scope.
+  scopeRef:        text("scopeRef"),
   boundByUserId:   text("boundByUserId"),                   // CST OS user who ran /bind
   status:          text("status").default("active").notNull(), // active | revoked
   agentMode:       text("agentMode").default("arima").notNull(), // arima (RM) | eliana (BA) — which agent leads this room
@@ -873,10 +882,14 @@ export const arimaChannelBindings = sqliteTable("ArimaChannelBinding", {
 // don't leak into a GC bound by a different key. Legacy code that used
 // clientProfiles.accessToken keeps working — that token becomes the "Primary"
 // key on first migration.
+// Phase E.9 — Same shape now also holds team-room keys (scopeType="rm-team",
+// scopeRef=userId). clientProfileId is null for those rows.
 export const clientBindKeys = sqliteTable("ClientBindKey", {
   id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  clientProfileId: text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
-  label:           text("label").notNull(),                 // e.g. "Primary", "Internal RM Room", "Client-facing"
+  clientProfileId: text("clientProfileId").references(() => clientProfiles.id, { onDelete: "cascade" }),
+  scopeType:       text("scopeType").default("client").notNull(), // "client" | "rm-team"
+  scopeRef:        text("scopeRef"),                              // clientProfileId (client) | userId (rm-team)
+  label:           text("label").notNull(),                 // e.g. "Primary", "Internal RM Room", "Jillian's Team Room"
   accessToken:     text("accessToken").notNull().unique(),  // 64-char random hex, used in /bind <token> and deep links
   status:          text("status").default("active").notNull(), // active | revoked
   createdBy:       text("createdBy"),                       // CST OS userId who created the key

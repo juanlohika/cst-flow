@@ -114,6 +114,13 @@ export interface ArimaRunArgs {
    */
   speakerTelegramUserId?: string | null;
   sourceTelegramChatId?: string | null;
+  /**
+   * Phase E.9 — team-room scope. When set, ARIMA is in "rm-team mode": it can
+   * answer portfolio-style questions but the data set is filtered to this
+   * user's primary-membership accounts (resolved at tool-call time so
+   * reassignments flow through automatically).
+   */
+  rmTeamUserId?: string | null;
 }
 
 export interface ArimaRunResult {
@@ -869,6 +876,31 @@ Strict rules in this context:
 8. **Never use bracket placeholders.** Forbidden patterns: \`[tier]\`, \`[packageModules]\`, \`[insert tool response]\`, \`[name]\`. If you don't have the value, either call the tool to get it or say "I don't have that information for this account."
 
 9. **One-shot tool use.** Issue the tool call FIRST, in the same turn. Don't reply "I'll check…" and then wait to be re-prompted. The user has no way to nudge you to actually execute the call — your first message after a question must already contain the data or the cleanly-stated refusal.`;
+    } else if (args.rmTeamUserId) {
+      // Phase E.9 — RM Team Room mode
+      baseInstruction += `\n\n---\n\n## RM TEAM ROOM — SCOPED RELATIONSHIP MANAGER MODE
+
+You are inside an RM's team room. This room is scoped to the accounts assigned to ONE specific RM (their primary memberships). The tools below already auto-filter to those accounts — you cannot see anything outside that scope, even if the user asks.
+
+Tools available:
+- \`find_accounts_by_criteria\` — look up the RM's account(s) by name (\`nameContains\`), tier, health color, CC/F2F compliance, SSOT. **Use this for any account question, including single-account lookups by name.** Example: "what's the package of MX?" → \`find_accounts_by_criteria({nameContains:"MX"})\` → read \`packageModules\`, \`tier\`, etc.
+- \`compare_accounts\` — side-by-side comparison of 2–5 of the RM's accounts.
+
+Strict rules:
+
+1. **You do NOT have a bound client here.** There is no clientProfileId. Tools like \`get_client_profile\`, \`get_recent_meetings\`, \`schedule_meeting\`, \`create_request\` are NOT available. Do not mention them, do not try to call them. For account questions, always use \`find_accounts_by_criteria\`.
+
+2. **Scope is the RM's accounts only.** If \`find_accounts_by_criteria\` returns zero matches for "MX", it means MX is either not assigned to this RM or doesn't exist. Say plainly: "I don't see an account matching 'MX' in your assigned accounts." Do not speculate, do not check other RMs' accounts.
+
+3. **Tool call format — CRITICAL.** Tools are invoked via the function-calling channel, NOT as text. The user must NEVER see strings like \`find_accounts_by_criteria({...})\`, \`[find_accounts_by_criteria(...)]\`, or \`*find accounts by criteria*\` in your reply. Issue the function call, then write a normal English answer.
+
+4. **Never use bracket placeholders.** Forbidden: \`[tier]\`, \`[packageModules]\`, \`[insert tool response]\`. Call the tool to get the value, or say you don't have it.
+
+5. **One-shot.** Your first reply must already contain the data or the refusal. Do NOT say "I'll check…" and wait.
+
+6. **Conversational tone.** This is the RM's daily room. Be concise and human. "MX is Tier 2, currently in Maintenance. Last CC was Apr 12. Modules: Attendance, Itinerary, BRD Maker." Not a wall of fields.
+
+7. **Slash commands exist for common queries.** Users can run \`/myaccounts\`, \`/redaccounts\`, \`/overdue\`, \`/ccstatus\` for quick portfolio snapshots — don't reinvent those summaries unless asked.`;
     } else {
       baseInstruction += `\n\n---\n\n## PORTFOLIO DATA GUARDRAIL
 
@@ -936,12 +968,11 @@ Single-account data is fine to answer (you have get_client_profile and get_accou
     saModeForTools = !!(saCtx && args.sourceTelegramChatId && String(args.sourceTelegramChatId) === saCtx.telegramChatId);
   } catch { /* SA module not available — treat as client mode */ }
 
-  // 6a) Self-heal: in SA mode, the three portfolio tools must be enabled or
-  // Gemini will write the tool call as plain text (model hallucinates because
-  // it has nothing to call). If a prior /sabind ran before E.7 shipped, the
-  // DB rows are still disabled. Enable them on the fly. Idempotent — won't
-  // touch anything else.
-  if (saModeForTools) {
+  // 6a) Self-heal: in SA mode OR rm-team mode, the portfolio tools must be
+  // enabled or Gemini will write the tool call as plain text (model
+  // hallucinates because it has nothing to call). Idempotent — won't touch
+  // anything else.
+  if (saModeForTools || args.rmTeamUserId) {
     try {
       const { ensureSuperAdminToolsEnabled } = await import("@/lib/arima/tools/registry");
       await ensureSuperAdminToolsEnabled();
@@ -950,8 +981,15 @@ Single-account data is fine to answer (you have get_client_profile and get_accou
     }
   }
 
-  // 6b) Load tools FIRST so we can list them in the system prompt
-  const toolDefs = await buildGeminiTools(saModeForTools ? "super-admin" : "client").catch(() => undefined);
+  // 6b) Load tools FIRST so we can list them in the system prompt.
+  // Phase E.9: rm-team mode shares the SA tool surface but with auto-scoping
+  // applied inside the tool handlers via toolCtx.rmTeamUserId.
+  const rmTeamMode = !!args.rmTeamUserId;
+  const toolMode: "client" | "super-admin" | "rm-team" =
+    saModeForTools ? "super-admin" :
+    rmTeamMode ? "rm-team" :
+    "client";
+  const toolDefs = await buildGeminiTools(toolMode).catch(() => undefined);
   const toolCtx: ToolContext = {
     conversationId: args.conversationId,
     userId: args.userId,
@@ -961,6 +999,7 @@ Single-account data is fine to answer (you have get_client_profile and get_accou
     speakerTelegramUserId: args.speakerTelegramUserId || null,
     speakerName: args.senderName || null,
     sourceTelegramChatId: args.sourceTelegramChatId || null,
+    rmTeamUserId: args.rmTeamUserId || null,
   };
 
   // Tool-aware preamble: many models will silently ignore the `tools` config

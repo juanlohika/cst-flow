@@ -144,6 +144,21 @@ export async function ensureAccessSchema(): Promise<void> {
       console.warn("[ensureAccessSchema] ClientBindKey backfill failed:", e);
     }
 
+    // Phase E.9: scopeType + scopeRef on both ClientBindKey and ArimaChannelBinding.
+    // Team-room rows store scopeType='rm-team' + scopeRef=userId (no clientProfileId).
+    try { await db.run(sql`ALTER TABLE ClientBindKey ADD COLUMN scopeType TEXT NOT NULL DEFAULT 'client'`); } catch {}
+    try { await db.run(sql`ALTER TABLE ClientBindKey ADD COLUMN scopeRef TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN scopeType TEXT NOT NULL DEFAULT 'client'`); } catch {}
+    try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN scopeRef TEXT`); } catch {}
+    // Backfill scopeRef for the existing client rows so the column is queryable
+    // uniformly going forward.
+    try {
+      await db.run(sql`UPDATE ClientBindKey SET scopeRef = clientProfileId WHERE scopeRef IS NULL AND clientProfileId IS NOT NULL`);
+      await db.run(sql`UPDATE ArimaChannelBinding SET scopeRef = clientProfileId WHERE scopeRef IS NULL AND clientProfileId IS NOT NULL`);
+    } catch (e) {
+      console.warn("[ensureAccessSchema] scopeRef backfill failed:", e);
+    }
+
     // Phase E.3: master modules list
     await db.run(sql`CREATE TABLE IF NOT EXISTS AccountModule (
       id TEXT PRIMARY KEY,

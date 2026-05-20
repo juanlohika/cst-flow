@@ -177,14 +177,23 @@ registerTool({
   defaultAutonomy: "auto",
   handler: async (input, ctx) => {
     const { accessInput, cstUserId, telegramUserId, telegramChatId, originalQuestion } = await buildAccessInput(ctx, input?.question);
-    const verdict = await checkSuperAdminAccess(accessInput);
-    if (!verdict.allowed) {
-      return refuseAndLog({ toolName: "find_accounts_by_criteria", question: originalQuestion, verdict, cstUserId, telegramUserId, telegramChatId });
+
+    // Phase E.9 — rm-team mode short-circuits the SA verdict. The binding
+    // itself (created by an admin) is the access decision. Tool results get
+    // filtered to the RM's primary-membership accounts.
+    const rmTeamUserId = ctx.rmTeamUserId || null;
+    if (!rmTeamUserId) {
+      const verdict = await checkSuperAdminAccess(accessInput);
+      if (!verdict.allowed) {
+        return refuseAndLog({ toolName: "find_accounts_by_criteria", question: originalQuestion, verdict, cstUserId, telegramUserId, telegramChatId });
+      }
     }
 
     try {
       const { buildExecutiveSummary } = await import("@/lib/accounts/executive-summary");
-      const summary = await buildExecutiveSummary();
+      const summary = await buildExecutiveSummary(
+        rmTeamUserId ? { userId: rmTeamUserId, isAdmin: false } : undefined,
+      );
       let results = summary.accounts;
 
       if (input?.nameContains) {
@@ -243,13 +252,13 @@ registerTool({
         toolName: "find_accounts_by_criteria",
         question: originalQuestion,
         status: "allowed",
-        reason: verdict.reason,
+        reason: rmTeamUserId ? `rm-team scope: ${rmTeamUserId}` : "super-admin context",
         cstUserId,
         telegramUserId,
         telegramChatId,
         responseSummary: summaryStr,
         responseBytes: JSON.stringify(compactData).length,
-        contextId: verdict.contextId,
+        contextId: null,
       });
 
       return { ok: true, data: compactData, summary: summaryStr };
@@ -280,9 +289,12 @@ registerTool({
   defaultAutonomy: "auto",
   handler: async (input, ctx) => {
     const { accessInput, cstUserId, telegramUserId, telegramChatId, originalQuestion } = await buildAccessInput(ctx, input?.question);
-    const verdict = await checkSuperAdminAccess(accessInput);
-    if (!verdict.allowed) {
-      return refuseAndLog({ toolName: "compare_accounts", question: originalQuestion, verdict, cstUserId, telegramUserId, telegramChatId });
+    const rmTeamUserId = ctx.rmTeamUserId || null;
+    if (!rmTeamUserId) {
+      const verdict = await checkSuperAdminAccess(accessInput);
+      if (!verdict.allowed) {
+        return refuseAndLog({ toolName: "compare_accounts", question: originalQuestion, verdict, cstUserId, telegramUserId, telegramChatId });
+      }
     }
 
     const names: string[] = Array.isArray(input?.accountNames) ? input.accountNames : [];
@@ -292,7 +304,9 @@ registerTool({
 
     try {
       const { buildExecutiveSummary } = await import("@/lib/accounts/executive-summary");
-      const summary = await buildExecutiveSummary();
+      const summary = await buildExecutiveSummary(
+        rmTeamUserId ? { userId: rmTeamUserId, isAdmin: false } : undefined,
+      );
 
       const matched: any[] = [];
       const notFound: string[] = [];
@@ -335,13 +349,13 @@ registerTool({
         toolName: "compare_accounts",
         question: originalQuestion,
         status: "allowed",
-        reason: verdict.reason,
+        reason: rmTeamUserId ? `rm-team scope: ${rmTeamUserId}` : "super-admin context",
         cstUserId,
         telegramUserId,
         telegramChatId,
         responseSummary: summaryStr,
         responseBytes: JSON.stringify(compactData).length,
-        contextId: verdict.contextId,
+        contextId: null,
       });
 
       return { ok: true, data: compactData, summary: summaryStr };

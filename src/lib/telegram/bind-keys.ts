@@ -1,22 +1,33 @@
 /**
- * Phase E.8 — ClientBindKey helpers.
+ * Phase E.8 / E.9 — ClientBindKey helpers.
  *
- * Each account can have N labeled bind keys. A key's accessToken is the secret
- * used in `/bind <token>` and the t.me deep-link payload. Bindings record
- * which key they were created from so contact access can be scoped per-binding.
+ * A bind key is a labeled, scoped secret. Three scope shapes exist today:
+ *
+ *   scopeType="client"     scopeRef=clientProfileId   — bound to ONE account
+ *   scopeType="rm-team"    scopeRef=userId            — bound to ALL accounts the RM is primary on
+ *   (future: tier / group / portfolio)
+ *
+ * accessToken is the 64-char hex secret used in /bind <token> and the t.me
+ * deep-link payload. Bindings record which key authorized them (bindKeyId)
+ * and inherit the scope.
  */
 import { db } from "@/db";
 import {
   clientBindKeys,
   arimaChannelBindings,
   clientProfiles as clientProfilesTable,
+  users as usersTable,
 } from "@/db/schema";
 import { and, eq, desc } from "drizzle-orm";
 import crypto from "crypto";
 
+export type BindScopeType = "client" | "rm-team";
+
 export interface BindKey {
   id: string;
-  clientProfileId: string;
+  clientProfileId: string | null;   // null for team-room keys
+  scopeType: BindScopeType;
+  scopeRef: string | null;          // clientProfileId for client, userId for rm-team
   label: string;
   accessToken: string;
   status: "active" | "revoked";
@@ -38,15 +49,24 @@ function generateToken(): string {
   return crypto.randomBytes(32).toString("hex");
 }
 
-export async function listKeysForAccount(clientProfileId: string): Promise<BindKeyWithBinding[]> {
-  const keys = await db
-    .select()
-    .from(clientBindKeys)
-    .where(eq(clientBindKeys.clientProfileId, clientProfileId))
-    .orderBy(desc(clientBindKeys.createdAt));
+function rowToBindKey(k: any): BindKey {
+  return {
+    id: k.id,
+    clientProfileId: k.clientProfileId ?? null,
+    scopeType: (k.scopeType === "rm-team" ? "rm-team" : "client"),
+    scopeRef: k.scopeRef ?? null,
+    label: k.label,
+    accessToken: k.accessToken,
+    status: (k.status === "revoked" ? "revoked" : "active"),
+    createdBy: k.createdBy ?? null,
+    createdAt: k.createdAt,
+    revokedAt: k.revokedAt ?? null,
+  };
+}
 
+async function attachActiveBinding(keys: BindKey[]): Promise<BindKeyWithBinding[]> {
   const keyIds = keys.map(k => k.id);
-  let bindingByKey = new Map<string, { bindingId: string; chatId: string; chatTitle: string | null; boundAt: string }>();
+  const bindingByKey = new Map<string, { bindingId: string; chatId: string; chatTitle: string | null; boundAt: string }>();
   if (keyIds.length > 0) {
     const bindings = await db
       .select({
@@ -72,18 +92,71 @@ export async function listKeysForAccount(clientProfileId: string): Promise<BindK
       }
     }
   }
+  return keys.map(k => ({ ...k, activeBinding: bindingByKey.get(k.id) || null }));
+}
 
-  return keys.map(k => ({
-    id: k.id,
-    clientProfileId: k.clientProfileId,
-    label: k.label,
-    accessToken: k.accessToken,
-    status: (k.status === "revoked" ? "revoked" : "active") as "active" | "revoked",
-    createdBy: k.createdBy,
-    createdAt: k.createdAt,
-    revokedAt: k.revokedAt,
-    activeBinding: bindingByKey.get(k.id) || null,
-  }));
+export async function listKeysForAccount(clientProfileId: string): Promise<BindKeyWithBinding[]> {
+  const rows = await db
+    .select()
+    .from(clientBindKeys)
+    .where(eq(clientBindKeys.clientProfileId, clientProfileId))
+    .orderBy(desc(clientBindKeys.createdAt));
+  return attachActiveBinding(rows.map(rowToBindKey));
+}
+
+/**
+ * List all rm-team keys (across all RMs). Used by the admin Team Rooms tab.
+ */
+export async function listTeamRoomKeys(): Promise<Array<BindKeyWithBinding & { rmName: string | null; rmEmail: string | null; accountCount: number }>> {
+  const rows = await db
+    .select()
+    .from(clientBindKeys)
+    .where(eq(clientBindKeys.scopeType, "rm-team"))
+    .orderBy(desc(clientBindKeys.createdAt));
+  const keys = rows.map(rowToBindKey);
+  const withBindings = await attachActiveBinding(keys);
+
+  // Enrich with the RM's name + email + their primary account count.
+  const userIds = Array.from(new Set(keys.map(k => k.scopeRef).filter(Boolean) as string[]));
+  if (userIds.length === 0) return withBindings.map(k => ({ ...k, rmName: null, rmEmail: null, accountCount: 0 }));
+
+  const userRows = await db
+    .select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
+    .from(usersTable)
+    .where(inArrayShim(usersTable.id, userIds));
+  const userMap = new Map(userRows.map(u => [u.id, u]));
+
+  // accountCount per user — via primary memberships. Simple per-key lookup
+  // beats a single mega-join here because there are typically few team rooms.
+  const { accountMemberships } = await import("@/db/schema");
+  const counts = new Map<string, number>();
+  for (const uid of userIds) {
+    const rows = await db
+      .select({ id: accountMemberships.id })
+      .from(accountMemberships)
+      .where(and(
+        eq(accountMemberships.userId, uid),
+        eq(accountMemberships.isPrimary, true),
+      ));
+    counts.set(uid, rows.length);
+  }
+
+  return withBindings.map(k => {
+    const u = k.scopeRef ? userMap.get(k.scopeRef) : null;
+    return {
+      ...k,
+      rmName: u?.name ?? null,
+      rmEmail: u?.email ?? null,
+      accountCount: k.scopeRef ? (counts.get(k.scopeRef) || 0) : 0,
+    };
+  });
+}
+
+// drizzle's inArray requires a non-empty list; guard here so callers don't need to.
+import { inArray as dzInArray } from "drizzle-orm";
+function inArrayShim(col: any, vals: string[]) {
+  if (vals.length === 0) return eq(col, "__never_match__");
+  return dzInArray(col, vals);
 }
 
 export async function createBindKey(args: {
@@ -99,6 +172,8 @@ export async function createBindKey(args: {
   await db.insert(clientBindKeys).values({
     id,
     clientProfileId: args.clientProfileId,
+    scopeType: "client",
+    scopeRef: args.clientProfileId,
     label,
     accessToken,
     status: "active",
@@ -108,6 +183,57 @@ export async function createBindKey(args: {
   return {
     id,
     clientProfileId: args.clientProfileId,
+    scopeType: "client",
+    scopeRef: args.clientProfileId,
+    label,
+    accessToken,
+    status: "active",
+    createdBy: args.createdBy || null,
+    createdAt: now,
+    revokedAt: null,
+  };
+}
+
+/**
+ * Phase E.9 — Create a team-room bind key for an RM. ARIMA in the resulting
+ * Telegram GC will be scoped to the RM's primary-membership accounts at
+ * runtime (live scope — reassignments flow through automatically).
+ */
+export async function createTeamRoomBindKey(args: {
+  rmUserId: string;
+  label?: string;
+  createdBy?: string;
+}): Promise<BindKey> {
+  // Validate the user exists and resolve their name for the default label.
+  const u = await db
+    .select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
+    .from(usersTable)
+    .where(eq(usersTable.id, args.rmUserId))
+    .limit(1);
+  if (!u[0]) throw new Error(`User ${args.rmUserId} not found`);
+
+  const firstName = (u[0].name || u[0].email || "Team").split(/\s+/)[0];
+  const label = (args.label || "").trim() || `${firstName}'s Team Room`;
+
+  const id = `bk_team_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+  const accessToken = generateToken();
+  const now = new Date().toISOString();
+  await db.insert(clientBindKeys).values({
+    id,
+    clientProfileId: null,
+    scopeType: "rm-team",
+    scopeRef: args.rmUserId,
+    label,
+    accessToken,
+    status: "active",
+    createdBy: args.createdBy || null,
+    createdAt: now,
+  });
+  return {
+    id,
+    clientProfileId: null,
+    scopeType: "rm-team",
+    scopeRef: args.rmUserId,
     label,
     accessToken,
     status: "active",
@@ -140,17 +266,23 @@ export async function regenerateBindKey(keyId: string): Promise<string> {
 }
 
 /**
- * Look up a key by its accessToken. Returns the key + the parent account
- * (companyName, code) for use in the bind handlers.
- *
- * NOTE: also matches the legacy clientProfiles.accessToken (the pre-Phase-E.8
- * single-token-per-account secret) so `/bind <legacyToken>` keeps working
- * forever. In that case we resolve to the account's "Primary" key.
+ * Look up a key by its accessToken. Returns the key + a display object for
+ * the bind handler ("Account: MX" for client keys, "RM: Jillian (10 accounts)"
+ * for team-room keys). Also matches the legacy clientProfiles.accessToken
+ * (the pre-Phase-E.8 single-token-per-account secret) so /bind <legacyToken>
+ * keeps working forever.
  */
-export async function lookupKeyByToken(accessToken: string): Promise<{
+export interface ResolvedBindKey {
   key: BindKey;
-  account: { id: string; companyName: string; clientCode: string | null };
-} | null> {
+  display: {
+    primaryLine: string;   // e.g. "MX (MX-001)" or "Jillian's Team Room — 10 accounts"
+    secondaryLine: string; // e.g. "Tier 2 · RM: Jillian" or "RM: Jillian Mercado"
+  };
+  /** Client keys: the account id. Team-room keys: null. */
+  clientProfileId: string | null;
+}
+
+export async function lookupKeyByToken(accessToken: string): Promise<ResolvedBindKey | null> {
   const token = (accessToken || "").trim();
   if (!token || token.length < 16) return null;
 
@@ -164,31 +296,12 @@ export async function lookupKeyByToken(accessToken: string): Promise<{
     ))
     .limit(1);
   if (directRows[0]) {
-    const k = directRows[0];
-    const acct = await db
-      .select({ id: clientProfilesTable.id, companyName: clientProfilesTable.companyName, clientCode: clientProfilesTable.clientCode })
-      .from(clientProfilesTable)
-      .where(eq(clientProfilesTable.id, k.clientProfileId))
-      .limit(1);
-    if (!acct[0]) return null;
-    return {
-      key: {
-        id: k.id,
-        clientProfileId: k.clientProfileId,
-        label: k.label,
-        accessToken: k.accessToken,
-        status: (k.status === "revoked" ? "revoked" : "active") as "active" | "revoked",
-        createdBy: k.createdBy,
-        createdAt: k.createdAt,
-        revokedAt: k.revokedAt,
-      },
-      account: { id: acct[0].id, companyName: acct[0].companyName, clientCode: acct[0].clientCode },
-    };
+    return resolveKeyDisplay(rowToBindKey(directRows[0]));
   }
 
   // 2) Legacy fallback — match on clientProfiles.accessToken and route through Primary key.
   const legacy = await db
-    .select({ id: clientProfilesTable.id, companyName: clientProfilesTable.companyName, clientCode: clientProfilesTable.clientCode })
+    .select({ id: clientProfilesTable.id })
     .from(clientProfilesTable)
     .where(eq(clientProfilesTable.accessToken, token))
     .limit(1);
@@ -204,20 +317,58 @@ export async function lookupKeyByToken(accessToken: string): Promise<{
     .orderBy(clientBindKeys.createdAt)
     .limit(1);
   if (!primaryRows[0]) return null;
+  return resolveKeyDisplay(rowToBindKey(primaryRows[0]));
+}
 
-  const k = primaryRows[0];
+async function resolveKeyDisplay(key: BindKey): Promise<ResolvedBindKey> {
+  if (key.scopeType === "client") {
+    const acct = key.scopeRef
+      ? await db
+          .select({ id: clientProfilesTable.id, companyName: clientProfilesTable.companyName, clientCode: clientProfilesTable.clientCode, tier: clientProfilesTable.tier })
+          .from(clientProfilesTable)
+          .where(eq(clientProfilesTable.id, key.scopeRef))
+          .limit(1)
+      : [];
+    if (!acct[0]) {
+      return {
+        key,
+        display: { primaryLine: "Unknown account", secondaryLine: "" },
+        clientProfileId: key.scopeRef,
+      };
+    }
+    return {
+      key,
+      display: {
+        primaryLine: `${acct[0].companyName}${acct[0].clientCode ? ` (${acct[0].clientCode})` : ""}`,
+        secondaryLine: acct[0].tier ? `Tier ${acct[0].tier}` : "",
+      },
+      clientProfileId: acct[0].id,
+    };
+  }
+
+  // rm-team
+  const rmId = key.scopeRef!;
+  const u = await db
+    .select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
+    .from(usersTable)
+    .where(eq(usersTable.id, rmId))
+    .limit(1);
+  const { accountMemberships } = await import("@/db/schema");
+  const memberships = await db
+    .select({ id: accountMemberships.id })
+    .from(accountMemberships)
+    .where(and(
+      eq(accountMemberships.userId, rmId),
+      eq(accountMemberships.isPrimary, true),
+    ));
+  const rmName = u[0]?.name || u[0]?.email || "Unknown RM";
   return {
-    key: {
-      id: k.id,
-      clientProfileId: k.clientProfileId,
-      label: k.label,
-      accessToken: k.accessToken,
-      status: (k.status === "revoked" ? "revoked" : "active") as "active" | "revoked",
-      createdBy: k.createdBy,
-      createdAt: k.createdAt,
-      revokedAt: k.revokedAt,
+    key,
+    display: {
+      primaryLine: `${key.label} — ${memberships.length} account${memberships.length === 1 ? "" : "s"}`,
+      secondaryLine: `RM: ${rmName}`,
     },
-    account: { id: legacy[0].id, companyName: legacy[0].companyName, clientCode: legacy[0].clientCode },
+    clientProfileId: null,
   };
 }
 
@@ -235,4 +386,20 @@ export async function findActiveBindingForKey(keyId: string): Promise<{ chatId: 
     ))
     .limit(1);
   return rows[0] || null;
+}
+
+/**
+ * Resolve the current account list for a team-room scope. Live — re-evaluated
+ * every time. Returns the userId's primary-membership clientProfileIds.
+ */
+export async function listAccountsForRmTeam(rmUserId: string): Promise<string[]> {
+  const { accountMemberships } = await import("@/db/schema");
+  const rows = await db
+    .select({ clientProfileId: accountMemberships.clientProfileId })
+    .from(accountMemberships)
+    .where(and(
+      eq(accountMemberships.userId, rmUserId),
+      eq(accountMemberships.isPrimary, true),
+    ));
+  return rows.map(r => r.clientProfileId);
 }

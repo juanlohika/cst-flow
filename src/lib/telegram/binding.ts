@@ -9,13 +9,18 @@ export interface BindingInfo {
   id: string;
   chatId: string;
   chatTitle: string | null;
-  clientProfileId: string;
+  /** Null for team-room (rm-team) bindings — they're not tied to a single client. */
+  clientProfileId: string | null;
   clientName: string;
   clientCode: string | null;
   status: string;
   boundAt: string;
   /** Phase 20: which agent leads this room — "arima" (RM) or "eliana" (BA). Defaults to arima. */
   agentMode: "arima" | "eliana";
+  /** Phase E.9 — scope shape: "client" (default, legacy) | "rm-team". */
+  scopeType: "client" | "rm-team";
+  /** clientProfileId for "client" rooms; userId for "rm-team" rooms. */
+  scopeRef: string | null;
 }
 
 export async function getActiveBindingForChat(chatId: number | string): Promise<BindingInfo | null> {
@@ -28,6 +33,8 @@ export async function getActiveBindingForChat(chatId: number | string): Promise<
       status: arimaChannelBindings.status,
       boundAt: arimaChannelBindings.boundAt,
       agentMode: arimaChannelBindings.agentMode,
+      scopeType: arimaChannelBindings.scopeType,
+      scopeRef: arimaChannelBindings.scopeRef,
       clientName: clientProfilesTable.companyName,
       clientCode: clientProfilesTable.clientCode,
     })
@@ -54,6 +61,8 @@ export async function getActiveBindingForChat(chatId: number | string): Promise<
     status: r.status,
     boundAt: r.boundAt,
     agentMode: ((r as any).agentMode === "eliana" ? "eliana" : "arima"),
+    scopeType: ((r as any).scopeType === "rm-team" ? "rm-team" : "client"),
+    scopeRef: (r as any).scopeRef ?? r.clientProfileId ?? null,
   };
 }
 
@@ -74,10 +83,14 @@ export async function findClientByAccessToken(accessToken: string): Promise<{ id
 export async function createBinding(args: {
   chatId: number | string;
   chatTitle: string | null;
-  clientProfileId: string;
+  clientProfileId: string | null;
   boundByUserId: string;
   /** Phase E.8 — the ClientBindKey this binding was created from. Null in legacy paths. */
   bindKeyId?: string | null;
+  /** Phase E.9 — scope discriminator. */
+  scopeType?: "client" | "rm-team";
+  /** Phase E.9 — scope target. clientProfileId for "client", userId for "rm-team". */
+  scopeRef?: string | null;
 }): Promise<void> {
   const now = new Date().toISOString();
   const id = `bnd_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
@@ -101,6 +114,8 @@ export async function createBinding(args: {
     chatTitle: args.chatTitle,
     clientProfileId: args.clientProfileId,
     bindKeyId: args.bindKeyId || null,
+    scopeType: args.scopeType || "client",
+    scopeRef: args.scopeRef ?? args.clientProfileId ?? null,
     boundByUserId: args.boundByUserId,
     status: "active",
     boundAt: now,
@@ -132,6 +147,8 @@ export async function listActiveBindings(): Promise<BindingInfo[]> {
       status: arimaChannelBindings.status,
       boundAt: arimaChannelBindings.boundAt,
       agentMode: arimaChannelBindings.agentMode,
+      scopeType: arimaChannelBindings.scopeType,
+      scopeRef: arimaChannelBindings.scopeRef,
       clientName: clientProfilesTable.companyName,
       clientCode: clientProfilesTable.clientCode,
     })
@@ -154,5 +171,7 @@ export async function listActiveBindings(): Promise<BindingInfo[]> {
     status: r.status,
     boundAt: r.boundAt,
     agentMode: ((r as any).agentMode === "eliana" ? "eliana" : "arima"),
+    scopeType: ((r as any).scopeType === "rm-team" ? "rm-team" : "client"),
+    scopeRef: (r as any).scopeRef ?? r.clientProfileId ?? null,
   }));
 }
