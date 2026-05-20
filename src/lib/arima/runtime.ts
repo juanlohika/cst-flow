@@ -442,6 +442,9 @@ export function scrubToolNarration(text: string, toolDefs?: any, knownToolNames?
     "get_client_profile", "get_recent_meetings", "get_account_intelligence",
     "schedule_meeting", "create_request", "search_meetings",
     "list_open_requests", "send_check_in",
+    // Super Admin tools — must be scrubbed too or they leak as narration when
+    // Gemini emits the call as plain text instead of a function call.
+    "portfolio_health_summary", "find_accounts_by_criteria", "compare_accounts",
   ];
   for (const b of builtIns) if (!toolNames.includes(b)) toolNames.push(b);
 
@@ -475,11 +478,29 @@ export function scrubToolNarration(text: string, toolDefs?: any, knownToolNames?
     // Phase 20.2 hotfix: PARENTHESIZED tool names — "(create_request)", "(get_client_profile)"
     // These leak as standalone lines or inline plumbing notes the model emits to "show its work".
     out = out.replace(new RegExp(`\\((?:${escaped.join("|")})\\)`, "gi"), "");
+    // Phase E.8 hotfix — Gemini leaks the tool call as plain text in three more forms:
+    //   tool_name({args})            ← bare invocation syntax
+    //   [tool_name({args})]          ← bracket-wrapped pseudo-citation
+    //   *tool_name* / _tool_name_    ← italicized (Telegram markdown ate the underscores)
+    // Each gets a tailored strip.
+    out = out.replace(new RegExp(`\\[?(?:${escaped.join("|")})\\s*\\([^)]*\\)\\]?`, "gi"), "");
+    // Match the same names with underscores ELIDED (Telegram-markdown'd: findaccountsbycriteria)
+    const elided = escaped.map(n => n.replace(/_/g, ""));
+    out = out.replace(new RegExp(`\\b(?:${elided.join("|")})\\b`, "gi"), "");
+    // Italicized form: _tool_name_ or *tool_name*
+    out = out.replace(new RegExp(`[_*](?:${escaped.join("|")})[_*]`, "gi"), "");
   }
   // Generic backticked snake_case looking like a tool name (anything_with_underscores)
   out = out.replace(/`[a-z][a-z0-9_]*_[a-z0-9_]+`/g, "");
   // Generic parenthesized snake_case — "(some_tool_name)" as a whole token
   out = out.replace(/\(\s*[a-z][a-z0-9_]*_[a-z0-9_]+\s*\)/g, "");
+  // Generic call-syntax — "snake_case_thing({...})" or "[snake_case_thing({...})]"
+  out = out.replace(/\[?[a-z][a-z0-9_]*_[a-z0-9_]+\s*\([^)]*\)\]?/g, "");
+  // Placeholder brackets — Gemini emits "[tier]" / "[packageModules]" / "[name]"
+  // when it thinks the tool result will be substituted in. Strip the most
+  // common offenders but be careful NOT to break legitimate markdown links
+  // like [text](url) — only match brackets NOT followed by "(".
+  out = out.replace(/\[(?:tier|packageModules|package|modules|name|companyName|shortName|longName|rm|pm|ba|healthColor|healthScore|hypercare|lifecycle|status|ccCompliance|f2fCompliance|lastCC|lastF2F|goLiveDate|ssot|aiSummary|insert[^[\]]{0,40}|TBD|fill[^[\]]{0,20})\](?!\()/gi, "");
 
   // 3) Whole filler lines / phrases.
   const fillerLines = [
@@ -841,7 +862,13 @@ Strict rules in this context:
 
 5. **The bound expiration is real.** If a user complains the context has expired, tell them to run \`/extend <hours>\` in this chat (they must be on the allowlist).
 
-6. **No volunteering aggregate data.** Only answer what's asked. Don't dump the full portfolio when someone asks about one account.`;
+6. **No volunteering aggregate data.** Only answer what's asked. Don't dump the full portfolio when someone asks about one account.
+
+7. **Tool call format — CRITICAL.** Tools are invoked via the function-calling channel, NOT as text. The user must NEVER see strings like \`find_accounts_by_criteria({...})\`, \`[find_accounts_by_criteria(...)]\`, or \`*find accounts by criteria*\` in your reply. If you need data, issue an actual function call and then write a normal English answer using the returned data. Do not narrate your tool plan ("I'll use…", "Let me call…", "According to the … tool"). Do not say "Please wait while I retrieve". Just call the tool, then answer.
+
+8. **Never use bracket placeholders.** Forbidden patterns: \`[tier]\`, \`[packageModules]\`, \`[insert tool response]\`, \`[name]\`. If you don't have the value, either call the tool to get it or say "I don't have that information for this account."
+
+9. **One-shot tool use.** Issue the tool call FIRST, in the same turn. Don't reply "I'll check…" and then wait to be re-prompted. The user has no way to nudge you to actually execute the call — your first message after a question must already contain the data or the cleanly-stated refusal.`;
     } else {
       baseInstruction += `\n\n---\n\n## PORTFOLIO DATA GUARDRAIL
 
@@ -908,6 +935,20 @@ Single-account data is fine to answer (you have get_client_profile and get_accou
     const saCtx = await loadActiveSuperAdminContext();
     saModeForTools = !!(saCtx && args.sourceTelegramChatId && String(args.sourceTelegramChatId) === saCtx.telegramChatId);
   } catch { /* SA module not available — treat as client mode */ }
+
+  // 6a) Self-heal: in SA mode, the three portfolio tools must be enabled or
+  // Gemini will write the tool call as plain text (model hallucinates because
+  // it has nothing to call). If a prior /sabind ran before E.7 shipped, the
+  // DB rows are still disabled. Enable them on the fly. Idempotent — won't
+  // touch anything else.
+  if (saModeForTools) {
+    try {
+      const { ensureSuperAdminToolsEnabled } = await import("@/lib/arima/tools/registry");
+      await ensureSuperAdminToolsEnabled();
+    } catch (e) {
+      console.warn("[runtime] failed to auto-heal SA tools:", e);
+    }
+  }
 
   // 6b) Load tools FIRST so we can list them in the system prompt
   const toolDefs = await buildGeminiTools(saModeForTools ? "super-admin" : "client").catch(() => undefined);
