@@ -898,39 +898,38 @@ export const clientBindKeys = sqliteTable("ClientBindKey", {
 });
 
 // ─── Phase F — Proposal Maker ─────────────────────────────────────
-// Single-row config holding the active proposal template (Drive file) + the
-// auto-extracted structural "spec" that the generator uses to render new
-// proposals against the template. Multi-template is a future concern.
-export const proposalTemplate = sqliteTable("ProposalTemplate", {
-  id:              text("id").primaryKey(),                 // always "default" for v1
-  driveFileId:     text("driveFileId").notNull(),           // Google Drive .docx file id
-  driveFileName:   text("driveFileName"),                   // cached for display
-  driveFolderId:   text("driveFolderId"),                   // Templates folder (for sanity-checking the URL)
-  proposalsRootFolderId: text("proposalsRootFolderId"),     // where to drop per-account sub-folders
-  extractedSpec:   text("extractedSpec"),                   // JSON — Phase F.2 fills this
-  rawHtmlPreview:  text("rawHtmlPreview"),                  // mammoth output, for inspection
-  syncStatus:      text("syncStatus").default("pending").notNull(), // pending | extracted | error
-  syncError:       text("syncError"),
-  lastSyncedAt:    text("lastSyncedAt"),
-  updatedBy:       text("updatedBy"),
-  updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+// Single-row admin settings — points to the Drive folder where generated
+// PDFs are filed. No template needed: the proposal IS the HTML page rendered
+// from sourceInputs JSON, and the PDF is the Drive-exported version of that
+// HTML for the client.
+export const proposalSettings = sqliteTable("ProposalSettings", {
+  id:                    text("id").primaryKey(),               // always "default"
+  proposalsRootFolderId: text("proposalsRootFolderId").notNull(), // top-level Drive folder, per-account subfolders nest under it
+  updatedBy:             text("updatedBy"),
+  updatedAt:             text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
 
-// Each generated proposal — one row per generation event. The Drive file is
-// the artifact; this table is the audit log + history view.
+// Each proposal — the JSON is the source of truth (what's shown on the
+// preview page + rendered to PDF). The Drive PDF is generated on-demand
+// when the team is ready to send to the client.
 export const proposals = sqliteTable("Proposal", {
   id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   clientProfileId: text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
   title:           text("title").notNull(),                 // human-readable title
-  driveFileId:     text("driveFileId"),                     // generated .docx file id
-  driveUrl:        text("driveUrl"),                        // share link
-  status:          text("status").default("draft").notNull(), // draft | published | superseded | error
-  templateId:      text("templateId"),                      // which template was used
-  templateVersionAt: text("templateVersionAt"),             // template's lastSyncedAt at generation time (audit)
-  sourceInputs:    text("sourceInputs"),                    // JSON — the full input bundle (cost, scope, etc.)
-  attachmentRefs:  text("attachmentRefs"),                  // JSON — telegram file_ids / image refs
-  draftMarkers:    text("draftMarkers"),                    // JSON — placeholders ARIMA flagged [NEEDS INPUT]
-  generatedBy:     text("generatedBy").notNull(),           // CST OS userId who triggered
+  versionNumber:   integer("versionNumber").default(1).notNull(),
+  // sourceInputs is the AI-generated structured JSON — sections, cost lines,
+  // timeline phases, signatories, etc. The HTML preview + the PDF both render
+  // from this single source of truth.
+  sourceInputs:    text("sourceInputs"),                    // JSON
+  // Optional Telegram image refs that informed the AI (Phase F.3).
+  attachmentRefs:  text("attachmentRefs"),                  // JSON
+  status:          text("status").default("draft").notNull(), // draft | exported | sent | superseded
+  // PDF is only populated AFTER export. Drafts have no Drive file.
+  pdfDriveFileId:  text("pdfDriveFileId"),
+  pdfDriveUrl:     text("pdfDriveUrl"),
+  exportedAt:      text("exportedAt"),
+  exportedBy:      text("exportedBy"),
+  generatedBy:     text("generatedBy").notNull(),
   generatedAt:     text("generatedAt").default(sql`(datetime('now'))`).notNull(),
   errorMessage:    text("errorMessage"),
 });
