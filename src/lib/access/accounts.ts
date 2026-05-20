@@ -17,6 +17,39 @@ import crypto from "crypto";
 // In-memory flag so we only attempt the schema work once per process (per
 // serverless instance). Each invocation does no-op ALTERs if columns exist.
 let _schemaEnsuredAt = 0;
+
+/**
+ * Phase E.9 — SQLite can't ALTER a column to remove NOT NULL. To relax
+ * nullability we rebuild the table: create the new shape, copy data, drop
+ * the old, rename. This helper does that idempotently — if the named column
+ * already accepts NULL, it's a no-op.
+ */
+async function rebuildIfNotNull(
+  tableName: string,
+  columnName: string,
+  createNewTableSql: any,
+  copyDataSql: any,
+  postSetupSqls: any[] = [],
+): Promise<void> {
+  try {
+    const probe = await db.run(sql.raw(`PRAGMA table_info(${tableName})`)) as any;
+    const cols = Array.isArray(probe?.rows) ? probe.rows : (Array.isArray(probe) ? probe : []);
+    const col = cols.find((c: any) => (c.name ?? c[1]) === columnName);
+    const isNotNull = col && (col.notnull ?? col[3]) === 1;
+    if (!isNotNull) return;
+    await db.run(createNewTableSql);
+    await db.run(copyDataSql);
+    await db.run(sql.raw(`DROP TABLE ${tableName}`));
+    await db.run(sql.raw(`ALTER TABLE ${tableName}_new RENAME TO ${tableName}`));
+    for (const s of postSetupSqls) {
+      try { await db.run(s); } catch {}
+    }
+    console.log(`[ensureAccessSchema] ${tableName} rebuilt — ${columnName} now nullable`);
+  } catch (e) {
+    console.warn(`[ensureAccessSchema] ${tableName} nullable rebuild failed:`, e);
+  }
+}
+
 export async function ensureAccessSchema(): Promise<void> {
   // Re-attempt at most every 60s in case a previous attempt failed and we want to retry
   if (Date.now() - _schemaEnsuredAt < 60_000) return;
@@ -158,6 +191,51 @@ export async function ensureAccessSchema(): Promise<void> {
     } catch (e) {
       console.warn("[ensureAccessSchema] scopeRef backfill failed:", e);
     }
+
+    // Phase E.9 — Drop the NOT NULL constraint on ClientBindKey.clientProfileId
+    // AND ArimaChannelBinding.clientProfileId so team-room rows (which have no
+    // single account) can be inserted. SQLite can't ALTER an existing column's
+    // nullability, so we rebuild each table. Idempotent — only rebuilds when
+    // the column is still NOT NULL.
+    await rebuildIfNotNull("ClientBindKey", "clientProfileId", sql`CREATE TABLE ClientBindKey_new (
+      id TEXT PRIMARY KEY,
+      clientProfileId TEXT,
+      label TEXT NOT NULL,
+      accessToken TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'active',
+      createdBy TEXT,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      revokedAt TEXT,
+      scopeType TEXT NOT NULL DEFAULT 'client',
+      scopeRef TEXT,
+      FOREIGN KEY (clientProfileId) REFERENCES ClientProfile(id) ON DELETE CASCADE
+    )`, sql`INSERT INTO ClientBindKey_new
+      (id, clientProfileId, label, accessToken, status, createdBy, createdAt, revokedAt, scopeType, scopeRef)
+      SELECT id, clientProfileId, label, accessToken, status, createdBy, createdAt, revokedAt, scopeType, scopeRef
+        FROM ClientBindKey`,
+      [sql`CREATE INDEX IF NOT EXISTS ClientBindKey_clientProfile_idx ON ClientBindKey(clientProfileId)`],
+    );
+
+    await rebuildIfNotNull("ArimaChannelBinding", "clientProfileId", sql`CREATE TABLE ArimaChannelBinding_new (
+      id TEXT PRIMARY KEY,
+      channel TEXT NOT NULL,
+      chatId TEXT NOT NULL,
+      chatTitle TEXT,
+      clientProfileId TEXT,
+      bindKeyId TEXT,
+      scopeType TEXT NOT NULL DEFAULT 'client',
+      scopeRef TEXT,
+      boundByUserId TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      agentMode TEXT NOT NULL DEFAULT 'arima',
+      boundAt TEXT NOT NULL DEFAULT (datetime('now')),
+      revokedAt TEXT
+    )`, sql`INSERT INTO ArimaChannelBinding_new
+      (id, channel, chatId, chatTitle, clientProfileId, bindKeyId, scopeType, scopeRef, boundByUserId, status, agentMode, boundAt, revokedAt)
+      SELECT id, channel, chatId, chatTitle, clientProfileId, bindKeyId, scopeType, scopeRef, boundByUserId, status, agentMode, boundAt, revokedAt
+        FROM ArimaChannelBinding`,
+      [sql`CREATE UNIQUE INDEX IF NOT EXISTS ArimaChannelBinding_unique ON ArimaChannelBinding(channel, chatId)`],
+    );
 
     // Phase E.3: master modules list
     await db.run(sql`CREATE TABLE IF NOT EXISTS AccountModule (
