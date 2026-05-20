@@ -237,6 +237,50 @@ export async function ensureAccessSchema(): Promise<void> {
       [sql`CREATE UNIQUE INDEX IF NOT EXISTS ArimaChannelBinding_unique ON ArimaChannelBinding(channel, chatId)`],
     );
 
+    // Phase F.1: Proposal Maker — template + generated proposal log
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ProposalTemplate (
+      id TEXT PRIMARY KEY,
+      driveFileId TEXT NOT NULL,
+      driveFileName TEXT,
+      driveFolderId TEXT,
+      proposalsRootFolderId TEXT,
+      extractedSpec TEXT,
+      rawHtmlPreview TEXT,
+      syncStatus TEXT NOT NULL DEFAULT 'pending',
+      syncError TEXT,
+      lastSyncedAt TEXT,
+      updatedBy TEXT,
+      updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS Proposal (
+      id TEXT PRIMARY KEY,
+      clientProfileId TEXT NOT NULL,
+      title TEXT NOT NULL,
+      driveFileId TEXT,
+      driveUrl TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      templateId TEXT,
+      templateVersionAt TEXT,
+      sourceInputs TEXT,
+      attachmentRefs TEXT,
+      draftMarkers TEXT,
+      generatedBy TEXT NOT NULL,
+      generatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+      errorMessage TEXT,
+      FOREIGN KEY (clientProfileId) REFERENCES ClientProfile(id) ON DELETE CASCADE
+    )`);
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS Proposal_clientProfile_idx ON Proposal(clientProfileId)`); } catch {}
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS Proposal_generatedAt_idx ON Proposal(generatedAt)`); } catch {}
+
+    // Phase F.1: seed the Proposal Maker app row so it appears under AI Intelligence.
+    // Only insert if missing — admin can deactivate via the apps admin if they want.
+    try {
+      await db.run(sql`INSERT OR IGNORE INTO App (id, name, slug, description, icon, href, isActive, isBuiltIn, sortOrder, createdAt, updatedAt)
+        VALUES ('app_proposal_maker', 'Proposal Maker', 'proposal-maker', 'Generate client-facing proposals from a Word template. Auto-files to per-account Drive folders.', 'Sparkles', '/proposal-maker', 1, 1, 50, datetime('now'), datetime('now'))`);
+    } catch (e) {
+      console.warn("[ensureAccessSchema] Proposal Maker app seed failed:", e);
+    }
+
     // Phase E.3: master modules list
     await db.run(sql`CREATE TABLE IF NOT EXISTS AccountModule (
       id TEXT PRIMARY KEY,
