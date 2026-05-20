@@ -1,64 +1,161 @@
 /**
- * Phase F.2 (B7) — AI content generator. Takes user-provided inputs and
- * produces the structured ProposalContent JSON that the HTML preview + PDF
- * both render from. Pure text — no Word, no Drive, no DB.
+ * Phase F.2 (B7) — Conversational proposal AI.
+ *
+ * Each turn: takes the running message history + the current proposal state
+ * (may be null) + the new user input, returns:
+ *   - reply: what to show in the chat panel
+ *   - updatedContent?: a fresh ProposalContent if the AI produced/refined one
+ *   - inferredClientName?: if the AI extracted a client name from the message
+ *
+ * The same function is called from web chat AND (later, in F.3) Telegram.
  */
 import { getModelForApp, generateWithRetry } from "@/lib/ai";
-import type { ProposalContent, ProposalUserInputs } from "./types";
+import type { ProposalContent } from "./types";
 
-export async function buildProposalContent(args: {
-  inputs: ProposalUserInputs;
-  clientCompanyName: string;
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  attachmentNames?: string[];
+}
+
+export interface ImageAttachment {
+  mimeType: string;
+  /** base64-encoded image bytes (no data: prefix). */
+  data: string;
+  name?: string;
+}
+
+export interface ChatTurnArgs {
+  /** Prior conversation. Empty array for the first turn. */
+  history: ChatMessage[];
+  /** New user message text. */
+  userMessage: string;
+  /** Image attachments the user added with this turn. */
+  attachments: ImageAttachment[];
+  /** Current proposal state (null on first turn or when ARIMA hasn't produced one yet). */
+  currentContent: ProposalContent | null;
+  /** Account context. Null when ARIMA hasn't yet figured out which account. */
+  account: { id: string; companyName: string } | null;
+  /** Display name of the team member talking to ARIMA. */
   preparedByName: string;
-}): Promise<{ ok: true; content: ProposalContent } | { ok: false; error: string; rawAi?: string }> {
+}
+
+export interface ChatTurnResult {
+  reply: string;
+  updatedContent?: ProposalContent;
+  /** When set, the API should look up an account whose companyName matches this. */
+  inferredClientName?: string;
+}
+
+export async function runChatTurn(args: ChatTurnArgs): Promise<{ ok: true; result: ChatTurnResult } | { ok: false; error: string; rawAi?: string }> {
   const model = await getModelForApp("brd-maker");
   if (!model) return { ok: false, error: "No AI model configured" };
 
-  const prompt = buildPrompt(args);
-  const result = await generateWithRetry(model, {
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
+  const promptText = buildSystemPrompt(args);
+
+  // Build the multi-turn contents array Gemini expects.
+  // We collapse our system+context+instructions into a single leading "user"
+  // turn (Gemini's API doesn't have a separate system role for non-chat models),
+  // followed by each prior message, ending with the new user turn (and any images).
+  const contents: any[] = [];
+
+  // Leading instruction turn
+  contents.push({
+    role: "user",
+    parts: [{ text: promptText }],
   });
+  contents.push({
+    role: "model",
+    parts: [{ text: "Understood. I'll help draft and refine the proposal. Tell me what you need." }],
+  });
+
+  // Prior conversation
+  for (const m of args.history) {
+    contents.push({
+      role: m.role === "user" ? "user" : "model",
+      parts: [{ text: m.content }],
+    });
+  }
+
+  // The new user turn — text + images
+  const userParts: any[] = [{ text: args.userMessage || "(no message text)" }];
+  for (const att of args.attachments) {
+    userParts.push({
+      inlineData: {
+        mimeType: att.mimeType,
+        data: att.data,
+      },
+    });
+  }
+  contents.push({ role: "user", parts: userParts });
+
+  const result = await generateWithRetry(model, { contents });
   const raw = (result?.response?.text?.() || "").trim();
-  const parsed = tryParseJson(raw);
-  if (!parsed) return { ok: false, error: "AI returned non-JSON output", rawAi: raw };
+  const parsed = parseAiResponse(raw);
+  if (!parsed) {
+    return { ok: false, error: "AI returned non-JSON output", rawAi: raw };
+  }
 
-  // Light validation — ensure the required scalar fields are present. We trust
-  // the AI for prose quality but don't trust it to remember every nested field.
-  const content = normalizeContent(parsed, args);
-  if (!content.title) return { ok: false, error: "AI didn't produce a title", rawAi: raw };
-  if (!content.sections || content.sections.length === 0) return { ok: false, error: "AI didn't produce any sections", rawAi: raw };
-
-  return { ok: true, content };
+  return { ok: true, result: parsed };
 }
 
-function buildPrompt(args: {
-  inputs: ProposalUserInputs;
-  clientCompanyName: string;
-  preparedByName: string;
-}): string {
+function buildSystemPrompt(args: ChatTurnArgs): string {
   const today = new Date().toISOString().slice(0, 10);
-  return `You are writing a professional client proposal for Tarkie (MobileOptima, Inc.). Tarkie is a field-operations SaaS platform for sales and merchandising teams.
+  const haveContent = !!args.currentContent;
+  const haveAccount = !!args.account;
 
-You will receive user-provided inputs and must produce a structured JSON document describing the proposal. The JSON will be rendered into a styled HTML page and exported as a PDF for the client.
+  return `You are an AI assistant for Tarkie (MobileOptima, Inc.) helping a team member draft a professional client proposal through conversation. The user works on the Tarkie team. You are the same agent persona as ARIMA — practical, concise, helpful.
 
 ═══════════════════════════════════════════════════════════
-OUTPUT SHAPE (return ONLY this JSON, no markdown fences, no commentary):
+HOW THIS WORKS
+═══════════════════════════════════════════════════════════
+You are in a TWO-PANEL UI: the user types in a chat on the left, and a live proposal preview renders on the right. Your job each turn is to either:
+
+  (a) Ask ONE focused clarifying question if you don't have enough to draft / refine yet, OR
+  (b) Produce or update the proposal JSON, which re-renders the preview on the right.
+
+You can also do both: update what you have, and ask one follow-up question.
+
+The user can attach images (screenshots of prior quotes, whiteboard photos, scope discussions). Read them carefully and use what's there. If an image contains a price, a deliverable list, or any data the user wants reflected, incorporate it.
+
+═══════════════════════════════════════════════════════════
+CONTEXT
+═══════════════════════════════════════════════════════════
+Today: ${today}
+Team member: ${args.preparedByName}
+Account: ${haveAccount ? `${args.account!.companyName} (id: ${args.account!.id})` : "NOT YET IDENTIFIED — your first job may be to figure out which account this is for"}
+
+Current proposal state: ${haveContent ? "DRAFT EXISTS (see JSON below). User wants to refine." : "NO DRAFT YET. First substantive turn should produce one."}
+
+${haveContent ? `\nCURRENT DRAFT JSON:\n${JSON.stringify(args.currentContent, null, 2)}\n` : ""}
+
+═══════════════════════════════════════════════════════════
+OUTPUT FORMAT (STRICT JSON ONLY — no markdown fences, no commentary outside the JSON)
 ═══════════════════════════════════════════════════════════
 {
-  "title": "string — concise project title (e.g. 'Manpower Costing Module Addendum')",
+  "reply": "string — your chat-panel reply to the user. Conversational, Tarkie-team voice. 1-4 sentences usually. Use this to ask clarifying questions, acknowledge what you've updated, flag what's still missing, etc.",
+  "updatedContent": null | { full ProposalContent object },
+  "inferredClientName": null | "string — only set if the user mentioned a client name in this turn AND the account context above is NOT YET IDENTIFIED. Use this to nudge the system to look the account up."
+}
+
+═══════════════════════════════════════════════════════════
+PROPOSAL CONTENT SHAPE (use this exact shape for updatedContent)
+═══════════════════════════════════════════════════════════
+{
+  "title": "string — e.g. 'Manpower Costing Module Addendum'",
   "proposalDate": "${today}",
   "client": {
-    "name": "${args.clientCompanyName}",
+    "name": "Client Co. Inc.",
     "signatory": { "name": "...", "title": "..." }
   },
   "moi": {
-    "signatory": { "name": "...", "title": "..." }
+    "signatory": { "name": "${args.preparedByName}", "title": "..." }
   },
   "version": {
     "number": 1,
     "date": "${today}",
     "preparedBy": "${args.preparedByName}",
-    "submittedTo": "client signatory name",
+    "submittedTo": "client signatory",
     "description": "one-line about this version"
   },
   "sections": [
@@ -73,11 +170,11 @@ OUTPUT SHAPE (return ONLY this JSON, no markdown fences, no commentary):
   "cost": {
     "lines": [
       {
-        "description": "Manpower Costing per Site Visit Add-on",
+        "description": "Manpower Costing Add-on",
         "standardRate": "P100 + VAT",
         "discountedRate": "P75.00 + VAT",
         "unit": "Per Month Per User",
-        "bullets": ["Configuration of Hourly Rate per Site Personnel...", "Integration of the Billing Module..."]
+        "bullets": ["Configuration of Hourly Rate...", "Integration of the Billing Module..."]
       }
     ],
     "guaranteedUsers": "30 Users",
@@ -89,140 +186,106 @@ OUTPUT SHAPE (return ONLY this JSON, no markdown fences, no commentary):
   ],
   "isAddendum": true,
   "aiNotes": {
-    "inferred": ["I assumed a 6-week rollout based on similar Tarkie projects."],
-    "missing": ["Confirm guaranteed user count — currently set to 30 Users from the inputs"],
-    "summary": "1-2 sentences on what you wrote"
+    "inferred": ["I assumed a 6-week rollout..."],
+    "missing": ["Confirm guaranteed user count"],
+    "summary": "1-2 sentences on what I wrote"
   }
 }
 
 ═══════════════════════════════════════════════════════════
-WRITING GUIDELINES:
+WRITING GUIDELINES
 ═══════════════════════════════════════════════════════════
-- VOICE: professional, concise, client-facing. Tarkie writes proposals in the active voice. No filler. No "leverage", "synergy", "ROI uplift" jargon. Plain English.
-- SECTIONS: choose the right ones for this proposal. Typical sections in order:
-    1. "Project Objectives" — what the client gets (1-2 paragraphs + optional bullets)
-    2. "Scope of Work" — what Tarkie will do (paragraphs + bullets)
-    3. "Deliverables" — what gets handed over (usually bullets)
-    4. "Investment" — text introducing the cost table (1 short paragraph, NOT the table itself)
-    5. "Estimated Timeline" — text introducing the timeline (1 short paragraph)
-  Skip sections that don't apply. Add sections that do (e.g., "Assumptions", "Out of Scope") when relevant.
-- COST: NEVER invent prices. Use only the rates/totals in the inputs. If the inputs are incomplete, list the gap in aiNotes.missing — don't fabricate a number.
-- TIMELINE: produce realistic phases for the work. Standard Tarkie phases when in doubt: Prerequisites & Config / Development & QA / UAT / Training / Launch / Post-Launch. Adjust based on the project scope.
-- ADDENDUM HANDLING: if isAddendum is true in the inputs, frame the Project Objectives section as "This addendum adds X to the existing Tarkie subscription..." and include the combined-rate row in the cost block.
+- VOICE: professional, concise, client-facing. Active voice. No jargon ("leverage", "synergy", "ROI uplift").
+- COST: NEVER invent prices. If the user hasn't given you a number, list it in aiNotes.missing and ask for it in your reply.
+- TIMELINE: produce realistic phases. Standard Tarkie phases: Prerequisites & Config / Development & QA / UAT / Training / Launch / Post-Launch. Adjust based on scope.
+- ADDENDUM: if isAddendum is true, frame Project Objectives as "This addendum adds X to the existing Tarkie subscription...". Include combinedRate in cost.
+- INCREMENTAL UPDATES: when refining, do a FULL replacement of updatedContent — re-emit the entire JSON with the requested changes applied. Don't try to emit partial diffs.
+- CLARIFYING QUESTIONS: ask ONE at a time. Don't bombard the user with a list of 5 questions.
+- WHEN TO SET updatedContent: only when you have enough to produce a meaningful proposal OR refine an existing one. If you're just asking for the account name, set updatedContent to null.
+- WHEN TO SET inferredClientName: only when account context above says "NOT YET IDENTIFIED" AND the user just mentioned a client name. The system will look up the account and inject it next turn.
 
-═══════════════════════════════════════════════════════════
-USER INPUTS:
-═══════════════════════════════════════════════════════════
-Client: ${args.clientCompanyName}
-Title: ${args.inputs.title}
-Is addendum: ${args.inputs.isAddendum ? "yes" : "no"}
-Prepared by: ${args.preparedByName}
-
-Scope notes from the team:
-${args.inputs.scopeNotes}
-
-Cost details:
-- Total cost: ${args.inputs.totalCost || "(not provided)"}
-- Standard rate: ${args.inputs.standardRate || "(not provided)"}
-- Discounted rate: ${args.inputs.discountedRate || "(not provided)"}
-- Combined rate: ${args.inputs.combinedRate || "(not provided)"}
-- Guaranteed users: ${args.inputs.guaranteedUsers || "(not provided)"}
-
-Timeline guidance: ${args.inputs.timelineNotes || "(use standard Tarkie rollout phases)"}
-
-Signatories:
-- Client: ${args.inputs.clientSignatoryName || "(not provided)"} / ${args.inputs.clientSignatoryTitle || "(not provided)"}
-- MOI: ${args.inputs.moiSignatoryName || args.preparedByName} / ${args.inputs.moiSignatoryTitle || "(not provided)"}
-
-Now produce the JSON. Return ONLY the JSON object.`;
+Now read the conversation and produce the JSON response.`;
 }
 
-function tryParseJson(raw: string): any | null {
+function parseAiResponse(raw: string): ChatTurnResult | null {
   const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-  try { return JSON.parse(cleaned); } catch {}
-  const match = cleaned.match(/\{[\s\S]*\}/);
-  if (match) {
-    try { return JSON.parse(match[0]); } catch {}
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      try { parsed = JSON.parse(match[0]); } catch { return null; }
+    } else {
+      return null;
+    }
   }
-  return null;
+  if (!parsed || typeof parsed !== "object") return null;
+
+  return {
+    reply: typeof parsed.reply === "string" ? parsed.reply : "",
+    updatedContent: parsed.updatedContent ? normalizeContent(parsed.updatedContent) : undefined,
+    inferredClientName: parsed.inferredClientName ? String(parsed.inferredClientName) : undefined,
+  };
 }
 
-function normalizeContent(parsed: any, args: {
-  inputs: ProposalUserInputs;
-  clientCompanyName: string;
-  preparedByName: string;
-}): ProposalContent {
-  // Fill in any missing scalar fields with sane defaults. The AI sometimes
-  // forgets the boilerplate.
+function normalizeContent(parsed: any): ProposalContent {
+  // Light defensive normalization. Keep it minimal — trust the AI but coerce
+  // shapes the renderer expects.
   return {
-    title: String(parsed.title || args.inputs.title || "Proposal"),
+    title: String(parsed.title || "Proposal"),
     proposalDate: String(parsed.proposalDate || new Date().toISOString().slice(0, 10)),
     client: {
-      name: String(parsed.client?.name || args.clientCompanyName),
-      signatory: parsed.client?.signatory
-        ? {
-            name: String(parsed.client.signatory.name || args.inputs.clientSignatoryName || ""),
-            title: String(parsed.client.signatory.title || args.inputs.clientSignatoryTitle || ""),
-          }
-        : undefined,
+      name: String(parsed.client?.name || ""),
+      signatory: parsed.client?.signatory ? {
+        name: String(parsed.client.signatory.name || ""),
+        title: String(parsed.client.signatory.title || ""),
+      } : undefined,
     },
     moi: {
       signatory: {
-        name: String(parsed.moi?.signatory?.name || args.inputs.moiSignatoryName || args.preparedByName),
-        title: String(parsed.moi?.signatory?.title || args.inputs.moiSignatoryTitle || ""),
+        name: String(parsed.moi?.signatory?.name || ""),
+        title: String(parsed.moi?.signatory?.title || ""),
       },
     },
     version: {
       number: Number(parsed.version?.number || 1),
       date: String(parsed.version?.date || new Date().toISOString().slice(0, 10)),
-      preparedBy: String(parsed.version?.preparedBy || args.preparedByName),
-      submittedTo: String(parsed.version?.submittedTo || args.inputs.clientSignatoryName || ""),
-      description: String(parsed.version?.description || args.inputs.title || ""),
+      preparedBy: String(parsed.version?.preparedBy || ""),
+      submittedTo: String(parsed.version?.submittedTo || ""),
+      description: String(parsed.version?.description || ""),
     },
-    sections: Array.isArray(parsed.sections) ? parsed.sections.map(normalizeSection).filter(Boolean) as any : [],
-    cost: parsed.cost ? normalizeCost(parsed.cost) : undefined,
-    timeline: Array.isArray(parsed.timeline) ? parsed.timeline.map(normalizeTimeline).filter(Boolean) as any : undefined,
+    sections: Array.isArray(parsed.sections) ? parsed.sections.map((s: any) => ({
+      heading: String(s.heading || ""),
+      blocks: Array.isArray(s.blocks) ? s.blocks.map((b: any) =>
+        b?.kind === "bullets" && Array.isArray(b.items)
+          ? { kind: "bullets" as const, items: b.items.map(String) }
+          : { kind: "paragraph" as const, text: String(b?.text || "") }
+      ) : [],
+    })) : [],
+    cost: parsed.cost ? {
+      lines: Array.isArray(parsed.cost.lines) ? parsed.cost.lines.map((l: any) => ({
+        description: String(l.description || ""),
+        standardRate: l.standardRate ? String(l.standardRate) : undefined,
+        discountedRate: l.discountedRate ? String(l.discountedRate) : undefined,
+        unit: l.unit ? String(l.unit) : undefined,
+        bullets: Array.isArray(l.bullets) ? l.bullets.map(String) : undefined,
+      })) : [],
+      guaranteedUsers: parsed.cost.guaranteedUsers ? String(parsed.cost.guaranteedUsers) : undefined,
+      combinedRate: parsed.cost.combinedRate ? String(parsed.cost.combinedRate) : undefined,
+      totalCost: String(parsed.cost.totalCost || ""),
+    } : undefined,
+    timeline: Array.isArray(parsed.timeline) ? parsed.timeline.map((p: any) => ({
+      phase: String(p.phase || ""),
+      detailedSteps: String(p.detailedSteps || ""),
+      responsible: String(p.responsible || ""),
+      targetDate: String(p.targetDate || ""),
+    })) : undefined,
     isAddendum: !!parsed.isAddendum,
     aiNotes: parsed.aiNotes ? {
       inferred: Array.isArray(parsed.aiNotes.inferred) ? parsed.aiNotes.inferred.map(String) : [],
       missing: Array.isArray(parsed.aiNotes.missing) ? parsed.aiNotes.missing.map(String) : [],
       summary: String(parsed.aiNotes.summary || ""),
     } : undefined,
-  };
-}
-
-function normalizeSection(s: any): any | null {
-  if (!s || !s.heading) return null;
-  return {
-    heading: String(s.heading),
-    blocks: Array.isArray(s.blocks) ? s.blocks.map((b: any) => {
-      if (b?.kind === "bullets" && Array.isArray(b.items)) return { kind: "bullets", items: b.items.map(String) };
-      return { kind: "paragraph", text: String(b?.text || "") };
-    }).filter(Boolean) : [],
-  };
-}
-
-function normalizeCost(c: any): any {
-  return {
-    lines: Array.isArray(c.lines) ? c.lines.map((l: any) => ({
-      description: String(l.description || ""),
-      standardRate: l.standardRate ? String(l.standardRate) : undefined,
-      discountedRate: l.discountedRate ? String(l.discountedRate) : undefined,
-      unit: l.unit ? String(l.unit) : undefined,
-      bullets: Array.isArray(l.bullets) ? l.bullets.map(String) : undefined,
-    })) : [],
-    guaranteedUsers: c.guaranteedUsers ? String(c.guaranteedUsers) : undefined,
-    combinedRate: c.combinedRate ? String(c.combinedRate) : undefined,
-    totalCost: String(c.totalCost || ""),
-  };
-}
-
-function normalizeTimeline(p: any): any | null {
-  if (!p || !p.phase) return null;
-  return {
-    phase: String(p.phase),
-    detailedSteps: String(p.detailedSteps || ""),
-    responsible: String(p.responsible || ""),
-    targetDate: String(p.targetDate || ""),
   };
 }

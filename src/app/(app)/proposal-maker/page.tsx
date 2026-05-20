@@ -1,241 +1,366 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import {
-  FileText, Settings, Loader2, AlertTriangle, Sparkles, Plus,
+  ArrowUp, Loader2, FileText, Paperclip, X, Sparkles, Settings, FileDown,
+  ExternalLink, AlertTriangle, CheckCircle2,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ForceLink from "@/components/ui/ForceLink";
+import ProposalDocument from "@/components/proposal/ProposalDocument";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
+import type { ProposalContent } from "@/lib/proposal/types";
 
-interface AccessibleAccount {
-  id: string;
-  companyName: string;
-  clientCode: string | null;
-  tier: string | null;
+interface ChatBubble {
+  role: "user" | "assistant";
+  content: string;
+  attachmentNames?: string[];
+}
+
+interface PendingAttachment {
+  name: string;
+  mimeType: string;
+  data: string;   // base64
 }
 
 export default function ProposalMakerPage() {
-  return <AuthGuard><Content /></AuthGuard>;
+  return (
+    <AuthGuard>
+      <Suspense><Content /></Suspense>
+    </AuthGuard>
+  );
 }
 
 function Content() {
   const { data: session } = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
   useBreadcrumbs([{ label: "Proposal Maker" }]);
   const isAdmin = (session?.user as any)?.role === "admin";
 
-  const [accounts, setAccounts] = useState<AccessibleAccount[]>([]);
-  const [settingsConfigured, setSettingsConfigured] = useState<boolean | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [generating, setGenerating] = useState(false);
+  // Resumable conversation — if ?resume=<id> in URL, load that draft
+  const resumeId = searchParams.get("resume");
 
-  // Form state
-  const [clientProfileId, setClientProfileId] = useState("");
-  const [title, setTitle] = useState("");
-  const [isAddendum, setIsAddendum] = useState(false);
-  const [scopeNotes, setScopeNotes] = useState("");
-  const [totalCost, setTotalCost] = useState("");
-  const [standardRate, setStandardRate] = useState("");
-  const [discountedRate, setDiscountedRate] = useState("");
-  const [combinedRate, setCombinedRate] = useState("");
-  const [guaranteedUsers, setGuaranteedUsers] = useState("");
-  const [timelineNotes, setTimelineNotes] = useState("");
-  const [clientSigName, setClientSigName] = useState("");
-  const [clientSigTitle, setClientSigTitle] = useState("");
+  const [proposalId, setProposalId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatBubble[]>([]);
+  const [content, setContent] = useState<ProposalContent | null>(null);
+  const [accountName, setAccountName] = useState<string | null>(null);
+  const [status, setStatus] = useState<"draft" | "exported">("draft");
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+
+  const [prompt, setPrompt] = useState("");
+  const [pending, setPending] = useState<PendingAttachment[]>([]);
+  const [sending, setSending] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, sending]);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+    }
+  }, [prompt]);
+
+  // Load resumable draft
+  useEffect(() => {
+    if (!resumeId) return;
     (async () => {
       try {
-        // 1. accessible accounts (admin = all, RM = membership-scoped via list-with-flags)
-        const accRes = await fetch("/api/admin/telegram-bindings");   // re-use this — returns accounts + bind keys, we just need account list
-        if (accRes.ok) {
-          const data = await accRes.json();
-          const list = Array.isArray(data?.accounts)
-            ? data.accounts.map((row: any) => row.account)
-            : [];
-          setAccounts(list);
-        } else if (accRes.status === 403) {
-          // fall back: try the more general accessible-accounts route if available
-          setAccounts([]);
-        }
-
-        // 2. settings configured?
-        if (isAdmin) {
-          const sRes = await fetch("/api/proposal-maker/settings");
-          if (sRes.ok) {
-            const data = await sRes.json();
-            setSettingsConfigured(!!data?.settings?.proposalsRootFolderId);
-          }
-        } else {
-          // Non-admins can't check settings; assume configured and let create fail loudly if not
-          setSettingsConfigured(true);
+        const res = await fetch(`/api/proposal-maker/${resumeId}`);
+        const data = await res.json();
+        if (res.ok && data.proposal) {
+          setProposalId(data.proposal.id);
+          setAccountName(data.proposal.clientName || null);
+          setStatus(data.proposal.status === "exported" ? "exported" : "draft");
+          setPdfUrl(data.proposal.pdfDriveUrl || null);
+          setContent(data.proposal.content || null);
+          try {
+            const msgs = data.proposal.messages ? JSON.parse(data.proposal.messages) : [];
+            setMessages(Array.isArray(msgs) ? msgs : []);
+          } catch {}
         }
       } catch (e: any) {
         setError(e?.message || String(e));
-      } finally {
-        setLoading(false);
       }
     })();
-  }, [isAdmin]);
+  }, [resumeId]);
 
-  const submit = async () => {
-    if (!clientProfileId) { setError("Select an account first."); return; }
-    if (!title.trim()) { setError("Title is required."); return; }
-    if (!scopeNotes.trim()) { setError("Describe the scope."); return; }
-    if (!totalCost.trim()) { setError("Total cost is required."); return; }
+  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    for (const f of files) {
+      if (!f.type.startsWith("image/")) {
+        alert(`Only images are supported. Skipping ${f.name}.`);
+        continue;
+      }
+      const data = await fileToBase64(f);
+      setPending(p => [...p, { name: f.name, mimeType: f.type, data }]);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, []);
 
-    setGenerating(true);
+  const send = async () => {
+    if (!prompt.trim() && pending.length === 0) return;
+    const userMsg: ChatBubble = {
+      role: "user",
+      content: prompt,
+      attachmentNames: pending.length > 0 ? pending.map(p => p.name) : undefined,
+    };
+    const optimisticHistory = [...messages, userMsg];
+    setMessages(optimisticHistory);
+    const sentText = prompt;
+    const sentAttachments = pending;
+    setPrompt("");
+    setPending([]);
+    setSending(true);
     setError(null);
     try {
-      const res = await fetch("/api/proposal-maker/create", {
+      const res = await fetch("/api/proposal-maker/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          clientProfileId,
-          title,
-          isAddendum,
-          scopeNotes,
-          totalCost,
-          standardRate: standardRate.trim() || undefined,
-          discountedRate: discountedRate.trim() || undefined,
-          combinedRate: combinedRate.trim() || undefined,
-          guaranteedUsers: guaranteedUsers.trim() || undefined,
-          timelineNotes: timelineNotes.trim() || undefined,
-          clientSignatoryName: clientSigName.trim() || undefined,
-          clientSignatoryTitle: clientSigTitle.trim() || undefined,
+          proposalId,
+          message: sentText,
+          attachments: sentAttachments.map(a => ({ name: a.name, mimeType: a.mimeType, data: a.data })),
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Generation failed");
-      router.push(`/proposal-maker/${data.id}`);
+      if (!res.ok) throw new Error(data?.error || "Chat failed");
+      // Update from server response
+      if (data.proposalId && !proposalId) {
+        setProposalId(data.proposalId);
+        // Update URL so refresh resumes the same conversation
+        router.replace(`/proposal-maker?resume=${data.proposalId}`);
+      }
+      if (data.accountName && !accountName) setAccountName(data.accountName);
+      if (data.updatedContent) setContent(data.updatedContent);
+      setMessages([...optimisticHistory, { role: "assistant", content: data.reply || "" }]);
     } catch (e: any) {
       setError(e?.message || String(e));
+      // Roll back the optimistic user message? Keep it — user can see what they sent.
+      setMessages([...optimisticHistory, { role: "assistant", content: `❌ ${e?.message || "Error"}` }]);
     } finally {
-      setGenerating(false);
+      setSending(false);
     }
   };
 
+  const exportPdf = async () => {
+    if (!proposalId) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/proposal-maker/${proposalId}/export-pdf`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Export failed");
+      setStatus("exported");
+      setPdfUrl(data.pdfDriveUrl);
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const startNew = () => {
+    setProposalId(null);
+    setMessages([]);
+    setContent(null);
+    setAccountName(null);
+    setStatus("draft");
+    setPdfUrl(null);
+    setError(null);
+    router.replace("/proposal-maker");
+  };
+
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-5">
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-lg font-black text-slate-900 flex items-center gap-2">
-            <FileText className="w-5 h-5 text-indigo-500" /> Proposal Maker
-          </h1>
-          <p className="text-[12px] text-slate-500 mt-1">
-            ARIMA drafts a Tarkie-branded proposal from your notes. Preview, regenerate, export to PDF.
+    <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden bg-slate-50">
+      {/* Left: chat panel */}
+      <div className="w-[380px] border-r bg-white flex flex-col shadow-xl z-20">
+        <div className="p-5 border-b shrink-0">
+          <div className="flex items-center gap-2 mb-1">
+            <div className="bg-indigo-500 text-white p-1 rounded-md shadow-sm"><FileText size={16} /></div>
+            <h1 className="text-lg font-bold tracking-tight text-slate-800">Proposal Maker</h1>
+          </div>
+          <p className="text-[11px] font-medium text-slate-400 uppercase tracking-widest mt-1.5">
+            {accountName ? `Account: ${accountName}` : "Chat with ARIMA to draft"}
           </p>
-        </div>
-        {isAdmin && (
-          <ForceLink href="/proposal-maker/settings" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-slate-700 text-[12px] font-bold hover:border-indigo-300">
-            <Settings className="w-4 h-4" /> Settings
-          </ForceLink>
-        )}
-      </div>
-
-      {loading ? (
-        <div className="flex items-center gap-2 text-slate-500 text-[13px]"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
-      ) : isAdmin && !settingsConfigured ? (
-        <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
-          <div className="text-[13px] text-amber-900">
-            <p className="font-bold">Set up the Drive folder first</p>
-            <p className="mt-1">Open <ForceLink href="/proposal-maker/settings" className="underline">Settings</ForceLink> to configure where proposals are filed.</p>
+          <div className="mt-3 flex items-center gap-3">
+            <button onClick={startNew} className="text-[10px] font-black uppercase text-indigo-600 hover:underline">
+              + New Proposal
+            </button>
+            {isAdmin && (
+              <ForceLink href="/proposal-maker/settings" className="text-[10px] font-black uppercase text-slate-400 hover:text-indigo-600 hover:underline flex items-center gap-1">
+                <Settings size={11} /> Settings
+              </ForceLink>
+            )}
           </div>
         </div>
-      ) : (
-        <section className="rounded-2xl border border-indigo-100 bg-white p-6 space-y-4">
-          <div className="flex items-center gap-2 text-indigo-700">
-            <Sparkles className="w-4 h-4" />
-            <h2 className="text-[14px] font-black">New Proposal</h2>
-          </div>
 
-          {/* Account picker */}
-          <div>
-            <Label>Account</Label>
-            <select value={clientProfileId} onChange={e => setClientProfileId(e.target.value)} className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 text-[13px] bg-white">
-              <option value="">Pick an account…</option>
-              {accounts.map(a => <option key={a.id} value={a.id}>{a.companyName}{a.tier ? ` · T${a.tier}` : ""}</option>)}
-            </select>
-          </div>
-
-          <Row>
-            <Field label="Title">
-              <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Manpower Costing Module Addendum" className="input" />
-            </Field>
-            <Field label="Type">
-              <label className="flex items-center gap-2 mt-2 text-[13px]">
-                <input type="checkbox" checked={isAddendum} onChange={e => setIsAddendum(e.target.checked)} /> This is an addendum
-              </label>
-            </Field>
-          </Row>
-
-          <div>
-            <Label>Scope notes (the AI writes the proper sections from this)</Label>
-            <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} rows={5} placeholder="Describe what's being delivered, key configuration details, integration points, expected outcomes…" className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 text-[13px] resize-y" />
-          </div>
-
-          <div className="rounded-lg bg-slate-50 border border-slate-200 p-4 space-y-3">
-            <div className="text-[11px] uppercase tracking-widest font-black text-slate-500">Cost (required)</div>
-            <Field label="Total cost (e.g. P12,000.00 + VAT)">
-              <input value={totalCost} onChange={e => setTotalCost(e.target.value)} placeholder="P12,000.00 + VAT" className="input" />
-            </Field>
-            <Row>
-              <Field label="Standard rate (optional)"><input value={standardRate} onChange={e => setStandardRate(e.target.value)} placeholder="P100 + VAT" className="input" /></Field>
-              <Field label="Discounted rate (optional)"><input value={discountedRate} onChange={e => setDiscountedRate(e.target.value)} placeholder="P75.00 + VAT" className="input" /></Field>
-            </Row>
-            <Row>
-              <Field label="Combined rate (for addendums)"><input value={combinedRate} onChange={e => setCombinedRate(e.target.value)} placeholder="P300.00 + VAT" className="input" /></Field>
-              <Field label="Guaranteed users"><input value={guaranteedUsers} onChange={e => setGuaranteedUsers(e.target.value)} placeholder="30 Users" className="input" /></Field>
-            </Row>
-          </div>
-
-          <div>
-            <Label>Timeline notes (optional)</Label>
-            <textarea value={timelineNotes} onChange={e => setTimelineNotes(e.target.value)} rows={3} placeholder="e.g. Standard rollout, target Go-Live by July 6, 2026" className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 text-[13px] resize-y" />
-          </div>
-
-          <Row>
-            <Field label="Client signatory name"><input value={clientSigName} onChange={e => setClientSigName(e.target.value)} placeholder="Wilson Ngo" className="input" /></Field>
-            <Field label="Client signatory title"><input value={clientSigTitle} onChange={e => setClientSigTitle(e.target.value)} placeholder="COO" className="input" /></Field>
-          </Row>
-
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/30">
+          {messages.length === 0 && !sending && (
+            <div className="bg-indigo-50/60 border border-indigo-100 rounded-2xl p-5 text-[13px] text-slate-600 leading-relaxed">
+              <div className="font-bold text-slate-800 mb-1">Hi — I'm ARIMA.</div>
+              Tell me about the proposal. Include the client account name, project type, and any cost info you have. I'll draft it on the right.
+              <div className="mt-3 text-[11px] text-slate-500">
+                Example: <em>"Draft a proposal for MX, addendum for the manpower costing module. P75 discounted rate, 30 guaranteed users, total P12,000 + VAT. Signatory is Wilson Ngo (COO)."</em>
+              </div>
+            </div>
+          )}
+          {messages.map((msg, idx) => (
+            <div key={idx} className={`flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
+              <div className={`p-3 text-[13px] leading-relaxed max-w-[92%] shadow-sm ${
+                msg.role === "user"
+                  ? "bg-indigo-500 text-white rounded-2xl rounded-tr-sm"
+                  : "bg-white border rounded-2xl rounded-tl-sm text-slate-700"
+              }`}>
+                {msg.content}
+              </div>
+              {msg.attachmentNames && msg.attachmentNames.length > 0 && (
+                <div className="text-[10px] text-slate-400 flex flex-wrap gap-1">
+                  {msg.attachmentNames.map((n, i) => <span key={i}><Paperclip className="w-2.5 h-2.5 inline -mt-0.5" /> {n}</span>)}
+                </div>
+              )}
+            </div>
+          ))}
+          {sending && (
+            <div className="flex flex-col gap-2 items-start animate-pulse">
+              <div className="bg-white border rounded-2xl p-3 flex items-center gap-3 shadow-sm">
+                <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-tighter">Drafting…</span>
+              </div>
+            </div>
+          )}
           {error && (
-            <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-[12px] text-rose-900">{error}</div>
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-[12px] text-rose-900">
+              <AlertTriangle className="w-3.5 h-3.5 inline -mt-0.5 mr-1" /> {error}
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input */}
+        <div className="p-4 border-t bg-white shrink-0">
+          {pending.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-3">
+              {pending.map((att, idx) => (
+                <div key={idx} className="flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-lg bg-slate-50 border text-[10px] font-bold text-slate-500">
+                  <Paperclip className="w-3 h-3" /> <span className="truncate max-w-[100px]">{att.name}</span>
+                  <button onClick={() => setPending(p => p.filter((_, i) => i !== idx))} className="hover:text-rose-500">
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
           )}
 
-          <button onClick={submit} disabled={generating} className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-indigo-500 text-white text-[13px] font-bold hover:bg-indigo-600 disabled:opacity-50">
-            {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            {generating ? "Drafting (this takes 20-40s)…" : "Draft Proposal"}
-          </button>
-        </section>
-      )}
+          <div className="relative">
+            <textarea
+              ref={textareaRef}
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+              placeholder="Tell ARIMA what to draft or refine…"
+              disabled={sending}
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-4 py-3 pr-12 text-[13px] focus:outline-none focus:border-indigo-300 focus:bg-white transition-all disabled:opacity-50 resize-none min-h-[50px]"
+            />
+            <button
+              onClick={send}
+              disabled={sending || (!prompt.trim() && pending.length === 0)}
+              className="absolute right-2 bottom-2 h-9 w-9 flex items-center justify-center rounded-xl bg-indigo-500 text-white hover:shadow-lg active:scale-95 transition-all disabled:opacity-50"
+            >
+              {sending ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={16} />}
+            </button>
+          </div>
 
-      <style jsx>{`
-        :global(.input) {
-          margin-top: 4px;
-          width: 100%;
-          padding: 8px 12px;
-          border-radius: 8px;
-          border: 1px solid #E2E8F0;
-          font-size: 13px;
-        }
-        :global(.input:focus) { outline: none; border-color: #A5B4FC; }
-      `}</style>
+          <div className="flex items-center gap-3 mt-2">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={sending}
+              className="text-[10px] font-black uppercase text-slate-400 hover:text-indigo-600 transition-colors flex items-center gap-1"
+            >
+              <Paperclip size={12} /> Attach Image
+            </button>
+            <input ref={fileInputRef} type="file" multiple accept="image/*" className="hidden" onChange={handleFileChange} />
+          </div>
+        </div>
+      </div>
+
+      {/* Right: preview panel */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="h-14 border-b bg-white px-6 flex items-center justify-between z-10 shrink-0">
+          <div className="flex items-center gap-4">
+            <span className="font-bold text-sm text-slate-800 tracking-tight">Preview</span>
+            {accountName && (
+              <>
+                <div className="h-4 w-px bg-slate-200" />
+                <span className="text-[12px] text-slate-600">{accountName}</span>
+              </>
+            )}
+            {status === "exported" && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-bold">
+                <CheckCircle2 className="w-3 h-3" /> Exported
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {pdfUrl && (
+              <a href={pdfUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-slate-700 text-[11px] font-bold hover:border-indigo-300">
+                <ExternalLink className="w-3.5 h-3.5" /> Open PDF
+              </a>
+            )}
+            <button
+              onClick={exportPdf}
+              disabled={!proposalId || !content || exporting}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-500 text-white text-[11px] font-bold hover:bg-indigo-600 disabled:opacity-50"
+            >
+              {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+              {exporting ? "Exporting…" : (pdfUrl ? "Re-export" : "Export PDF")}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 bg-slate-50">
+          {content ? (
+            <div className="bg-white shadow-lg rounded-xl overflow-hidden max-w-5xl mx-auto">
+              <ProposalDocument content={content} showAiNotes={true} />
+            </div>
+          ) : (
+            <div className="h-full flex items-center justify-center">
+              <div className="text-center max-w-md">
+                <Sparkles className="w-12 h-12 text-indigo-300 mx-auto mb-4" />
+                <h2 className="text-lg font-bold text-slate-800 mb-2">No proposal yet</h2>
+                <p className="text-[13px] text-slate-500">
+                  Chat with ARIMA on the left. As soon as it has enough to draft, the proposal will render here. You can refine it through the conversation.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-function Label({ children }: { children: React.ReactNode }) {
-  return <label className="text-[11px] font-bold text-slate-700">{children}</label>;
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="flex-1 min-w-[200px]"><Label>{label}</Label>{children}</div>;
-}
-function Row({ children }: { children: React.ReactNode }) {
-  return <div className="flex flex-wrap gap-3">{children}</div>;
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      // strip the "data:<mime>;base64," prefix
+      const idx = result.indexOf(",");
+      resolve(idx >= 0 ? result.slice(idx + 1) : result);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }

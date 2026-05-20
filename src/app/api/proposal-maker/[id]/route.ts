@@ -24,6 +24,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
       title: proposals.title,
       versionNumber: proposals.versionNumber,
       sourceInputs: proposals.sourceInputs,
+      messages: proposals.messages,
       status: proposals.status,
       pdfDriveFileId: proposals.pdfDriveFileId,
       pdfDriveUrl: proposals.pdfDriveUrl,

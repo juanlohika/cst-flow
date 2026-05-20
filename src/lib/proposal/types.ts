@@ -103,31 +103,6 @@ export interface TimelinePhase {
   targetDate: string;     // e.g., "May 29, 2026" or "June 1-30, 2026"
 }
 
-/**
- * Inputs the user provides (form fields or ARIMA chat). The AI fills in the
- * gaps and produces a ProposalContent. Keep this small + close to "what a
- * human would think to type."
- */
-export interface ProposalUserInputs {
-  clientProfileId: string;
-  title: string;            // e.g., "Manpower Costing Module Addendum"
-  isAddendum?: boolean;
-  /** Free-form scope description — the AI writes the proper sections from this. */
-  scopeNotes: string;
-  /** Cost details — the AI never invents these. */
-  totalCost: string;
-  standardRate?: string;
-  discountedRate?: string;
-  combinedRate?: string;
-  guaranteedUsers?: string;
-  /** Timeline guidance — free-form. AI builds phases from this. */
-  timelineNotes?: string;
-  /** Client signatory (if known). */
-  clientSignatoryName?: string;
-  clientSignatoryTitle?: string;
-  /** MOI signatory — defaults to the generating user. */
-  moiSignatoryName?: string;
-  moiSignatoryTitle?: string;
-  /** Telegram file_ids for any reference images the user attached. F.3 fills this. */
-  attachmentTelegramFileIds?: string[];
-}
+// ProposalUserInputs (form-driven flow) was removed when we switched to the
+// conversational chat-on-left UI. The new flow uses ChatTurnArgs in
+// build-content.ts to drive the AI turn-by-turn.

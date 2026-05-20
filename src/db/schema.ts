@@ -919,8 +919,12 @@ export const proposals = sqliteTable("Proposal", {
   versionNumber:   integer("versionNumber").default(1).notNull(),
   // sourceInputs is the AI-generated structured JSON — sections, cost lines,
   // timeline phases, signatories, etc. The HTML preview + the PDF both render
-  // from this single source of truth.
-  sourceInputs:    text("sourceInputs"),                    // JSON
+  // from this single source of truth. May be null in early conversation when
+  // ARIMA is still asking clarifying questions.
+  sourceInputs:    text("sourceInputs"),                    // JSON of ProposalContent
+  // Conversation history between the user and ARIMA. JSON array of
+  // {role: "user"|"assistant", content, attachmentNames?}.
+  messages:        text("messages"),                        // JSON
   // Optional Telegram image refs that informed the AI (Phase F.3).
   attachmentRefs:  text("attachmentRefs"),                  // JSON
   status:          text("status").default("draft").notNull(), // draft | exported | sent | superseded

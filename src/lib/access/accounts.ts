@@ -251,6 +251,7 @@ export async function ensureAccessSchema(): Promise<void> {
       title TEXT NOT NULL,
       versionNumber INTEGER NOT NULL DEFAULT 1,
       sourceInputs TEXT,
+      messages TEXT,
       attachmentRefs TEXT,
       status TEXT NOT NULL DEFAULT 'draft',
       pdfDriveFileId TEXT,
@@ -262,6 +263,7 @@ export async function ensureAccessSchema(): Promise<void> {
       errorMessage TEXT,
       FOREIGN KEY (clientProfileId) REFERENCES ClientProfile(id) ON DELETE CASCADE
     )`);
+    try { await db.run(sql`ALTER TABLE Proposal ADD COLUMN messages TEXT`); } catch {}
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS Proposal_clientProfile_idx ON Proposal(clientProfileId)`); } catch {}
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS Proposal_generatedAt_idx ON Proposal(generatedAt)`); } catch {}
     // If a ProposalTemplate row exists from earlier scaffolding, migrate its
