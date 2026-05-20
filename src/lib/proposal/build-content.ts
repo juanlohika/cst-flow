@@ -10,6 +10,9 @@
  * The same function is called from web chat AND (later, in F.3) Telegram.
  */
 import { getModelForApp, generateWithRetry } from "@/lib/ai";
+import { db } from "@/db";
+import { skills as skillsTable } from "@/db/schema";
+import { and, asc, eq } from "drizzle-orm";
 import type { ProposalContent } from "./types";
 
 export interface ChatMessage {
@@ -51,7 +54,23 @@ export async function runChatTurn(args: ChatTurnArgs): Promise<{ ok: true; resul
   const model = await getModelForApp("brd-maker");
   if (!model) return { ok: false, error: "No AI model configured" };
 
-  const promptText = buildSystemPrompt(args);
+  // Load ALL active proposal skills, lower sortOrder first (= higher priority).
+  // Admins can edit these in /admin/skills to tune ARIMA's behavior without
+  // a code change.
+  let skillsBlock = "";
+  try {
+    const rows = await db.select()
+      .from(skillsTable)
+      .where(and(eq(skillsTable.category, "proposal"), eq(skillsTable.isActive, true)))
+      .orderBy(asc(skillsTable.sortOrder), asc(skillsTable.name));
+    if (rows.length > 0) {
+      skillsBlock = rows.map(s => s.content.trim()).join("\n\n---\n\n");
+    }
+  } catch (e) {
+    console.warn("[proposal/build-content] failed to load skills, falling back to hardcoded prompt:", e);
+  }
+
+  const promptText = (skillsBlock ? `${skillsBlock}\n\n---\n\n` : "") + buildSystemPrompt(args);
 
   // Build the multi-turn contents array Gemini expects.
   // We collapse our system+context+instructions into a single leading "user"

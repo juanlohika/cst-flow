@@ -35,11 +35,16 @@ export async function PUT(req: Request) {
 
     const body = await req.json().catch(() => ({}));
     const proposalsRootLink = String(body?.proposalsRootLink || "").trim();
+    const templateLink = String(body?.templateLink || "").trim();
     const proposalsRootFolderId = parseDriveId(proposalsRootLink);
     if (!proposalsRootFolderId) return NextResponse.json({ error: "proposalsRootLink isn't a recognizable Drive folder URL or id." }, { status: 400 });
 
-    // Verify access
+    let templateDriveFileId: string | null = null;
+    let templateDriveFileName: string | null = null;
+
     const ctx = await loadDriveCtx();
+
+    // Verify proposals-root access
     try {
       await ctx.drive.files.get({ fileId: proposalsRootFolderId, fields: "id, name, mimeType", supportsAllDrives: true });
     } catch (e: any) {
@@ -49,12 +54,41 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: msg }, { status: 400 });
     }
 
+    // Optional: template file. If provided, verify access + capture metadata.
+    if (templateLink) {
+      const tplId = parseDriveId(templateLink);
+      if (!tplId) return NextResponse.json({ error: "templateLink isn't a recognizable Drive file URL or id." }, { status: 400 });
+      try {
+        const meta = await ctx.drive.files.get({ fileId: tplId, fields: "id, name, mimeType", supportsAllDrives: true });
+        templateDriveFileId = tplId;
+        templateDriveFileName = meta?.data?.name || "(unnamed)";
+      } catch (e: any) {
+        const msg = (e?.code === 404 || e?.status === 404)
+          ? `Service account can't see the template file. Share it with ${ctx.serviceAccountEmail} as Editor.`
+          : (e?.message || "Failed to read template file.");
+        return NextResponse.json({ error: msg }, { status: 400 });
+      }
+    }
+
     const now = new Date().toISOString();
     await db.insert(proposalSettings)
-      .values({ id: "default", proposalsRootFolderId, updatedBy: session.user.id, updatedAt: now })
+      .values({
+        id: "default",
+        proposalsRootFolderId,
+        templateDriveFileId,
+        templateDriveFileName,
+        updatedBy: session.user.id,
+        updatedAt: now,
+      })
       .onConflictDoUpdate({
         target: proposalSettings.id,
-        set: { proposalsRootFolderId, updatedBy: session.user.id, updatedAt: now },
+        set: {
+          proposalsRootFolderId,
+          templateDriveFileId,
+          templateDriveFileName,
+          updatedBy: session.user.id,
+          updatedAt: now,
+        },
       });
     const fresh = await db.select().from(proposalSettings).where(eq(proposalSettings.id, "default")).limit(1);
     return NextResponse.json({ settings: fresh[0] || null });

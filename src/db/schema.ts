@@ -899,12 +899,15 @@ export const clientBindKeys = sqliteTable("ClientBindKey", {
 
 // ─── Phase F — Proposal Maker ─────────────────────────────────────
 // Single-row admin settings — points to the Drive folder where generated
-// PDFs are filed. No template needed: the proposal IS the HTML page rendered
-// from sourceInputs JSON, and the PDF is the Drive-exported version of that
-// HTML for the client.
+// PDFs are filed + the Drive template document. The template (.docx with
+// coarse placeholders like {{client_company_name}} and {{body_content}})
+// is the source of branding/styling; we fill it via docxtemplater at
+// export time and convert to PDF via Drive.
 export const proposalSettings = sqliteTable("ProposalSettings", {
   id:                    text("id").primaryKey(),               // always "default"
   proposalsRootFolderId: text("proposalsRootFolderId").notNull(), // top-level Drive folder, per-account subfolders nest under it
+  templateDriveFileId:   text("templateDriveFileId"),            // Drive file id of the .docx template (with placeholders)
+  templateDriveFileName: text("templateDriveFileName"),
   updatedBy:             text("updatedBy"),
   updatedAt:             text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });

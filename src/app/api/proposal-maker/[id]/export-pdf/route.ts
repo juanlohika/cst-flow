@@ -4,17 +4,19 @@ import { db } from "@/db";
 import { proposals, proposalSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { ensureAccessSchema, canAccessClient } from "@/lib/access/accounts";
-import { renderProposalToPdf } from "@/lib/proposal/render-pdf";
+import { renderTemplateProposalToPdf } from "@/lib/proposal/render-template-to-pdf";
 
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs";   // react-dom/server + googleapis need Node, not Edge
+export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /**
  * POST /api/proposal-maker/<id>/export-pdf
- * Renders the proposal's current sourceInputs JSON to a PDF via Drive's
- * HTML-import + PDF-export pipeline, files it in the per-account folder,
- * updates the Proposal row with pdfDriveFileId + pdfDriveUrl.
+ *
+ * Fills the configured Word template with the proposal's sourceInputs JSON
+ * (via docxtemplater), uploads the filled .docx to Drive for conversion to
+ * Google Doc + PDF, files the PDF in the per-account folder, and updates
+ * the Proposal row with pdfDriveFileId + pdfDriveUrl.
  */
 export async function POST(_req: Request, { params }: { params: { id: string } }) {
   try {
@@ -32,19 +34,21 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
 
     const settingsRows = await db.select().from(proposalSettings).where(eq(proposalSettings.id, "default")).limit(1);
     const settings = settingsRows[0];
-    if (!settings) return NextResponse.json({ error: "Proposal Maker settings not configured" }, { status: 400 });
+    if (!settings) return NextResponse.json({ error: "Proposal Maker settings not configured. Open /proposal-maker/settings and configure both the Drive folder and the template file." }, { status: 400 });
+    if (!settings.templateDriveFileId) return NextResponse.json({ error: "Proposal template not configured. Open /proposal-maker/settings and paste the Drive link to your template .docx (must contain the placeholders — see the in-app guide)." }, { status: 400 });
 
     let content: any;
     try { content = JSON.parse(row.sourceInputs || ""); }
-    catch { return NextResponse.json({ error: "Proposal has no rendered content" }, { status: 500 }); }
+    catch { return NextResponse.json({ error: "Proposal has no rendered content yet — chat with ARIMA first." }, { status: 400 }); }
 
     const today = new Date().toISOString().slice(0, 10);
     const safeTitle = (row.title || "Proposal").replace(/[\/\\]+/g, " ").replace(/\s+/g, " ").trim();
     const accountName = content.client?.name || "Unknown Account";
     const fileName = `${today} — ${accountName} — ${safeTitle} (v${row.versionNumber}).pdf`;
 
-    const result = await renderProposalToPdf({
+    const result = await renderTemplateProposalToPdf({
       content,
+      templateDriveFileId: settings.templateDriveFileId,
       proposalsRootFolderId: settings.proposalsRootFolderId,
       outputFileName: fileName,
     });

@@ -242,9 +242,13 @@ export async function ensureAccessSchema(): Promise<void> {
     await db.run(sql`CREATE TABLE IF NOT EXISTS ProposalSettings (
       id TEXT PRIMARY KEY,
       proposalsRootFolderId TEXT NOT NULL,
+      templateDriveFileId TEXT,
+      templateDriveFileName TEXT,
       updatedBy TEXT,
       updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
+    try { await db.run(sql`ALTER TABLE ProposalSettings ADD COLUMN templateDriveFileId TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE ProposalSettings ADD COLUMN templateDriveFileName TEXT`); } catch {}
     await db.run(sql`CREATE TABLE IF NOT EXISTS Proposal (
       id TEXT PRIMARY KEY,
       clientProfileId TEXT NOT NULL,
