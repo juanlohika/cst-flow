@@ -491,11 +491,17 @@ export function scrubToolNarration(text: string, toolDefs?: any, knownToolNames?
     //   *tool_name* / _tool_name_    ← italicized (Telegram markdown ate the underscores)
     // Each gets a tailored strip.
     out = out.replace(new RegExp(`\\[?(?:${escaped.join("|")})\\s*\\([^)]*\\)\\]?`, "gi"), "");
+    // NEW: bracket-wrapped bare name with NO args — e.g. "[portfolio_health_summary]"
+    // appears as the model's pseudo-citation of which tool it's invoking. Strip it.
+    out = out.replace(new RegExp(`\\[(?:${escaped.join("|")})\\]`, "gi"), "");
     // Match the same names with underscores ELIDED (Telegram-markdown'd: findaccountsbycriteria)
     const elided = escaped.map(n => n.replace(/_/g, ""));
     out = out.replace(new RegExp(`\\b(?:${elided.join("|")})\\b`, "gi"), "");
     // Italicized form: _tool_name_ or *tool_name*
     out = out.replace(new RegExp(`[_*](?:${escaped.join("|")})[_*]`, "gi"), "");
+    // Also strip bare bracket-pseudo-citations like "[some_tool_name]" using the
+    // generic pattern as a catch-all (any snake_case identifier in brackets).
+    out = out.replace(/\[[a-z][a-z0-9_]*_[a-z0-9_]+\]/g, "");
   }
   // Generic backticked snake_case looking like a tool name (anything_with_underscores)
   out = out.replace(/`[a-z][a-z0-9_]*_[a-z0-9_]+`/g, "");
@@ -513,10 +519,17 @@ export function scrubToolNarration(text: string, toolDefs?: any, knownToolNames?
   const fillerLines = [
     /^\s*I'?ll (now )?(?:use|invoke|call|fetch.*using|attempt to call|check via|need to)\b.*$/gim,
     /^\s*Let me (?:check|verify|fetch|look up|pull|grab|see).{0,80}(?:result|details|history|status)?\.?\s*$/gim,
+    /^\s*Let me (?:use|invoke|call|run|fire|trigger)\b.*$/gim,
     /^\s*I'?(?:ve|m) (?:attempting|going to) (?:to )?(?:call|invoke|use|run)\b.*$/gim,
     /^\s*I'?ve attempted to .*$/gim,
     /^\s*using the [`']?[a-zA-Z_]+[`']?(?: tool)?\.?\s*$/gim,
-    /^\s*To give you (?:an? )?(?:overview|summary|view|look)(?: of [^,]+)?, I'?ll .*$/gim,
+    /^\s*To (?:give|provide|offer) you (?:an? )?(?:overview|summary|view|look|list|information|details|update)(?:[^,]{0,80})?,? I'?ll .*$/gim,
+    // Re-introduction filler — kills "Hi <name>, I'm ARIMA…" on follow-up turns
+    /^\s*Hi [A-Z][a-zA-Z]+,? I'?m ARIMA[^.\n]*[.!]?\s*$/gim,
+    // "I'll check the available data."-style line breaks
+    /^\s*(?:I'?ll|Let me) check the available data[.\s]*$/gim,
+    // "Based on the [tool_name]" pseudo-citation prefix lines
+    /^\s*Based on the [a-z_]{6,}\s*[.,:]/gim,
   ];
   for (const re of fillerLines) out = out.replace(re, "");
 
@@ -1053,8 +1066,12 @@ Call \`create_request\` with the right category. The tool MUST be invoked throug
 If you find yourself about to type a tool name in your reply, STOP and ask: "am I actually invoking this tool through the function-call mechanism?" If the answer is no, do not type the name and do not describe the action as having happened.`;
   }
 
-  // Build guardrails block (forbidden phrases, required disclosures, forbidden topics)
-  const guardrailsPrompt = await buildGuardrailsPrompt().catch(() => "");
+  // Build guardrails block (forbidden phrases, required disclosures, forbidden topics).
+  // `isFirstTurn` controls whether the "introduce yourself" disclosure is injected —
+  // we suppress it whenever there's already an assistant message in history, so ARIMA
+  // doesn't re-introduce on every turn.
+  const isFirstTurn = !(args.priorContents || []).some(c => c.role === "model");
+  const guardrailsPrompt = await buildGuardrailsPrompt({ isFirstTurn }).catch(() => "");
 
   const systemInstruction = (clientContext
     ? `${baseInstruction}\n\n---\n\n${clientContext}`

@@ -115,8 +115,8 @@ const DEFAULT_GUARDRAILS: Array<Omit<Guardrail, "id">> = [
   {
     type: "required_disclosure",
     label: "Identify as AI on first message",
-    pattern: "On your FIRST message in any new conversation, identify yourself as an AI assistant (e.g. 'Hi, I'm ARIMA — an AI assistant for the CST team').",
-    description: "Required transparency — clients must know they're talking to an AI.",
+    pattern: "If — AND ONLY IF — this is your very first message in a brand-new conversation (no prior assistant messages exist in this thread), briefly identify yourself as ARIMA, an AI assistant for the CST team. After that first introduction, NEVER re-introduce yourself again in the same conversation, in DMs you've already chatted in, or in group chats where you've already replied. Most replies should have NO introduction at all — jump straight to answering or asking what's needed, like a normal teammate would.",
+    description: "Required transparency — but only once per conversation. Re-introducing every turn feels robotic and breaks trust.",
     enabled: true,
     isBuiltIn: true,
     priority: 5,
@@ -150,20 +150,31 @@ const DEFAULT_GUARDRAILS: Array<Omit<Guardrail, "id">> = [
   },
 ];
 
-export async function seedDefaultGuardrails(): Promise<{ created: number; skipped: number }> {
+export async function seedDefaultGuardrails(): Promise<{ created: number; updated: number; skipped: number }> {
   let created = 0;
+  let updated = 0;
   let skipped = 0;
   const now = new Date().toISOString();
 
   for (const g of DEFAULT_GUARDRAILS) {
     const existing = await db
-      .select({ id: arimaGuardrails.id })
+      .select({ id: arimaGuardrails.id, pattern: arimaGuardrails.pattern, description: arimaGuardrails.description, isBuiltIn: arimaGuardrails.isBuiltIn })
       .from(arimaGuardrails)
       .where(and(eq(arimaGuardrails.type, g.type), eq(arimaGuardrails.label, g.label)))
       .limit(1);
 
     if (existing[0]) {
-      skipped++;
+      // Refresh built-in guardrails when the pattern or description has drifted
+      // from the code's default. Admins' enable/disable + priority choices are
+      // preserved — only the wording updates. Non-built-in rows are left alone.
+      if (existing[0].isBuiltIn && (existing[0].pattern !== g.pattern || existing[0].description !== g.description)) {
+        await db.update(arimaGuardrails)
+          .set({ pattern: g.pattern, description: g.description, updatedAt: now })
+          .where(eq(arimaGuardrails.id, existing[0].id));
+        updated++;
+      } else {
+        skipped++;
+      }
       continue;
     }
 
@@ -182,7 +193,7 @@ export async function seedDefaultGuardrails(): Promise<{ created: number; skippe
     });
     created++;
   }
-  return { created, skipped };
+  return { created, updated, skipped };
 }
 
 // ─── Prompt injection ──────────────────────────────────────────────────
@@ -190,14 +201,31 @@ export async function seedDefaultGuardrails(): Promise<{ created: number; skippe
 /**
  * Builds a guardrails block that gets appended to the system prompt.
  * Only output-affecting rules go here (input checks happen separately).
+ *
+ * `isFirstTurn` lets the caller suppress the "introduce yourself" disclosure
+ * when there's already conversation history. Without this, the model keeps
+ * re-introducing itself every turn, which feels robotic.
  */
-export async function buildGuardrailsPrompt(): Promise<string> {
+export async function buildGuardrailsPrompt(opts: { isFirstTurn?: boolean } = {}): Promise<string> {
   const rules = await listGuardrails({ enabledOnly: true });
   if (rules.length === 0) return "";
 
   const forbiddenPhrases = rules.filter(r => r.type === "forbidden_phrase");
-  const requiredDisclosures = rules.filter(r => r.type === "required_disclosure");
+  let requiredDisclosures = rules.filter(r => r.type === "required_disclosure");
   const forbiddenTopics = rules.filter(r => r.type === "forbidden_topic");
+
+  // If this isn't the first turn, strip the introduction-self disclosure
+  // entirely. Identified by label "Identify as AI on first message" (built-in)
+  // or any rule whose pattern starts with the introduction guidance.
+  if (opts.isFirstTurn === false) {
+    requiredDisclosures = requiredDisclosures.filter(r => {
+      const lbl = (r.label || "").toLowerCase();
+      const pat = (r.pattern || "").toLowerCase();
+      if (lbl.includes("identify as ai")) return false;
+      if (pat.startsWith("if — and only if") || pat.startsWith("on your first message")) return false;
+      return true;
+    });
+  }
 
   const lines: string[] = [];
   lines.push("## GUARDRAILS (mandatory rules from admin)");
@@ -225,6 +253,13 @@ export async function buildGuardrailsPrompt(): Promise<string> {
     for (const r of requiredDisclosures) {
       lines.push(`- ${r.pattern}`);
     }
+    lines.push("");
+  }
+
+  // Add a positive instruction to discourage re-introductions
+  if (opts.isFirstTurn === false) {
+    lines.push("### Continuing-conversation tone:");
+    lines.push("- You're already in an ongoing conversation. Do NOT re-introduce yourself. Do NOT start with 'Hi, I'm ARIMA' or 'I'll check the available data' or 'Let me call the X tool'. Just answer or ask the next question, like a teammate would.");
     lines.push("");
   }
 
