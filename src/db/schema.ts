@@ -941,6 +941,50 @@ export const proposals = sqliteTable("Proposal", {
   errorMessage:    text("errorMessage"),
 });
 
+// ─── Phase G — Training Video Generator ───────────────────────────
+// Single-row admin settings (Drive root for training videos + defaults).
+export const trainingVideoSettings = sqliteTable("TrainingVideoSettings", {
+  id:                    text("id").primaryKey(),               // always "default"
+  trainingRootFolderId:  text("trainingRootFolderId").notNull(), // Drive folder where per-video subfolders live
+  defaultVoice:          text("defaultVoice").default("Charon").notNull(),
+  defaultTtsModel:       text("defaultTtsModel").default("gemini-2.5-flash-preview-tts").notNull(),
+  defaultLanguage:       text("defaultLanguage").default("en-US").notNull(),
+  defaultAspectRatio:    text("defaultAspectRatio").default("9:16").notNull(), // 9:16 | 16:9
+  updatedBy:             text("updatedBy"),
+  updatedAt:             text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// One row per generated training video. Scenes + captions stored as JSON
+// to keep the schema simple; we'll split if scale demands it later.
+export const trainingVideos = sqliteTable("TrainingVideo", {
+  id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  title:           text("title").notNull(),
+  // "pptx" for v1; "screen_recording" reserved for Phase G.3
+  sourceType:      text("sourceType").default("pptx").notNull(),
+  // Drive id of the uploaded source file (PPTX or MP4)
+  sourceDriveFileId:   text("sourceDriveFileId"),
+  sourceDriveFileName: text("sourceDriveFileName"),
+  // Drive subfolder for this video (raw/audio/output)
+  videoFolderId:   text("videoFolderId"),
+  // Voice config — defaults to settings.defaultVoice at creation
+  voice:           text("voice").default("Charon").notNull(),
+  ttsModel:        text("ttsModel").default("gemini-2.5-flash-preview-tts").notNull(),
+  language:        text("language").default("en-US").notNull(),
+  stylePrompt:     text("stylePrompt"),
+  aspectRatio:     text("aspectRatio").default("9:16").notNull(),
+  // Free-form prompt steering the script gen (audience, tone, etc.)
+  userPrompt:      text("userPrompt"),
+  // The structured output: scenes JSON. Shape in src/lib/training-video/types.ts.
+  scenes:          text("scenes"),                              // JSON array of TrainingScene
+  // Conversation history with ARIMA (chat-driven refinements)
+  messages:        text("messages"),                            // JSON
+  status:          text("status").default("draft").notNull(),   // draft | generating | ready | error
+  errorMessage:    text("errorMessage"),
+  generatedBy:     text("generatedBy").notNull(),
+  generatedAt:     text("generatedAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
 // TelegramAccountLink: maps a Telegram user ID to a CST OS user ID.
 // Required before an admin can run sensitive commands (/bind, /unbind) in any group.
 export const telegramAccountLinks = sqliteTable("TelegramAccountLink", {

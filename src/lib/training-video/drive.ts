@@ -1,0 +1,235 @@
+/**
+ * Phase G.1 — Drive helpers for Training Video Generator.
+ *
+ * Reuses the service-account auth shared with BRD, Account Health, Proposal Maker.
+ * Adds training-video-specific operations: ensure per-video subfolder, upload
+ * source PPTX, upload per-scene mp3 audio.
+ *
+ * Folder structure:
+ *   <trainingRoot>/<videoFolderName>/
+ *     ├── raw/<sourceFile>
+ *     └── audio/scene_<n>.mp3
+ *
+ * videoFolderName = "<YYYY-MM-DD> — <title>" (sanitized)
+ */
+import { Readable } from "stream";
+import { loadGoogleConfig, getDriveClient } from "@/lib/drive-export-helpers";
+
+const FOLDER_MIME = "application/vnd.google-apps.folder";
+const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const MP3_MIME = "audio/mpeg";
+
+export interface DriveCtx {
+  drive: any;
+  serviceAccountEmail: string;
+}
+
+export async function loadDriveCtx(): Promise<DriveCtx> {
+  const cfg = await loadGoogleConfig();
+  if (!cfg) {
+    throw new Error("Google service account isn't configured. Set it in Admin → Auth → Google Integration first.");
+  }
+  const { drive, credentials } = await getDriveClient(cfg);
+  return { drive, serviceAccountEmail: credentials.client_email || "(unknown)" };
+}
+
+/** Same URL-id parser as the proposal module. Handles every Drive URL shape. */
+export function parseDriveId(input: string): string | null {
+  const s = (input || "").trim();
+  if (!s) return null;
+  const patterns: RegExp[] = [
+    /\/document\/d\/([a-zA-Z0-9_-]{20,})/,
+    /\/file\/d\/([a-zA-Z0-9_-]{20,})/,
+    /\/folders\/([a-zA-Z0-9_-]{20,})/,
+    /\/presentation\/d\/([a-zA-Z0-9_-]{20,})/,
+    /[?&]id=([a-zA-Z0-9_-]{20,})/,
+  ];
+  for (const p of patterns) {
+    const m = s.match(p);
+    if (m && m[1]) return m[1];
+  }
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(s)) return s;
+  return null;
+}
+
+/** Verify the service account can see a folder. Throws with a clear message if not. */
+export async function verifyFolderAccess(ctx: DriveCtx, folderId: string): Promise<void> {
+  try {
+    await ctx.drive.files.get({
+      fileId: folderId,
+      fields: "id, name, mimeType",
+      supportsAllDrives: true,
+    });
+  } catch (e: any) {
+    if (e?.code === 404 || e?.status === 404) {
+      throw new Error(
+        `Service account can't see folder ${folderId}. ` +
+        `Share it with ${ctx.serviceAccountEmail} as Editor.`
+      );
+    }
+    throw e;
+  }
+}
+
+/**
+ * Create (or find) the per-video subfolder. Name = "<YYYY-MM-DD> — <title>".
+ * Idempotent — searches by name first.
+ */
+export async function ensureVideoFolder(ctx: DriveCtx, args: {
+  trainingRootFolderId: string;
+  title: string;
+}): Promise<{ folderId: string; folderName: string }> {
+  const today = new Date().toISOString().slice(0, 10);
+  const safeTitle = sanitizeName(args.title);
+  const folderName = `${today} — ${safeTitle}`;
+
+  // Search for existing folder by name + parent
+  const q = [
+    `mimeType='${FOLDER_MIME}'`,
+    `'${args.trainingRootFolderId}' in parents`,
+    `name='${escapeQuery(folderName)}'`,
+    `trashed=false`,
+  ].join(" and ");
+  const list = await ctx.drive.files.list({
+    q,
+    fields: "files(id, name)",
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+    pageSize: 1,
+  });
+  const existing = list?.data?.files?.[0];
+  if (existing?.id) return { folderId: existing.id, folderName };
+
+  const created = await ctx.drive.files.create({
+    requestBody: {
+      name: folderName,
+      mimeType: FOLDER_MIME,
+      parents: [args.trainingRootFolderId],
+    },
+    fields: "id, name",
+    supportsAllDrives: true,
+  });
+  if (!created?.data?.id) throw new Error("Drive didn't return an id for the new video folder.");
+  return { folderId: created.data.id, folderName };
+}
+
+/** Upload the source PPTX into <videoFolder>/raw/ (auto-creates raw subfolder). */
+export async function uploadSourcePptx(ctx: DriveCtx, args: {
+  videoFolderId: string;
+  fileName: string;
+  buffer: Buffer;
+}): Promise<{ fileId: string; fileName: string }> {
+  const rawFolderId = await ensureSubfolder(ctx, args.videoFolderId, "raw");
+  const created = await ctx.drive.files.create({
+    requestBody: {
+      name: args.fileName,
+      mimeType: PPTX_MIME,
+      parents: [rawFolderId],
+    },
+    media: {
+      mimeType: PPTX_MIME,
+      body: Readable.from(args.buffer),
+    },
+    fields: "id, name",
+    supportsAllDrives: true,
+  });
+  const fileId = created?.data?.id;
+  if (!fileId) throw new Error("Drive didn't return an id for the uploaded PPTX.");
+  return { fileId, fileName: created.data.name || args.fileName };
+}
+
+/** Upload one scene's mp3 into <videoFolder>/audio/scene_<n>.mp3 */
+export async function uploadSceneAudio(ctx: DriveCtx, args: {
+  videoFolderId: string;
+  sceneOrder: number;
+  buffer: Buffer;
+}): Promise<{ fileId: string; webViewLink: string }> {
+  const audioFolderId = await ensureSubfolder(ctx, args.videoFolderId, "audio");
+  const fileName = `scene_${String(args.sceneOrder).padStart(2, "0")}.mp3`;
+
+  // Overwrite if it already exists (re-generating one scene)
+  const existing = await findChildByName(ctx, audioFolderId, fileName);
+  if (existing) {
+    const updated = await ctx.drive.files.update({
+      fileId: existing,
+      media: { mimeType: MP3_MIME, body: Readable.from(args.buffer) },
+      fields: "id, webViewLink",
+      supportsAllDrives: true,
+    });
+    return {
+      fileId: updated.data.id!,
+      webViewLink: updated.data.webViewLink || `https://drive.google.com/file/d/${updated.data.id}/view`,
+    };
+  }
+
+  const created = await ctx.drive.files.create({
+    requestBody: {
+      name: fileName,
+      mimeType: MP3_MIME,
+      parents: [audioFolderId],
+    },
+    media: {
+      mimeType: MP3_MIME,
+      body: Readable.from(args.buffer),
+    },
+    fields: "id, webViewLink",
+    supportsAllDrives: true,
+  });
+  const fileId = created?.data?.id;
+  if (!fileId) throw new Error("Drive didn't return an id for the audio file.");
+  return {
+    fileId,
+    webViewLink: created.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`,
+  };
+}
+
+/** Download a Drive file as bytes (used for PPTX → Gemini). */
+export async function downloadFile(ctx: DriveCtx, fileId: string): Promise<Buffer> {
+  const resp = await ctx.drive.files.get(
+    { fileId, alt: "media", supportsAllDrives: true },
+    { responseType: "arraybuffer" },
+  );
+  return Buffer.from(resp.data as ArrayBuffer);
+}
+
+// ─── Internal helpers ─────────────────────────────────────────────
+
+async function ensureSubfolder(ctx: DriveCtx, parentId: string, name: string): Promise<string> {
+  const existing = await findChildByName(ctx, parentId, name);
+  if (existing) return existing;
+  const created = await ctx.drive.files.create({
+    requestBody: {
+      name,
+      mimeType: FOLDER_MIME,
+      parents: [parentId],
+    },
+    fields: "id",
+    supportsAllDrives: true,
+  });
+  if (!created?.data?.id) throw new Error(`Failed to create subfolder ${name}`);
+  return created.data.id;
+}
+
+async function findChildByName(ctx: DriveCtx, parentId: string, name: string): Promise<string | null> {
+  const q = [
+    `'${parentId}' in parents`,
+    `name='${escapeQuery(name)}'`,
+    `trashed=false`,
+  ].join(" and ");
+  const list = await ctx.drive.files.list({
+    q,
+    fields: "files(id, name)",
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+    pageSize: 1,
+  });
+  return list?.data?.files?.[0]?.id || null;
+}
+
+function sanitizeName(s: string): string {
+  return (s || "").replace(/[\/\\]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Untitled";
+}
+
+function escapeQuery(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}

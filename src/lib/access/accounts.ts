@@ -290,6 +290,49 @@ export async function ensureAccessSchema(): Promise<void> {
       console.warn("[ensureAccessSchema] Proposal Maker app seed failed:", e);
     }
 
+    // Phase G.1: Training Video Generator — script + voiceover + captions
+    await db.run(sql`CREATE TABLE IF NOT EXISTS TrainingVideoSettings (
+      id TEXT PRIMARY KEY,
+      trainingRootFolderId TEXT NOT NULL,
+      defaultVoice TEXT NOT NULL DEFAULT 'Charon',
+      defaultTtsModel TEXT NOT NULL DEFAULT 'gemini-2.5-flash-preview-tts',
+      defaultLanguage TEXT NOT NULL DEFAULT 'en-US',
+      defaultAspectRatio TEXT NOT NULL DEFAULT '9:16',
+      updatedBy TEXT,
+      updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await db.run(sql`CREATE TABLE IF NOT EXISTS TrainingVideo (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      sourceType TEXT NOT NULL DEFAULT 'pptx',
+      sourceDriveFileId TEXT,
+      sourceDriveFileName TEXT,
+      videoFolderId TEXT,
+      voice TEXT NOT NULL DEFAULT 'Charon',
+      ttsModel TEXT NOT NULL DEFAULT 'gemini-2.5-flash-preview-tts',
+      language TEXT NOT NULL DEFAULT 'en-US',
+      stylePrompt TEXT,
+      aspectRatio TEXT NOT NULL DEFAULT '9:16',
+      userPrompt TEXT,
+      scenes TEXT,
+      messages TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      errorMessage TEXT,
+      generatedBy TEXT NOT NULL,
+      generatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+      updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS TrainingVideo_generatedAt_idx ON TrainingVideo(generatedAt)`); } catch {}
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS TrainingVideo_status_idx ON TrainingVideo(status)`); } catch {}
+
+    // Seed the Training Video Generator app under AI Intelligence.
+    try {
+      await db.run(sql`INSERT OR IGNORE INTO App (id, name, slug, description, icon, href, isActive, isBuiltIn, sortOrder, createdAt, updatedAt)
+        VALUES ('app_training_videos', 'Training Videos', 'training-videos', 'Turn a PowerPoint into a narrated training video — AI script + Charon voiceover + timed captions, ready for manual assembly.', 'MonitorPlay', '/training-videos', 1, 1, 55, datetime('now'), datetime('now'))`);
+    } catch (e) {
+      console.warn("[ensureAccessSchema] Training Videos app seed failed:", e);
+    }
+
     // Phase E.3: master modules list
     await db.run(sql`CREATE TABLE IF NOT EXISTS AccountModule (
       id TEXT PRIMARY KEY,
