@@ -29,6 +29,16 @@ export interface BuildScriptArgs {
   language?: string;
 }
 
+export interface BuildScriptFromVideoArgs {
+  /** Keyframes extracted by the worker (base64 JPEGs + timestamps). */
+  frames: Array<{ timestampSec: number; jpegBase64: string }>;
+  /** Total video duration. Helps the AI set the last scene's end timestamp. */
+  durationSec: number;
+  title: string;
+  userPrompt?: string;
+  language?: string;
+}
+
 export interface ChatRefineArgs {
   userMessage: string;
   currentContent: TrainingVideoContent;
@@ -68,6 +78,45 @@ export async function buildScriptFromPptx(args: BuildScriptArgs): Promise<AiResu
     }],
   });
 
+  const raw = (result?.response?.text?.() || "").trim();
+  const parsed = parseAiResponse(raw);
+  if (!parsed) return { ok: false, error: "AI returned non-JSON output", rawAi: raw };
+  return { ok: true, content: parsed.content, reply: parsed.reply };
+}
+
+/**
+ * Initial script generation from a screen recording's keyframes.
+ * AI sees the frames + their timestamps and segments the video into scenes
+ * with sourceStart/EndSec ranges. Narration is regenerated; original audio
+ * will be replaced by TTS in the final render.
+ */
+export async function buildScriptFromVideoFrames(args: BuildScriptFromVideoArgs): Promise<AiResult> {
+  const model = await getModelForApp("training-videos").catch(() => null);
+  if (!model) return { ok: false, error: "No AI model configured" };
+
+  const skillsBlock = await loadSkillsBlock();
+  const promptText = buildVideoPrompt({
+    skillsBlock,
+    title: args.title,
+    userPrompt: args.userPrompt || "",
+    language: args.language || "en-US",
+    durationSec: args.durationSec,
+    frameCount: args.frames.length,
+  });
+
+  // Build the Gemini contents: prompt text + each frame inlineData with a
+  // small text label noting its timestamp. Gemini's context window can hold
+  // dozens of small frames; we cap at 60 to keep latency + cost reasonable.
+  const cappedFrames = args.frames.slice(0, 60);
+  const parts: any[] = [{ text: promptText }];
+  for (const f of cappedFrames) {
+    parts.push({ text: `[t=${f.timestampSec.toFixed(1)}s]` });
+    parts.push({ inlineData: { mimeType: "image/jpeg", data: f.jpegBase64 } });
+  }
+
+  const result = await generateWithRetry(model, {
+    contents: [{ role: "user", parts }],
+  });
   const raw = (result?.response?.text?.() || "").trim();
   const parsed = parseAiResponse(raw);
   if (!parsed) return { ok: false, error: "AI returned non-JSON output", rawAi: raw };
@@ -190,6 +239,82 @@ ${args.userPrompt || "(none — use your best judgment)"}
 THE POWERPOINT FILE IS ATTACHED BELOW AS INLINE DATA.
 
 Read it carefully. Produce the JSON.`;
+}
+
+function buildVideoPrompt(args: {
+  skillsBlock: string;
+  title: string;
+  userPrompt: string;
+  language: string;
+  durationSec: number;
+  frameCount: number;
+}): string {
+  return `${args.skillsBlock ? args.skillsBlock + "\n\n---\n\n" : ""}You are generating narration scripts for a training video at Tarkie (MobileOptima, Inc.). A team member uploaded a SCREEN RECORDING of someone using the Tarkie app. You see ${args.frameCount} keyframes sampled at regular intervals, each labeled with its timestamp [t=Ns]. The total video is ${args.durationSec.toFixed(1)} seconds long.
+
+Your job: segment the recording into LOGICAL SCENES based on what's happening on screen, then write a narration script for each scene. The original audio will be REPLACED by TTS narration in the final video — you don't need to match the original audio, only the visuals.
+
+═══════════════════════════════════════════════════════════
+WHAT TO LOOK FOR (scene boundaries)
+═══════════════════════════════════════════════════════════
+- A NEW screen appears (different app section, new modal, settings page → main page)
+- The user starts a NEW TASK (was filling a form, now submitting; was browsing, now tapping action)
+- A clear pause / completion (loading screen, success message, then continuing)
+- Tutorial-style "step changes" (introducing a feature, then demonstrating, then result)
+
+Aim for 3-8 scenes for a 60-90 second video. Don't over-segment (more than 1 scene per 5 seconds is usually too many).
+
+═══════════════════════════════════════════════════════════
+OUTPUT FORMAT (STRICT JSON ONLY — no markdown fences)
+═══════════════════════════════════════════════════════════
+{
+  "reply": "Short message acknowledging what you saw + how you segmented it (1-2 sentences).",
+  "content": {
+    "title": "${escapeJson(args.title)}",
+    "scenes": [
+      {
+        "order": 1,
+        "title": "Opening the app",
+        "narrationScript": "When you open Tarkie, you'll see your home screen with today's tasks listed.",
+        "sourceSlideNumber": 0,
+        "caption": "When you open Tarkie, you'll see your home screen with today's tasks listed.",
+        "aiNote": "Scene shows app launch + home screen. Set source range 0-8s based on the frames.",
+        "sourceStartSec": 0,
+        "sourceEndSec": 8
+      }
+    ],
+    "aiNotes": {
+      "inferred": ["I segmented based on screen transitions."],
+      "missing": ["Confirm the audience — I assumed new field staff."],
+      "summary": "Drafted 5 scenes for the check-in tutorial recording."
+    }
+  }
+}
+
+═══════════════════════════════════════════════════════════
+CRITICAL FIELD-LEVEL RULES (for screen-recording scenes)
+═══════════════════════════════════════════════════════════
+- sourceStartSec / sourceEndSec: REQUIRED. Both in whole seconds. Use the [t=Ns] labels in the frames to pick boundaries. Each scene's range should cover the screen activity that scene describes.
+- Scenes must be in chronological order (order=1 has the earliest sourceStartSec).
+- Scenes must be CONTIGUOUS: scene N+1's sourceStartSec should equal scene N's sourceEndSec (no gaps, no overlaps).
+- Sum of all (sourceEndSec - sourceStartSec) should equal ${args.durationSec.toFixed(1)} (the total video length).
+- narrationScript: describe what's happening on screen for the NEW audience (field staff using Tarkie for the first time). Don't transcribe the original speaker — you can't hear them and the new voice will replace it.
+
+═══════════════════════════════════════════════════════════
+VOICE & STYLE GUIDELINES
+═══════════════════════════════════════════════════════════
+- AUDIENCE: new field staff. Friendly, direct, plain language.
+- SENTENCES: 1-3 short sentences per scene. Aim for narration that's ~80-90% as long as the scene duration (so the voiceover finishes just before the scene ends).
+- ACTION-ORIENTED: "Tap the green Check-In button" beats "the user taps a button".
+- NO JARGON: skip "leverage", "synergy", "best-in-class".
+- LANGUAGE: ${args.language}.
+
+═══════════════════════════════════════════════════════════
+GUIDANCE FROM THE TEAM MEMBER (optional)
+═══════════════════════════════════════════════════════════
+${args.userPrompt || "(none — use your best judgment)"}
+
+═══════════════════════════════════════════════════════════
+THE KEYFRAMES FOLLOW — read them carefully, then produce the JSON.`;
 }
 
 function buildRefinePrompt(args: {

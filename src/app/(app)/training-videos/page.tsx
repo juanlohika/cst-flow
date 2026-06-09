@@ -49,6 +49,7 @@ function Content() {
 
   const [prompt, setPrompt] = useState("");
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [sourceMode, setSourceMode] = useState<"pptx" | "video">("pptx");
   const [userPromptForUpload, setUserPromptForUpload] = useState("");
   const [titleForUpload, setTitleForUpload] = useState("");
   const [sending, setSending] = useState(false);
@@ -131,19 +132,23 @@ function Content() {
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".pptx")) {
-      setError("Only .pptx files supported in v1");
+    const lower = file.name.toLowerCase();
+    if (sourceMode === "pptx" && !lower.endsWith(".pptx")) {
+      setError("PPTX mode expects a .pptx file");
+      return;
+    }
+    if (sourceMode === "video" && !lower.endsWith(".mp4") && !lower.endsWith(".mov")) {
+      setError("Screen recording mode expects an .mp4 or .mov file");
       return;
     }
     setPendingFile(file);
     if (!titleForUpload) {
-      // Derive a default title from the filename
-      setTitleForUpload(file.name.replace(/\.pptx$/i, "").replace(/[_-]+/g, " "));
+      setTitleForUpload(file.name.replace(/\.(pptx|mp4|mov)$/i, "").replace(/[_-]+/g, " "));
     }
   };
 
   const upload = async () => {
-    if (!pendingFile) { setError("Pick a PPTX file first"); return; }
+    if (!pendingFile) { setError("Pick a file first"); return; }
     if (!titleForUpload.trim()) { setError("Give it a title"); return; }
     setSending(true);
     setError(null);
@@ -155,7 +160,10 @@ function Content() {
       if (userPromptForUpload.trim()) formData.append("userPrompt", userPromptForUpload);
       formData.append("voice", voice);
 
-      const res = await fetch("/api/training-videos/create", { method: "POST", body: formData });
+      const endpoint = sourceMode === "video"
+        ? "/api/training-videos/create-from-video"
+        : "/api/training-videos/create";
+      const res = await fetch(endpoint, { method: "POST", body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Generation failed");
 
@@ -279,8 +287,27 @@ function Content() {
           {!videoId ? (
             <div className="space-y-3">
               <div className="bg-violet-50/60 border border-violet-100 rounded-2xl p-5 text-[13px] text-slate-600 leading-relaxed">
-                <div className="font-bold text-slate-800 mb-1">Upload a PowerPoint deck</div>
-                I'll read every slide, generate narration scripts in Tarkie's voice, and produce voiceover audio for each scene. You'll get a bundle ready for CapCut / Descript / iMovie.
+                <div className="font-bold text-slate-800 mb-1">
+                  {sourceMode === "pptx" ? "Upload a PowerPoint deck" : "Upload a screen recording"}
+                </div>
+                {sourceMode === "pptx"
+                  ? "I'll read every slide, generate narration scripts in Tarkie's voice, and produce voiceover audio for each scene."
+                  : "I'll analyze the recording, segment it into logical scenes, write a fresh narration, and produce TTS voiceover that replaces the original audio."}
+              </div>
+
+              <div className="flex gap-2 rounded-lg bg-slate-100 p-1">
+                <button
+                  onClick={() => { setSourceMode("pptx"); setPendingFile(null); }}
+                  className={`flex-1 px-3 py-1.5 rounded-md text-[12px] font-bold transition ${sourceMode === "pptx" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+                >
+                  PowerPoint
+                </button>
+                <button
+                  onClick={() => { setSourceMode("video"); setPendingFile(null); }}
+                  className={`flex-1 px-3 py-1.5 rounded-md text-[12px] font-bold transition ${sourceMode === "video" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+                >
+                  Screen recording
+                </button>
               </div>
 
               <div>
@@ -322,17 +349,26 @@ function Content() {
               </div>
 
               <div>
-                <label className="text-[11px] font-bold text-slate-700">PowerPoint file (.pptx)</label>
+                <label className="text-[11px] font-bold text-slate-700">
+                  {sourceMode === "pptx" ? "PowerPoint file (.pptx)" : "Screen recording (.mp4 / .mov)"}
+                </label>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                  accept={sourceMode === "pptx"
+                    ? ".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    : ".mp4,.mov,video/mp4,video/quicktime"}
                   onChange={handleFile}
                   className="mt-1 w-full text-[12px]"
                 />
                 {pendingFile && (
                   <p className="text-[10px] text-slate-500 mt-1">
-                    <Paperclip className="w-2.5 h-2.5 inline -mt-0.5" /> {pendingFile.name} · {(pendingFile.size / 1024).toFixed(0)} KB
+                    <Paperclip className="w-2.5 h-2.5 inline -mt-0.5" /> {pendingFile.name} · {(pendingFile.size / 1024 / 1024).toFixed(1)} MB
+                  </p>
+                )}
+                {sourceMode === "video" && (
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Max 500MB. Use the existing audio? Not yet — original audio is replaced by TTS narration.
                   </p>
                 )}
               </div>

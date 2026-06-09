@@ -44,6 +44,24 @@ export interface RenderResponse {
   error?: string;
 }
 
+export interface ExtractFramesRequest {
+  sourceVideoDriveFileId: string;
+  intervalSec?: number;
+}
+
+export interface ExtractedFrame {
+  timestampSec: number;
+  jpegBase64: string;
+  width: number;
+}
+
+export interface ExtractFramesResponse {
+  ok: boolean;
+  durationSec?: number;
+  frames?: ExtractedFrame[];
+  error?: string;
+}
+
 export async function callRenderWorker(req: RenderRequest): Promise<RenderResponse> {
   const workerUrl = process.env.TRAINING_RENDER_WORKER_URL;
   const workerSecret = process.env.TRAINING_RENDER_WORKER_SECRET;
@@ -90,6 +108,47 @@ export async function callRenderWorker(req: RenderRequest): Promise<RenderRespon
       return { ok: false, error: data?.error || `Worker HTTP ${res.status}` };
     }
     return data as RenderResponse;
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+/**
+ * Extract keyframes from a Drive MP4 via the worker's /extract-frames endpoint.
+ * Used by the screen-recording path to feed frames to Gemini Vision.
+ */
+export async function callExtractFrames(req: ExtractFramesRequest): Promise<ExtractFramesResponse> {
+  const workerUrl = process.env.TRAINING_RENDER_WORKER_URL;
+  const workerSecret = process.env.TRAINING_RENDER_WORKER_SECRET;
+  if (!workerUrl || !workerSecret) {
+    return { ok: false, error: "TRAINING_RENDER_WORKER_URL or TRAINING_RENDER_WORKER_SECRET not configured." };
+  }
+  const googleConfig = await loadGoogleConfig();
+  if (!googleConfig?.serviceAccountJson) {
+    return { ok: false, error: "Google service account JSON not configured." };
+  }
+  const idToken = await fetchCloudRunIdentityToken({
+    audience: workerUrl,
+    serviceAccountJson: googleConfig.serviceAccountJson,
+  });
+  const url = `${workerUrl.replace(/\/$/, "")}/extract-frames`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Worker-Secret": workerSecret,
+        "Authorization": `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        sourceVideoDriveFileId: req.sourceVideoDriveFileId,
+        intervalSec: req.intervalSec,
+        serviceAccountJson: googleConfig.serviceAccountJson,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || `Worker HTTP ${res.status}` };
+    return data as ExtractFramesResponse;
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) };
   }

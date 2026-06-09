@@ -14,12 +14,15 @@
 import express from "express";
 import { requireSharedSecret } from "./auth.js";
 import { renderJob } from "./render.js";
+import { extractFrames } from "./frames.js";
 import type { RenderJob } from "./types.js";
 
 const PORT = Number(process.env.PORT) || 8080;
 
 const app = express();
 // Render jobs include service-account JSON and Drive ids — keep it tight.
+// Frame extraction RESPONSES can be large (base64 JPEGs), but request bodies
+// stay small — 10mb on the input side is plenty.
 app.use(express.json({ limit: "10mb" }));
 
 app.get("/healthz", (_req, res) => {
@@ -51,6 +54,35 @@ app.post("/render", requireSharedSecret, async (req, res) => {
   } catch (e: any) {
     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
     console.error(`[render] threw job=${job.videoId} elapsed=${elapsedSec}s err=`, e);
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+/**
+ * POST /extract-frames
+ * Pulls keyframes from a Drive MP4 for AI vision analysis.
+ * Body: { sourceVideoDriveFileId, intervalSec?, serviceAccountJson }
+ */
+app.post("/extract-frames", requireSharedSecret, async (req, res) => {
+  const body = req.body || {};
+  if (!body.sourceVideoDriveFileId || !body.serviceAccountJson) {
+    res.status(400).json({ ok: false, error: "sourceVideoDriveFileId and serviceAccountJson required" });
+    return;
+  }
+  const startedAt = Date.now();
+  console.log(`[frames] starting extraction sourceFile=${body.sourceVideoDriveFileId}`);
+  try {
+    const result = await extractFrames({
+      sourceVideoDriveFileId: body.sourceVideoDriveFileId,
+      intervalSec: body.intervalSec,
+      serviceAccountJson: body.serviceAccountJson,
+    });
+    const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+    console.log(`[frames] done ok=${result.ok} frames=${result.frames?.length || 0} elapsed=${elapsedSec}s`);
+    // Don't echo frames count back if it's large — but the actual frames go in the body
+    res.json(result);
+  } catch (e: any) {
+    console.error("[frames] threw:", e);
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
