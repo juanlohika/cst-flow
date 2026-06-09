@@ -43,7 +43,9 @@ function Content() {
   const [messages, setMessages] = useState<ChatBubble[]>([]);
   const [voice, setVoice] = useState("Charon");
   const [voiceFolderUrl, setVoiceFolderUrl] = useState<string | null>(null);
-  const [status, setStatus] = useState<"draft" | "generating" | "ready" | "error">("draft");
+  const [status, setStatus] = useState<"draft" | "generating" | "ready" | "rendering" | "rendered" | "error">("draft");
+  const [finalMp4Url, setFinalMp4Url] = useState<string | null>(null);
+  const [renderError, setRenderError] = useState<string | null>(null);
 
   const [prompt, setPrompt] = useState("");
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -52,6 +54,7 @@ function Content() {
   const [sending, setSending] = useState(false);
   const [regeneratingScene, setRegeneratingScene] = useState<number | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [rendering, setRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -82,6 +85,8 @@ function Content() {
         setMessages(Array.isArray(v.messages) ? v.messages : []);
         setVoice(v.voice);
         setStatus(v.status);
+        setFinalMp4Url(v.finalMp4DriveUrl || null);
+        setRenderError(v.renderError || null);
       } catch (e: any) {
         setError(e?.message || String(e));
       }
@@ -99,7 +104,28 @@ function Content() {
     setTitleForUpload("");
     setStatus("draft");
     setVoiceFolderUrl(null);
+    setFinalMp4Url(null);
+    setRenderError(null);
     router.replace("/training-videos");
+  };
+
+  const renderMp4 = async () => {
+    if (!videoId) return;
+    setRendering(true);
+    setRenderError(null);
+    setStatus("rendering");
+    try {
+      const res = await fetch(`/api/training-videos/${videoId}/render-mp4`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Render failed");
+      setFinalMp4Url(data.mp4DriveUrl);
+      setStatus("rendered");
+    } catch (e: any) {
+      setRenderError(e?.message || String(e));
+      setStatus("ready");
+    } finally {
+      setRendering(false);
+    }
   };
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -405,23 +431,52 @@ function Content() {
                 <CheckCircle2 className="w-3 h-3" /> Ready
               </span>
             )}
+            {status === "rendering" && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-bold">
+                <Loader2 className="w-3 h-3 animate-spin" /> Rendering MP4
+              </span>
+            )}
+            {status === "rendered" && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 text-[10px] font-bold">
+                <CheckCircle2 className="w-3 h-3" /> MP4 ready
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {voiceFolderUrl && (
               <a href={voiceFolderUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-slate-700 text-[11px] font-bold hover:border-violet-300">
                 <ExternalLink className="w-3.5 h-3.5" /> Drive folder
               </a>
             )}
+            {finalMp4Url && (
+              <a href={finalMp4Url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-violet-300 bg-violet-50 text-violet-700 text-[11px] font-bold hover:bg-violet-100">
+                <Play className="w-3.5 h-3.5" /> Open MP4
+              </a>
+            )}
             <button
               onClick={downloadBundle}
               disabled={!videoId || !content || downloading}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-violet-500 text-white text-[11px] font-bold hover:bg-violet-600 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-slate-700 text-[11px] font-bold hover:border-violet-300 disabled:opacity-50"
             >
               {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
-              {downloading ? "Bundling…" : "Download Bundle"}
+              {downloading ? "Bundling…" : "Bundle"}
+            </button>
+            <button
+              onClick={renderMp4}
+              disabled={!videoId || !content || rendering || status === "rendering"}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-violet-500 text-white text-[11px] font-bold hover:bg-violet-600 disabled:opacity-50"
+            >
+              {rendering ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MonitorPlay className="w-3.5 h-3.5" />}
+              {rendering ? "Rendering (1-3 min)…" : finalMp4Url ? "Re-render MP4" : "Render MP4"}
             </button>
           </div>
         </div>
+        {renderError && (
+          <div className="bg-rose-50 border-b border-rose-200 px-6 py-2 text-[12px] text-rose-800 flex items-start gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <div><strong>Render failed:</strong> {renderError}</div>
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto p-6 bg-slate-50">
           {!content ? (
