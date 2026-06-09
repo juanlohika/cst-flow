@@ -64,8 +64,8 @@ export interface ExtractFramesResponse {
 }
 
 export async function callRenderWorker(req: RenderRequest): Promise<RenderResponse> {
-  const workerUrl = process.env.TRAINING_RENDER_WORKER_URL;
-  const workerSecret = process.env.TRAINING_RENDER_WORKER_SECRET;
+  const workerUrl = process.env.TRAINING_RENDER_WORKER_URL?.trim();
+  const workerSecret = process.env.TRAINING_RENDER_WORKER_SECRET?.trim();
 
   if (!workerUrl) {
     return { ok: false, error: "TRAINING_RENDER_WORKER_URL not configured. See worker/README.md for setup." };
@@ -104,12 +104,18 @@ export async function callRenderWorker(req: RenderRequest): Promise<RenderRespon
       },
       body: JSON.stringify(payload),
     });
-    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      return { ok: false, error: data?.error || `Worker HTTP ${res.status}` };
+      const rawBody = await res.text().catch(() => "");
+      console.error(`[callRenderWorker] HTTP ${res.status} from ${renderUrl}`);
+      console.error(`[callRenderWorker] response body (first 500): ${rawBody.substring(0, 500)}`);
+      console.error(`[callRenderWorker] audience used: ${workerUrl}`);
+      let data: any = {};
+      try { data = JSON.parse(rawBody); } catch {}
+      return { ok: false, error: data?.error || `Worker HTTP ${res.status}: ${rawBody.substring(0, 200)}` };
     }
-    return data as RenderResponse;
+    return (await res.json()) as RenderResponse;
   } catch (e: any) {
+    console.error(`[callRenderWorker] threw: ${e?.message}`, e?.stack);
     return { ok: false, error: e?.message || String(e) };
   }
 }
@@ -119,8 +125,8 @@ export async function callRenderWorker(req: RenderRequest): Promise<RenderRespon
  * Used by the screen-recording path to feed frames to Gemini Vision.
  */
 export async function callExtractFrames(req: ExtractFramesRequest): Promise<ExtractFramesResponse> {
-  const workerUrl = process.env.TRAINING_RENDER_WORKER_URL;
-  const workerSecret = process.env.TRAINING_RENDER_WORKER_SECRET;
+  const workerUrl = process.env.TRAINING_RENDER_WORKER_URL?.trim();
+  const workerSecret = process.env.TRAINING_RENDER_WORKER_SECRET?.trim();
   if (!workerUrl || !workerSecret) {
     return { ok: false, error: "TRAINING_RENDER_WORKER_URL or TRAINING_RENDER_WORKER_SECRET not configured." };
   }

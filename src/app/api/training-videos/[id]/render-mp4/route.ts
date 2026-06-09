@@ -79,6 +79,7 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
     });
 
     if (!result.ok) {
+      console.error("[render-mp4] worker failed:", JSON.stringify(result));
       const failedAt = new Date().toISOString();
       await db.update(trainingVideos)
         .set({
