@@ -1,0 +1,3 @@
+# Drop optional .ttf files here to bundle them into the worker image.
+# Quicksand itself is fetched from Google Fonts during the Docker build —
+# see the Dockerfile.
