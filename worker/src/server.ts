@@ -2,7 +2,7 @@
  * Training Render Worker — HTTP entrypoint.
  *
  * Endpoints:
- *   GET  /healthz       — health check for Cloud Run
+ *   GET  /health        — health check (note: /healthz is reserved by Google's edge L7)
  *   POST /render        — accepts a RenderJob, returns a RenderResult
  *
  * Auth: every POST requires X-Worker-Secret header matching WORKER_SECRET.
@@ -25,7 +25,10 @@ const app = express();
 // stay small — 10mb on the input side is plenty.
 app.use(express.json({ limit: "10mb" }));
 
-app.get("/healthz", (_req, res) => {
+// /health (not /healthz — the latter is intercepted by Google's L7 load
+// balancer before reaching the Cloud Run container, so requests for /healthz
+// return Google's generic 404 instead of hitting Express).
+app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "training-render-worker" });
 });
 

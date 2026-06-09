@@ -45,7 +45,7 @@ WORKER_SECRET=dev-secret npm run dev
 The worker listens on `:8080`. Test with:
 
 ```bash
-curl http://localhost:8080/healthz
+curl http://localhost:8080/health
 # {"ok":true,"service":"training-render-worker"}
 ```
 
@@ -126,15 +126,22 @@ The `TRAINING_RENDER_WORKER_SECRET` is the same value you set in `--set-env-vars
 ### Verify
 
 ```bash
-curl https://training-render-worker-xxxx-as.a.run.app/healthz
-# 401 — expected, /render now requires auth
+curl https://training-render-worker-xxxx-as.a.run.app/health
+# 403 — expected, Cloud Run requires auth (any non-/healthz path returns 403 unauth'd)
 ```
 
-To actually authenticate from outside Cloud Run, use a Google identity token:
+> ⚠️ Don't curl `/healthz` — Google's L7 load balancer intercepts that path before reaching the container and returns a generic 404. Use `/health` instead.
+
+To actually authenticate from outside Cloud Run, you need to be granted `roles/run.invoker` on the service (the production caller is the `arima-brd-writer@...` service account; for ad-hoc testing you can grant your user temporarily):
 
 ```bash
+# One-time: give your user permission to invoke the worker
+gcloud run services add-iam-policy-binding training-render-worker \
+  --region asia-east1 \
+  --member="user:YOUR_EMAIL" --role="roles/run.invoker"
+
 curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-     https://training-render-worker-xxxx-as.a.run.app/healthz
+     https://training-render-worker-xxxx-as.a.run.app/health
 # {"ok":true,"service":"training-render-worker"}
 ```
 

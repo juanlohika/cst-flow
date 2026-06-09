@@ -36,3 +36,7 @@ environmentVariables:
     secret: AZURE_CLIENT_SECRET
   - variable: AZURE_TENANT_ID
     secret: AZURE_TENANT_ID
+  - variable: TRAINING_RENDER_WORKER_URL
+    value: "https://training-render-worker-h7z76fcjyq-de.a.run.app"
+  - variable: TRAINING_RENDER_WORKER_SECRET
+    secret: TRAINING_RENDER_WORKER_SECRET
