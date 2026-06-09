@@ -978,8 +978,16 @@ export const trainingVideos = sqliteTable("TrainingVideo", {
   scenes:          text("scenes"),                              // JSON array of TrainingScene
   // Conversation history with ARIMA (chat-driven refinements)
   messages:        text("messages"),                            // JSON
-  status:          text("status").default("draft").notNull(),   // draft | generating | ready | error
+  status:          text("status").default("draft").notNull(),   // draft | generating | ready | rendering | rendered | error
   errorMessage:    text("errorMessage"),
+  // Phase G.2 — final MP4 rendering (filled by the Cloud Run worker)
+  renderJobId:           text("renderJobId"),                   // worker-side job id while rendering
+  renderStatus:          text("renderStatus"),                  // queued | rendering | done | error
+  renderError:           text("renderError"),
+  renderStartedAt:       text("renderStartedAt"),
+  finalMp4DriveFileId:   text("finalMp4DriveFileId"),
+  finalMp4DriveUrl:      text("finalMp4DriveUrl"),
+  finalMp4RenderedAt:    text("finalMp4RenderedAt"),
   generatedBy:     text("generatedBy").notNull(),
   generatedAt:     text("generatedAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),

@@ -453,9 +453,16 @@ function Content() {
               {content.scenes.map(scene => (
                 <SceneCard
                   key={scene.order}
+                  videoId={videoId!}
                   scene={scene}
                   regenerating={regeneratingScene === scene.order}
                   onRegenerate={() => regenerateSceneAudio(scene.order)}
+                  onSceneUpdated={(updated) => {
+                    setContent(c => {
+                      if (!c) return c;
+                      return { ...c, scenes: c.scenes.map(s => s.order === updated.order ? updated : s) };
+                    });
+                  }}
                 />
               ))}
             </div>
@@ -467,55 +474,166 @@ function Content() {
 }
 
 function SceneCard({
+  videoId,
   scene,
   regenerating,
   onRegenerate,
+  onSceneUpdated,
 }: {
+  videoId: string;
   scene: TrainingScene;
   regenerating: boolean;
   onRegenerate: () => void;
+  onSceneUpdated: (s: TrainingScene) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draftScript, setDraftScript] = useState(scene.narrationScript);
+  const [draftTitle, setDraftTitle] = useState(scene.title);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // If parent updates the scene (e.g. after audio regen), reset draft to match
+  useEffect(() => {
+    if (!editing) {
+      setDraftScript(scene.narrationScript);
+      setDraftTitle(scene.title);
+    }
+  }, [scene.narrationScript, scene.title, editing]);
+
+  const startEdit = () => {
+    setDraftScript(scene.narrationScript);
+    setDraftTitle(scene.title);
+    setEditing(true);
+    setSaveError(null);
+  };
+  const cancelEdit = () => {
+    setEditing(false);
+    setSaveError(null);
+  };
+  const save = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const res = await fetch(`/api/training-videos/${videoId}/scenes/${scene.order}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          narrationScript: draftScript,
+          title: draftTitle,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Save failed");
+      onSceneUpdated(data.scene);
+      setEditing(false);
+    } catch (e: any) {
+      setSaveError(e?.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const dirty = editing && (draftScript !== scene.narrationScript || draftTitle !== scene.title);
+  const audioStale = scene.edited && !scene.audioDriveUrl;
+
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3 mb-2">
-        <div>
+        <div className="flex-1 min-w-0">
           <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
             Scene {scene.order}{scene.sourceSlideNumber ? ` · slide ${scene.sourceSlideNumber}` : ""}
+            {scene.edited && <span className="ml-2 text-violet-600">· edited</span>}
           </div>
-          <div className="text-[14px] font-bold text-slate-800 mt-0.5">{scene.title}</div>
+          {editing ? (
+            <input
+              value={draftTitle}
+              onChange={e => setDraftTitle(e.target.value)}
+              disabled={saving}
+              className="mt-0.5 w-full text-[14px] font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded px-2 py-1 focus:outline-none focus:border-violet-400"
+            />
+          ) : (
+            <div className="text-[14px] font-bold text-slate-800 mt-0.5">{scene.title}</div>
+          )}
         </div>
         <div className="text-[10px] text-slate-400 shrink-0">
           {scene.audioDurationSec ? `${scene.audioDurationSec.toFixed(1)}s` : "—"}
         </div>
       </div>
 
-      <p className="text-[13px] text-slate-700 leading-relaxed">{scene.narrationScript}</p>
+      {editing ? (
+        <textarea
+          value={draftScript}
+          onChange={e => setDraftScript(e.target.value)}
+          disabled={saving}
+          rows={Math.max(3, draftScript.split("\n").length)}
+          className="w-full text-[13px] text-slate-800 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 leading-relaxed focus:outline-none focus:border-violet-400 resize-y"
+        />
+      ) : (
+        <p className="text-[13px] text-slate-700 leading-relaxed whitespace-pre-wrap">{scene.narrationScript}</p>
+      )}
 
-      {scene.aiNote && (
+      {scene.aiNote && !editing && (
         <div className="mt-2 text-[10px] text-slate-400 italic">{scene.aiNote}</div>
       )}
 
+      {saveError && (
+        <div className="mt-2 rounded bg-rose-50 border border-rose-200 px-2 py-1 text-[11px] text-rose-700">{saveError}</div>
+      )}
+
       <div className="mt-3 flex items-center gap-3 flex-wrap">
-        {scene.audioDriveUrl ? (
-          <a
-            href={scene.audioDriveUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-50 border border-violet-200 text-[11px] font-bold text-violet-700 hover:bg-violet-100"
-          >
-            <Play className="w-3 h-3" /> Play audio
-          </a>
+        {editing ? (
+          <>
+            <button
+              onClick={save}
+              disabled={!dirty || saving}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500 text-white text-[11px] font-bold hover:bg-violet-600 disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+            <button
+              onClick={cancelEdit}
+              disabled={saving}
+              className="text-[11px] font-bold text-slate-500 hover:text-slate-800"
+            >
+              Cancel
+            </button>
+            <span className="text-[10px] text-slate-400 italic ml-auto">
+              Audio will need a regen after saving.
+            </span>
+          </>
         ) : (
-          <span className="text-[11px] text-amber-700">No audio yet</span>
+          <>
+            {scene.audioDriveUrl ? (
+              <a
+                href={scene.audioDriveUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-50 border border-violet-200 text-[11px] font-bold text-violet-700 hover:bg-violet-100"
+              >
+                <Play className="w-3 h-3" /> Play audio
+              </a>
+            ) : (
+              <span className="text-[11px] text-amber-700 inline-flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" /> No audio{audioStale ? " — stale after edit" : ""}
+              </span>
+            )}
+            <button
+              onClick={onRegenerate}
+              disabled={regenerating}
+              className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-violet-600 disabled:opacity-50"
+            >
+              {regenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              {regenerating ? "Regenerating…" : "Regenerate audio"}
+            </button>
+            <button
+              onClick={startEdit}
+              className="text-[11px] font-bold text-slate-500 hover:text-violet-600 ml-auto"
+            >
+              Edit script
+            </button>
+          </>
         )}
-        <button
-          onClick={onRegenerate}
-          disabled={regenerating}
-          className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-violet-600 disabled:opacity-50"
-        >
-          {regenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-          {regenerating ? "Regenerating…" : "Regenerate audio"}
-        </button>
       </div>
     </div>
   );

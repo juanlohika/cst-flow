@@ -322,6 +322,14 @@ export async function ensureAccessSchema(): Promise<void> {
       generatedAt TEXT NOT NULL DEFAULT (datetime('now')),
       updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
+    // Phase G.2 — render-state columns (idempotent ALTERs)
+    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN renderJobId TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN renderStatus TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN renderError TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN renderStartedAt TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN finalMp4DriveFileId TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN finalMp4DriveUrl TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN finalMp4RenderedAt TEXT`); } catch {}
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS TrainingVideo_generatedAt_idx ON TrainingVideo(generatedAt)`); } catch {}
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS TrainingVideo_status_idx ON TrainingVideo(status)`); } catch {}
 
