@@ -9,8 +9,9 @@
  *
  * The service account that calls the worker must have the Cloud Run Invoker
  * role on the worker. We reuse the same `arima-brd-writer@moi-cst-app...`
- * service account that already has Drive access — we just need to grant it
- * roles/run.invoker on the worker service. README has the exact gcloud cmd.
+ * service account that already has Drive access (lives in the moi-cst-app
+ * project) — and grant it roles/run.invoker on the worker in cst-flowdesk.
+ * worker/DEPLOY.md walks through this cross-project IAM grant.
  */
 import { GoogleAuth } from "google-auth-library";
 import { loadGoogleConfig } from "@/lib/drive-export-helpers";

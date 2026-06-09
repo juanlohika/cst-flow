@@ -55,9 +55,11 @@ To test rendering end-to-end locally you'd need a render job payload — easier 
 
 ### Prerequisites
 
-1. A Google Cloud project with billing enabled (free tier is enough — Cloud Run gives you 2M requests + 360k GiB-seconds + 180k vCPU-seconds free per month). Reusing your existing `moi-cst-app` project is fine.
+1. A Google Cloud project with billing enabled (free tier is enough — Cloud Run gives you 2M requests + 360k GiB-seconds + 180k vCPU-seconds free per month). For CST OS, this is the `cst-flowdesk` project where Firebase App Hosting already runs.
 2. `gcloud` CLI installed locally: <https://cloud.google.com/sdk/docs/install>
-3. Authenticated: `gcloud auth login` and `gcloud config set project moi-cst-app`
+3. Authenticated: `gcloud auth login` (sign in as the account that owns `cst-flowdesk`, typically `lestersalesalarcon@gmail.com`) and `gcloud config set project cst-flowdesk`
+
+Note: the worker DEPLOYS to `cst-flowdesk` but USES the service account `arima-brd-writer@moi-cst-app.iam.gserviceaccount.com` (which lives in a different project). The cross-project IAM grant is documented in DEPLOY.md step 4.
 
 ### Enable required APIs
 
