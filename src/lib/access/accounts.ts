@@ -330,6 +330,8 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN finalMp4DriveFileId TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN finalMp4DriveUrl TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN finalMp4RenderedAt TEXT`); } catch {}
+    // Phase G.3 — TTS progress tracking
+    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN ttsProgress TEXT`); } catch {}
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS TrainingVideo_generatedAt_idx ON TrainingVideo(generatedAt)`); } catch {}
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS TrainingVideo_status_idx ON TrainingVideo(status)`); } catch {}
 

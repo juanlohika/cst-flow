@@ -5,7 +5,7 @@ import { trainingVideos } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { ensureAccessSchema } from "@/lib/access/accounts";
 import { loadDriveCtx, uploadSceneAudio } from "@/lib/training-video/drive";
-import { synthesizeSpeech } from "@/lib/training-video/tts";
+import { synthesizeScenes } from "@/lib/training-video/tts";
 import type { TrainingVideoContent } from "@/lib/training-video/types";
 
 export const dynamic = "force-dynamic";
@@ -45,39 +45,45 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const errors: string[] = [];
     let regeneratedCount = 0;
 
-    for (const scene of content.scenes) {
-      if (!all && scene.order !== sceneOrder) continue;
-      if (!scene.narrationScript) {
-        errors.push(`Scene ${scene.order}: empty narration, skipped`);
+    // Build the list of scenes to regenerate (one specific scene OR all)
+    const toRegen = content.scenes.filter(s => all || s.order === sceneOrder);
+
+    const ttsResults = await synthesizeScenes({
+      scenes: toRegen.map(s => ({ order: s.order, narrationScript: s.narrationScript })),
+      voice: row.voice,
+      model: row.ttsModel,
+      stylePrompt,
+      language: row.language,
+      // Single-scene regen doesn't need pacing
+      betweenScenesMs: toRegen.length > 1 ? 12_000 : 0,
+      onProgress: async (done, total, current) => {
+        await db.update(trainingVideos)
+          .set({ ttsProgress: JSON.stringify({ done, total, current }), updatedAt: new Date().toISOString() })
+          .where(eq(trainingVideos.id, params.id));
+      },
+    });
+
+    for (const r of ttsResults) {
+      const scene = content.scenes.find(s => s.order === r.order);
+      if (!scene) continue;
+      if (!r.ok || !r.audio) {
+        errors.push(`Scene ${scene.order}: ${r.error}`);
         continue;
       }
-
-      const tts = await synthesizeSpeech({
-        text: scene.narrationScript,
-        voice: row.voice,
-        model: row.ttsModel,
-        stylePrompt,
-        language: row.language,
-      });
-      if (!tts.ok || !tts.audio) {
-        errors.push(`Scene ${scene.order}: ${tts.error}`);
-        continue;
-      }
-
       const upload = await uploadSceneAudio(ctx, {
         videoFolderId: row.videoFolderId,
         sceneOrder: scene.order,
-        buffer: tts.audio,
+        buffer: r.audio,
       });
       scene.audioDriveFileId = upload.fileId;
       scene.audioDriveUrl = upload.webViewLink;
-      scene.audioDurationSec = tts.durationSec || null;
-      scene.durationSec = (tts.durationSec || 0) + 0.6;
+      scene.audioDurationSec = r.durationSec || null;
+      scene.durationSec = (r.durationSec || 0) + 0.6;
       regeneratedCount++;
     }
 
     await db.update(trainingVideos)
-      .set({ scenes: JSON.stringify(content), updatedAt: new Date().toISOString() })
+      .set({ scenes: JSON.stringify(content), ttsProgress: null, updatedAt: new Date().toISOString() })
       .where(eq(trainingVideos.id, params.id));
 
     return NextResponse.json({

@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { ensureAccessSchema } from "@/lib/access/accounts";
 import { loadDriveCtx, ensureVideoFolder, uploadSceneAudio } from "@/lib/training-video/drive";
 import { buildScriptFromVideoFrames } from "@/lib/training-video/build-script";
-import { synthesizeSpeech } from "@/lib/training-video/tts";
+import { synthesizeScenes } from "@/lib/training-video/tts";
 import { callExtractFrames } from "@/lib/training-video/worker-client";
 import type { TrainingVideoContent } from "@/lib/training-video/types";
 import { Readable } from "stream";
@@ -132,30 +132,36 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: scriptResult.error, videoId, rawAi: (scriptResult as any).rawAi }, { status: 500 });
     }
 
-    // 3. Per-scene TTS
+    // 3. Per-scene TTS — paced + 429-retried by synthesizeScenes()
     const content: TrainingVideoContent = scriptResult.content;
-    for (const scene of content.scenes) {
-      if (!scene.narrationScript) continue;
-      const tts = await synthesizeSpeech({
-        text: scene.narrationScript,
-        voice,
-        model: ttsModel,
-        stylePrompt: "Read in a lively, clear, and informative tone, like a friendly product trainer guiding a new user",
-        language,
-      });
-      if (!tts.ok || !tts.audio) {
-        scene.aiNote = `TTS failed: ${tts.error}`;
+    const ttsResults = await synthesizeScenes({
+      scenes: content.scenes.map(s => ({ order: s.order, narrationScript: s.narrationScript })),
+      voice,
+      model: ttsModel,
+      stylePrompt: "Read in a lively, clear, and informative tone, like a friendly product trainer guiding a new user",
+      language,
+      onProgress: async (done, total, current) => {
+        await db.update(trainingVideos)
+          .set({ ttsProgress: JSON.stringify({ done, total, current }), updatedAt: new Date().toISOString() })
+          .where(eq(trainingVideos.id, videoId));
+      },
+    });
+    for (const r of ttsResults) {
+      const scene = content.scenes.find(s => s.order === r.order);
+      if (!scene) continue;
+      if (!r.ok || !r.audio) {
+        scene.aiNote = `TTS failed: ${r.error}`;
         continue;
       }
       const upload = await uploadSceneAudio(ctx, {
         videoFolderId: folder.folderId,
         sceneOrder: scene.order,
-        buffer: tts.audio,
+        buffer: r.audio,
       });
       scene.audioDriveFileId = upload.fileId;
       scene.audioDriveUrl = upload.webViewLink;
-      scene.audioDurationSec = tts.durationSec || null;
-      scene.durationSec = (tts.durationSec || 0) + 0.6;
+      scene.audioDurationSec = r.durationSec || null;
+      scene.durationSec = (r.durationSec || 0) + 0.6;
     }
 
     const reply = scriptResult.reply || `Segmented the recording into ${content.scenes.length} scenes and generated voiceover. Review and edit any scenes that need polish, then click Render MP4.`;
@@ -169,6 +175,7 @@ export async function POST(req: Request) {
         scenes: JSON.stringify(content),
         messages: JSON.stringify(messages),
         status: "ready",
+        ttsProgress: null,
         updatedAt: new Date().toISOString(),
       })
       .where(eq(trainingVideos.id, videoId));

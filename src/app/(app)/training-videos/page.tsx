@@ -46,6 +46,7 @@ function Content() {
   const [status, setStatus] = useState<"draft" | "generating" | "ready" | "rendering" | "rendered" | "error">("draft");
   const [finalMp4Url, setFinalMp4Url] = useState<string | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [ttsProgress, setTtsProgress] = useState<{ done: number; total: number; current?: { order: number; status: "ok" | "error"; error?: string } } | null>(null);
 
   const [prompt, setPrompt] = useState("");
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -70,6 +71,30 @@ function Content() {
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
     }
   }, [prompt]);
+
+  // Poll TTS progress while generating. We hit a tiny endpoint that just
+  // returns the ttsProgress JSON column — the create/regenerate routes
+  // write into it after each scene's TTS call.
+  useEffect(() => {
+    const shouldPoll = videoId && (status === "generating" || regeneratingScene !== null);
+    if (!shouldPoll) {
+      if (ttsProgress) setTtsProgress(null);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/training-videos/${videoId}/progress`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setTtsProgress(data.ttsProgress || null);
+      } catch {}
+    };
+    tick();
+    const handle = window.setInterval(tick, 2500);
+    return () => { cancelled = true; window.clearInterval(handle); };
+  }, [videoId, status, regeneratingScene]);
 
   // Resume
   useEffect(() => {
@@ -459,7 +484,10 @@ function Content() {
             )}
             {status === "generating" && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-bold">
-                <Loader2 className="w-3 h-3 animate-spin" /> Generating
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {ttsProgress
+                  ? `Generating voiceover (${ttsProgress.done}/${ttsProgress.total})`
+                  : "Generating"}
               </span>
             )}
             {status === "ready" && (

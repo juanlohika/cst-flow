@@ -980,6 +980,10 @@ export const trainingVideos = sqliteTable("TrainingVideo", {
   messages:        text("messages"),                            // JSON
   status:          text("status").default("draft").notNull(),   // draft | generating | ready | rendering | rendered | error
   errorMessage:    text("errorMessage"),
+  // Phase G.3 — per-scene TTS progress, used by the UI to show "Generating
+  // voiceover (3/7)" while the create/regenerate routes run. JSON shape:
+  //   { done: number, total: number, current?: { order, status, error? } }
+  ttsProgress:     text("ttsProgress"),
   // Phase G.2 — final MP4 rendering (filled by the Cloud Run worker)
   renderJobId:           text("renderJobId"),                   // worker-side job id while rendering
   renderStatus:          text("renderStatus"),                  // queued | rendering | done | error

@@ -75,12 +75,34 @@ export async function synthesizeSpeech(args: SynthesizeArgs): Promise<Synthesize
     },
   };
 
+  // Gemini's TTS preview model has a tight per-minute rate limit (~3 RPM on
+  // free tier). When we generate audio for a multi-scene video we hit 429
+  // partway through unless we slow down. Retry with backoff so the user
+  // doesn't need to babysit and click "Regenerate audio" for half the scenes.
+  const RETRY_DELAYS_MS = [20_000, 40_000, 60_000];
+  let res: Response | null = null;
+  let lastErr = "";
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (e: any) {
+      lastErr = `Gemini TTS request failed: ${e?.message || e}`;
+      res = null;
+    }
+    if (res && res.status !== 429) break;
+    if (attempt < RETRY_DELAYS_MS.length) {
+      await new Promise(r => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+      continue;
+    }
+  }
+  if (!res) {
+    return { ok: false, error: lastErr || "Gemini TTS request failed after retries" };
+  }
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
     if (!res.ok) {
       const errText = await res.text();
       return { ok: false, error: `Gemini TTS HTTP ${res.status}: ${errText.slice(0, 300)}` };
@@ -203,3 +225,69 @@ function formatVttTime(seconds: number): string {
 
 function pad2(n: number): string { return String(n).padStart(2, "0"); }
 function pad3(n: number): string { return String(n).padStart(3, "0"); }
+
+/**
+ * Run TTS across many scenes serially with a between-call delay to stay
+ * under Gemini's per-minute rate limit. synthesizeSpeech already retries
+ * 429s with backoff, but pacing the calls up-front means we usually never
+ * hit a 429 in the first place — faster end-to-end than wait-then-retry.
+ *
+ * onProgress fires after every scene (success or skip) so the caller can
+ * persist a progress %% the UI can poll.
+ */
+export interface SceneInput {
+  order: number;
+  narrationScript: string;
+}
+export interface SceneAudio {
+  order: number;
+  ok: boolean;
+  audio?: Buffer;
+  durationSec?: number;
+  error?: string;
+}
+export async function synthesizeScenes(args: {
+  scenes: SceneInput[];
+  voice: string;
+  model?: string;
+  stylePrompt?: string;
+  language?: string;
+  // Delay between scenes (default 12s — Gemini free is 3 RPM = one every 20s
+  // and we want headroom for the actual request time which is ~5-8s).
+  betweenScenesMs?: number;
+  onProgress?: (done: number, total: number, current?: { order: number; status: "ok" | "error"; error?: string }) => void | Promise<void>;
+}): Promise<SceneAudio[]> {
+  const delay = args.betweenScenesMs ?? 12_000;
+  const total = args.scenes.length;
+  const results: SceneAudio[] = [];
+
+  for (let i = 0; i < args.scenes.length; i++) {
+    const scene = args.scenes[i];
+    if (!scene.narrationScript?.trim()) {
+      results.push({ order: scene.order, ok: false, error: "Empty narration" });
+      await args.onProgress?.(i + 1, total, { order: scene.order, status: "error", error: "Empty narration" });
+      continue;
+    }
+
+    const tts = await synthesizeSpeech({
+      text: scene.narrationScript,
+      voice: args.voice,
+      model: args.model,
+      stylePrompt: args.stylePrompt,
+      language: args.language,
+    });
+    if (tts.ok && tts.audio) {
+      results.push({ order: scene.order, ok: true, audio: tts.audio, durationSec: tts.durationSec });
+      await args.onProgress?.(i + 1, total, { order: scene.order, status: "ok" });
+    } else {
+      results.push({ order: scene.order, ok: false, error: tts.error });
+      await args.onProgress?.(i + 1, total, { order: scene.order, status: "error", error: tts.error });
+    }
+
+    if (i < args.scenes.length - 1 && delay > 0) {
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+
+  return results;
+}
