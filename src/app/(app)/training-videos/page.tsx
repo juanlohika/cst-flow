@@ -53,7 +53,8 @@ function Content() {
   const [messages, setMessages] = useState<ChatBubble[]>([]);
   const [voice, setVoice] = useState("Charon");
   const [voiceFolderUrl, setVoiceFolderUrl] = useState<string | null>(null);
-  const [status, setStatus] = useState<"draft" | "uploading" | "generating" | "ready" | "rendering" | "rendered" | "error">("draft");
+  const [status, setStatus] = useState<"draft" | "uploading" | "source-uploaded" | "content-extracted" | "script-generated" | "generating-audio" | "generating" | "ready" | "rendering" | "rendered" | "error">("draft");
+  const [errorStage, setErrorStage] = useState<string | null>(null);
   const [finalMp4Url, setFinalMp4Url] = useState<string | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [ttsProgress, setTtsProgress] = useState<{ phase?: string; done?: number; total?: number; current?: { order: number; status: "ok" | "error"; error?: string } } | null>(null);
@@ -123,8 +124,17 @@ function Content() {
         setMessages(Array.isArray(v.messages) ? v.messages : []);
         setVoice(v.voice);
         setStatus(v.status);
+        setErrorStage(v.errorStage || null);
         setFinalMp4Url(v.finalMp4DriveUrl || null);
         setRenderError(v.renderError || null);
+
+        // If the row is mid-pipeline (not ready / error / rendered), resume
+        // it automatically. This handles the case where the user closed
+        // the tab while a stage was running.
+        const midPipelineStates = ["source-uploaded", "content-extracted", "script-generated", "generating-audio"];
+        if (midPipelineStates.includes(v.status)) {
+          runPipeline(v.id, v.status);
+        }
       } catch (e: any) {
         setError(e?.message || String(e));
       }
@@ -189,53 +199,12 @@ function Content() {
     if (!titleForUpload.trim()) { setError("Give it a title"); return; }
     setSending(true);
     setError(null);
-
-    if (sourceMode === "video") {
-      // Screen recordings can be hundreds of MB — bypass Cloud Run's 32MB
-      // request cap by uploading directly to Drive's resumable upload URL.
-      await uploadScreenRecording();
-    } else {
-      // PPTX is small (typically <5MB) — multipart form upload is fine.
-      await uploadPptx();
-    }
-  };
-
-  const uploadPptx = async () => {
-    if (!pendingFile) return;
-    setStatus("generating");
-    try {
-      const formData = new FormData();
-      formData.append("file", pendingFile);
-      formData.append("title", titleForUpload);
-      if (userPromptForUpload.trim()) formData.append("userPrompt", userPromptForUpload);
-      formData.append("voice", voice);
-      const res = await fetch("/api/training-videos/create", { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Generation failed");
-      setVideoId(data.videoId);
-      setTitle(titleForUpload);
-      setContent(data.content);
-      setVoiceFolderUrl(data.videoFolderUrl || null);
-      setMessages([
-        { role: "user", content: `Uploaded ${pendingFile!.name}${userPromptForUpload ? ` — ${userPromptForUpload}` : ""}`, attachmentNames: [pendingFile!.name] },
-        { role: "assistant", content: data.reply || "Done — review the scenes on the right." },
-      ]);
-      setStatus("ready");
-      router.replace(`/training-videos?resume=${data.videoId}`);
-    } catch (e: any) {
-      setError(e?.message || String(e));
-      setStatus("error");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const uploadScreenRecording = async () => {
-    if (!pendingFile) return;
     setStatus("uploading");
     setUploadProgress(0);
+
     try {
-      // 1. Init: server mints a Drive access token + creates the DB row
+      // 1. Init: server mints a Drive access token + creates the DB row.
+      // Same endpoint for PPTX and video.
       const initRes = await fetch("/api/training-videos/upload-init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -243,44 +212,44 @@ function Content() {
           title: titleForUpload,
           fileName: pendingFile.name,
           fileSize: pendingFile.size,
+          sourceType: sourceMode === "video" ? "screen_recording" : "pptx",
           userPrompt: userPromptForUpload.trim() || undefined,
           voice,
         }),
       });
       const initData = await initRes.json();
       if (!initRes.ok) throw new Error(initData?.error || "Upload init failed");
-      setVideoId(initData.videoId);
+      const newVideoId = initData.videoId;
+      setVideoId(newVideoId);
       setTitle(titleForUpload);
-      router.replace(`/training-videos?resume=${initData.videoId}`);
+      router.replace(`/training-videos?resume=${newVideoId}`);
 
-      // 2. Upload directly to Drive's multipart endpoint. The browser sends
-      // the metadata + bytes together; Drive returns the new file id.
+      // 2. Upload directly to Drive's multipart endpoint
       const driveFileId = await uploadToDriveMultipart({
         accessToken: initData.accessToken,
         parentFolderId: initData.parentFolderId,
         fileName: initData.fileName,
-        mimeType: pendingFile.type || "video/mp4",
+        mimeType: initData.mimeType,
         file: pendingFile,
         onProgress: pct => setUploadProgress(pct),
       });
       setUploadProgress(100);
 
-      // 3. Finalize: server kicks off extract-frames → script → TTS
-      setStatus("generating");
-      const finRes = await fetch("/api/training-videos/upload-finalize", {
+      // 3. Tell server the upload finished
+      const finRes = await fetch("/api/training-videos/upload-finalize-source", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId: initData.videoId, driveFileId }),
+        body: JSON.stringify({ videoId: newVideoId, driveFileId }),
       });
       const finData = await finRes.json();
-      if (!finRes.ok) throw new Error(finData?.error || "Pipeline failed after upload");
-      setContent(finData.content);
-      setVoiceFolderUrl(finData.videoFolderUrl || null);
+      if (!finRes.ok) throw new Error(finData?.error || "Failed to finalize upload");
+
+      // 4. Kick off the pipeline — runPipeline drives extract → script → per-scene TTS
       setMessages([
         { role: "user", content: `Uploaded ${pendingFile.name}${userPromptForUpload ? ` — ${userPromptForUpload}` : ""}`, attachmentNames: [pendingFile.name] },
-        { role: "assistant", content: finData.reply || "Done — review the scenes on the right." },
       ]);
-      setStatus("ready");
+      setStatus("source-uploaded");
+      await runPipeline(newVideoId, "source-uploaded");
     } catch (e: any) {
       setError(e?.message || String(e));
       setStatus("error");
@@ -288,6 +257,101 @@ function Content() {
       setUploadProgress(null);
       setSending(false);
     }
+  };
+
+  /**
+   * Drive the stage-machine pipeline from any starting status. This is
+   * called after a fresh upload AND when resuming an in-progress row from
+   * a page refresh. Each stage is its own HTTP call so a refresh or browser
+   * crash mid-pipeline doesn't lose work — we just re-enter at the current
+   * status.
+   */
+  const runPipeline = async (vid: string, fromStatus: string) => {
+    try {
+      let current = fromStatus;
+
+      // Stage 2: extract-source (PPTX download OR worker /extract-frames)
+      if (current === "source-uploaded" || current === "error") {
+        setStatus("source-uploaded");
+        const r = await fetch(`/api/training-videos/${vid}/extract-source`, { method: "POST" });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d?.error || "Extract failed");
+        current = "content-extracted";
+        setStatus("content-extracted");
+      }
+
+      // Stage 3: generate-script
+      if (current === "content-extracted") {
+        const r = await fetch(`/api/training-videos/${vid}/generate-script`, { method: "POST" });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d?.error || "Script generation failed");
+        setContent(d.content);
+        if (d.reply) {
+          setMessages(m => [...m.filter(x => x.role !== "assistant" || m.indexOf(x) !== m.length - 1), { role: "assistant", content: d.reply }]);
+        }
+        current = "script-generated";
+        setStatus("script-generated");
+      }
+
+      // Stage 4: per-scene TTS in series. Fetch the latest content from
+      // the row in case the page was reloaded mid-pipeline.
+      if (current === "script-generated" || current === "generating-audio") {
+        const rRow = await fetch(`/api/training-videos/${vid}`);
+        const rData = await rRow.json();
+        if (!rRow.ok) throw new Error(rData?.error || "Failed to load row");
+        const c = rData.video?.content;
+        if (!c?.scenes) throw new Error("No scenes to narrate");
+        setContent(c);
+        setVoiceFolderUrl(rData.video?.videoFolderUrl || null);
+
+        setStatus("generating-audio");
+        // Find which scenes still need audio (resumable)
+        const todo = c.scenes.filter((s: any) => s.narrationScript?.trim() && !s.audioDriveFileId);
+        for (let i = 0; i < todo.length; i++) {
+          const scene = todo[i];
+          setTtsProgress({ phase: "tts", done: c.scenes.indexOf(scene), total: c.scenes.length, current: { order: scene.order, status: "ok" } });
+          const r = await fetch(`/api/training-videos/${vid}/generate-scene-audio?order=${scene.order}`, { method: "POST" });
+          const d = await r.json();
+          if (!r.ok) throw new Error(`Scene ${scene.order} failed: ${d?.error || "TTS error"}`);
+          // Merge updated scene into content
+          setContent(prev => prev ? {
+            ...prev,
+            scenes: prev.scenes.map(s => s.order === scene.order ? {
+              ...s,
+              audioDriveFileId: d.audioDriveFileId,
+              audioDriveUrl: d.audioDriveUrl,
+              audioDurationSec: d.audioDurationSec,
+              durationSec: (d.audioDurationSec || 0) + 0.6,
+            } : s),
+          } : prev);
+          // Pace the calls: 12s between scenes (matches the server-side
+          // pacing we used to do; needed to stay under Gemini's 3 RPM).
+          // Skip the wait after the last scene.
+          if (i < todo.length - 1) {
+            await new Promise(r => setTimeout(r, 12_000));
+          }
+        }
+        setTtsProgress(null);
+        setStatus("ready");
+      }
+    } catch (e: any) {
+      setError(e?.message || String(e));
+      setStatus("error");
+      setTtsProgress(null);
+    }
+  };
+
+  // Retry the failed pipeline stage. Reads current row status to know
+  // where to resume.
+  const retryPipeline = async () => {
+    if (!videoId) return;
+    setError(null);
+    const r = await fetch(`/api/training-videos/${videoId}`);
+    const d = await r.json();
+    if (!r.ok) { setError(d?.error || "Failed to load row"); return; }
+    const v = d.video;
+    setStatus(v.status);
+    await runPipeline(videoId, v.status);
   };
 
   // Upload a file to Drive's multipart endpoint. The browser builds the
@@ -371,14 +435,25 @@ function Content() {
     setRegeneratingScene(sceneOrder);
     setError(null);
     try {
-      const res = await fetch(`/api/training-videos/${videoId}/regenerate-audio`, {
+      // Use the new stage-machine endpoint. It overwrites the existing
+      // audio file in Drive and updates the scene in place. Idempotent.
+      const res = await fetch(`/api/training-videos/${videoId}/generate-scene-audio?order=${sceneOrder}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sceneOrder }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Regeneration failed");
-      if (data.content) setContent(data.content);
+      setContent(prev => prev ? {
+        ...prev,
+        scenes: prev.scenes.map(s => s.order === sceneOrder ? {
+          ...s,
+          audioDriveFileId: data.audioDriveFileId,
+          audioDriveUrl: data.audioDriveUrl,
+          audioDurationSec: data.audioDurationSec,
+          durationSec: (data.audioDurationSec || 0) + 0.6,
+          aiNote: undefined,
+        } : s),
+      } : prev);
+      if (data.allDone) setStatus("ready");
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -618,10 +693,38 @@ function Content() {
                 {uploadProgress !== null ? `Uploading (${uploadProgress}%)` : "Uploading"}
               </span>
             )}
+            {status === "source-uploaded" && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-bold">
+                <Loader2 className="w-3 h-3 animate-spin" /> Extracting source…
+              </span>
+            )}
+            {status === "content-extracted" && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-bold">
+                <Loader2 className="w-3 h-3 animate-spin" /> Writing narration…
+              </span>
+            )}
+            {status === "script-generated" && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-bold">
+                <Loader2 className="w-3 h-3 animate-spin" /> Starting voiceover…
+              </span>
+            )}
+            {status === "generating-audio" && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-bold">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {ttsProgress?.total
+                  ? `Generating voiceover (${(ttsProgress.done || 0) + 1}/${ttsProgress.total})`
+                  : "Generating voiceover…"}
+              </span>
+            )}
             {status === "generating" && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-bold">
                 <Loader2 className="w-3 h-3 animate-spin" />
                 {ttsProgressLabel(ttsProgress)}
+              </span>
+            )}
+            {status === "error" && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 text-[10px] font-bold">
+                Error{errorStage ? ` (${errorStage})` : ""}
               </span>
             )}
             {status === "ready" && (
@@ -673,6 +776,19 @@ function Content() {
           <div className="bg-rose-50 border-b border-rose-200 px-6 py-2 text-[12px] text-rose-800 flex items-start gap-2">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
             <div><strong>Render failed:</strong> {renderError}</div>
+          </div>
+        )}
+        {status === "error" && error && !errorStage?.startsWith("tts-") && (
+          <div className="bg-rose-50 border-b border-rose-200 px-6 py-2 text-[12px] text-rose-800 flex items-center gap-3">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+            <div className="flex-1">
+              <strong>{errorStage ? `Stage "${errorStage}" failed:` : "Failed:"}</strong> {error}
+            </div>
+            <button
+              onClick={retryPipeline}
+              className="px-3 py-1 rounded-md bg-rose-600 text-white text-[11px] font-bold hover:bg-rose-700">
+              Retry
+            </button>
           </div>
         )}
 
