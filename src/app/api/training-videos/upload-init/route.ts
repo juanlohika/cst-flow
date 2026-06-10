@@ -9,14 +9,21 @@ import { loadDriveCtx, ensureVideoFolder, ensureRawSubfolder, mintBrowserUploadT
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const MP4_MIME = "video/mp4";
+
 /**
  * POST /api/training-videos/upload-init
- * body: { title, fileName, fileSize, userPrompt? }
+ * body: { title, fileName, fileSize, sourceType: "pptx" | "screen_recording", userPrompt? }
  *
- * Returns a Drive resumable-upload URL the browser PUTs the MP4 directly
- * to — bypassing Cloud Run's 32MB request cap. Creates the TrainingVideo
- * row in "uploading" state; the upload-finalize endpoint flips it to
- * "generating" and kicks off the rest of the pipeline.
+ * Returns a short-lived Drive access token the browser uses to upload the
+ * file directly to Drive (bypassing Cloud Run's 32MB request cap). Creates
+ * the TrainingVideo row in "uploading" state.
+ *
+ * After the browser finishes the Drive upload, it calls
+ * /upload-finalize-source to record the driveFileId and flip status to
+ * "source-uploaded". The pipeline then runs as separate stages:
+ *   extract-source → generate-script → generate-scene-audio (per scene).
  */
 export async function POST(req: Request) {
   try {
@@ -29,6 +36,7 @@ export async function POST(req: Request) {
     const title = String(body?.title || "").trim() || "Untitled Training Video";
     const fileName = String(body?.fileName || "").trim();
     const fileSize = Number(body?.fileSize || 0);
+    const sourceType = String(body?.sourceType || "").trim();
     const userPrompt = body?.userPrompt ? String(body.userPrompt).trim() : undefined;
 
     if (!fileName) return NextResponse.json({ error: "fileName required" }, { status: 400 });
@@ -36,9 +44,19 @@ export async function POST(req: Request) {
     if (fileSize > 2 * 1024 * 1024 * 1024) {
       return NextResponse.json({ error: "File too large (max 2GB)" }, { status: 400 });
     }
+
     const lowerName = fileName.toLowerCase();
-    if (!lowerName.endsWith(".mp4") && !lowerName.endsWith(".mov")) {
-      return NextResponse.json({ error: "Only MP4 / MOV screen recordings supported" }, { status: 400 });
+    let mimeType: string;
+    if (sourceType === "pptx") {
+      if (!lowerName.endsWith(".pptx")) return NextResponse.json({ error: "PPTX mode expects a .pptx file" }, { status: 400 });
+      mimeType = PPTX_MIME;
+    } else if (sourceType === "screen_recording") {
+      if (!lowerName.endsWith(".mp4") && !lowerName.endsWith(".mov")) {
+        return NextResponse.json({ error: "Screen recording mode expects .mp4 or .mov" }, { status: 400 });
+      }
+      mimeType = MP4_MIME;
+    } else {
+      return NextResponse.json({ error: "sourceType must be 'pptx' or 'screen_recording'" }, { status: 400 });
     }
 
     const settingsRows = await db.select().from(trainingVideoSettings).where(eq(trainingVideoSettings.id, "default")).limit(1);
@@ -68,7 +86,7 @@ export async function POST(req: Request) {
     await db.insert(trainingVideos).values({
       id: videoId,
       title,
-      sourceType: "screen_recording",
+      sourceType,
       sourceDriveFileName: safeName,
       videoFolderId: folder.folderId,
       voice,
@@ -88,6 +106,7 @@ export async function POST(req: Request) {
       accessToken,
       expiresAt,
       parentFolderId: rawFolderId,
+      mimeType,
       // Echo back what we picked so the UI can show it
       title,
       fileName: safeName,

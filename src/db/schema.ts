@@ -978,8 +978,19 @@ export const trainingVideos = sqliteTable("TrainingVideo", {
   scenes:          text("scenes"),                              // JSON array of TrainingScene
   // Conversation history with ARIMA (chat-driven refinements)
   messages:        text("messages"),                            // JSON
-  status:          text("status").default("draft").notNull(),   // draft | generating | ready | rendering | rendered | error
+  // Stage-machine status. Each transition is its own HTTP endpoint so any
+  // single stage's failure doesn't poison the whole row.
+  //   draft → uploading → source-uploaded → content-extracted →
+  //   script-generated → generating-audio → ready → rendering → rendered
+  // "error" is set on any stage failure; errorStage names which stage so the
+  // UI knows which Retry button to wire up.
+  status:          text("status").default("draft").notNull(),
   errorMessage:    text("errorMessage"),
+  errorStage:      text("errorStage"),                          // upload | extract | script | tts-3 | render
+  // Output of /extract-source: PPTX text/JSON for pptx sources, or
+  // { frames: [...], durationSec } for screen recordings. Persisted so
+  // /generate-script can be retried without re-extracting.
+  extractedContent: text("extractedContent"),
   // Phase G.3 — per-scene TTS progress, used by the UI to show "Generating
   // voiceover (3/7)" while the create/regenerate routes run. JSON shape:
   //   { done: number, total: number, current?: { order, status, error? } }
