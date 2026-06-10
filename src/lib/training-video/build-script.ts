@@ -149,6 +149,104 @@ function downsampleFrames<T>(frames: T[], target: number): T[] {
 }
 
 /**
+ * Generate (or regenerate) the narrationScript for a SINGLE scene without
+ * re-running the whole deck. Used by the per-scene "Generate script" /
+ * "Regenerate script" buttons on scene cards.
+ *
+ * The model gets the source (PPTX or frames in the scene's time range) +
+ * the scene's title + a short instruction. Returns just the narration text.
+ */
+export interface BuildSingleSceneScriptArgs {
+  // The source the deck was built from
+  sourceKind: "pptx" | "video_frames";
+  pptxBuffer?: Buffer;                       // when sourceKind = pptx
+  frames?: Array<{ timestampSec: number; jpegBase64: string }>;  // when sourceKind = video_frames
+  // Scene metadata so the model knows what slide/segment to narrate
+  scene: {
+    order: number;
+    title: string;
+    sourceSlideNumber?: number;
+    sourceStartSec?: number;
+    sourceEndSec?: number;
+    caption?: string;
+    aiNote?: string;
+  };
+  totalScenes: number;
+  language?: string;
+  userPrompt?: string;
+}
+
+export async function buildSingleSceneScript(args: BuildSingleSceneScriptArgs): Promise<{ ok: boolean; narrationScript?: string; error?: string; rawAi?: string }> {
+  const model = await getModelForApp("training-videos").catch(() => null);
+  if (!model) return { ok: false, error: "No AI model configured" };
+
+  const skillsBlock = await loadSkillsBlock();
+
+  const sceneRef = args.scene.sourceSlideNumber != null
+    ? `slide ${args.scene.sourceSlideNumber}`
+    : args.scene.sourceStartSec != null && args.scene.sourceEndSec != null
+      ? `the segment from ${args.scene.sourceStartSec}s to ${args.scene.sourceEndSec}s`
+      : `scene ${args.scene.order}`;
+
+  const promptText = `${skillsBlock ? skillsBlock + "\n\n---\n\n" : ""}You are writing the narration for ONE scene in a training video.
+
+Scene info:
+- Scene number: ${args.scene.order} of ${args.totalScenes}
+- Target: ${sceneRef}
+- Title: ${args.scene.title}
+${args.scene.caption ? `- Existing caption: ${args.scene.caption}` : ""}
+${args.scene.aiNote ? `- AI note from earlier pass: ${args.scene.aiNote}` : ""}
+${args.userPrompt ? `\nUser guidance: ${args.userPrompt}` : ""}
+
+Write the narration following the same slide-kind awareness as the full-deck prompt:
+- Identify the slide/segment kind first (title / divider / overview / step-by-step / concept / screenshot / closing).
+- Length scales with content density — a 1-bullet slide gets one sentence, a 6-step slide gets a paragraph that covers EVERY step.
+- Friendly second-person voice, active verbs, name UI elements directly.
+- NO jargon. NO invented content. NO "[insert X]" placeholders.
+- LANGUAGE: ${args.language || "en-US"}.
+
+OUTPUT FORMAT (STRICT JSON ONLY — no markdown fences):
+{ "narrationScript": "..." }
+
+The narrationScript value is the full spoken text for this one scene. Nothing else.`;
+
+  const parts: any[] = [{ text: promptText }];
+  if (args.sourceKind === "pptx" && args.pptxBuffer) {
+    parts.push({ inlineData: { mimeType: PPTX_MIME, data: args.pptxBuffer.toString("base64") } });
+  } else if (args.sourceKind === "video_frames" && args.frames) {
+    // For video, only pass the frames in this scene's time range so the
+    // model focuses. If no range is set, pass a downsampled view of all.
+    const rangeFrames = (args.scene.sourceStartSec != null && args.scene.sourceEndSec != null)
+      ? args.frames.filter(f => f.timestampSec >= args.scene.sourceStartSec! && f.timestampSec <= args.scene.sourceEndSec!)
+      : args.frames;
+    const sampled = rangeFrames.length > 20 ? downsampleFrames(rangeFrames, 20) : rangeFrames;
+    for (const f of sampled) {
+      parts.push({ text: `[t=${f.timestampSec.toFixed(1)}s]` });
+      parts.push({ inlineData: { mimeType: "image/jpeg", data: f.jpegBase64 } });
+    }
+  }
+
+  const result = await generateWithRetry(model, {
+    contents: [{ role: "user", parts }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      maxOutputTokens: 4096,
+    },
+  });
+  const raw = (result?.response?.text?.() || "").trim();
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  let parsed: any;
+  try { parsed = JSON.parse(cleaned); } catch {
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    if (!m) return { ok: false, error: "AI returned non-JSON", rawAi: raw };
+    try { parsed = JSON.parse(m[0]); } catch { return { ok: false, error: "AI returned non-JSON", rawAi: raw }; }
+  }
+  const narration = String(parsed?.narrationScript || "").trim();
+  if (!narration) return { ok: false, error: "AI returned empty narration", rawAi: raw };
+  return { ok: true, narrationScript: narration };
+}
+
+/**
  * Conversational refinement — re-runs script gen with the existing content
  * + the new user message. AI returns updated content (or null if just a
  * clarifying question) plus a chat reply.

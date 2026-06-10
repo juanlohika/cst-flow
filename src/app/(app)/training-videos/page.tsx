@@ -860,6 +860,25 @@ function SceneCard({
   const [draftTitle, setDraftTitle] = useState(scene.title);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [generatingScript, setGeneratingScript] = useState(false);
+  const [scriptGenError, setScriptGenError] = useState<string | null>(null);
+
+  const generateScript = async () => {
+    setGeneratingScript(true);
+    setScriptGenError(null);
+    try {
+      const res = await fetch(`/api/training-videos/${videoId}/scenes/${scene.order}/generate-script`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Script generation failed");
+      onSceneUpdated(data.scene);
+    } catch (e: any) {
+      setScriptGenError(e?.message || String(e));
+    } finally {
+      setGeneratingScript(false);
+    }
+  };
 
   // If parent updates the scene (e.g. after audio regen), reset draft to match
   useEffect(() => {
@@ -971,17 +990,36 @@ function SceneCard({
               Audio will need a regen after saving.
             </span>
           </>
+        ) : !scene.narrationScript?.trim() ? (
+          <>
+            <button
+              onClick={generateScript}
+              disabled={generatingScript}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-600 text-white text-[11px] font-bold hover:bg-violet-700 disabled:opacity-50"
+            >
+              {generatingScript ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              {generatingScript ? "Writing script…" : "Generate script"}
+            </button>
+            <button
+              onClick={startEdit}
+              className="text-[11px] font-bold text-slate-500 hover:text-violet-600 ml-auto"
+            >
+              Write manually
+            </button>
+            {scriptGenError && (
+              <div className="basis-full mt-1 text-[11px] text-rose-700">{scriptGenError}</div>
+            )}
+          </>
         ) : (
           <>
-            {scene.audioDriveUrl ? (
-              <a
-                href={scene.audioDriveUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-50 border border-violet-200 text-[11px] font-bold text-violet-700 hover:bg-violet-100"
-              >
-                <Play className="w-3 h-3" /> Play audio
-              </a>
+            {scene.audioDriveFileId ? (
+              <audio
+                controls
+                preload="none"
+                src={`/api/training-videos/${videoId}/scene-audio/${scene.order}`}
+                className="h-8"
+                style={{ minWidth: 220 }}
+              />
             ) : (
               <span className="text-[11px] text-amber-700 inline-flex items-center gap-1">
                 <AlertTriangle className="w-3 h-3" /> No audio{audioStale ? " — stale after edit" : ""}
@@ -993,7 +1031,16 @@ function SceneCard({
               className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-violet-600 disabled:opacity-50"
             >
               {regenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-              {regenerating ? "Regenerating…" : "Regenerate audio"}
+              {regenerating ? "Regenerating…" : scene.audioDriveFileId ? "Regenerate audio" : "Generate audio"}
+            </button>
+            <button
+              onClick={generateScript}
+              disabled={generatingScript}
+              className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-violet-600 disabled:opacity-50"
+              title="Re-ask the AI to rewrite this scene's narration"
+            >
+              {generatingScript ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              {generatingScript ? "Rewriting…" : "Rewrite script"}
             </button>
             <button
               onClick={startEdit}
@@ -1001,6 +1048,9 @@ function SceneCard({
             >
               Edit script
             </button>
+            {scriptGenError && (
+              <div className="basis-full mt-1 text-[11px] text-rose-700">{scriptGenError}</div>
+            )}
           </>
         )}
       </div>

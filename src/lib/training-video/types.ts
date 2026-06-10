@@ -30,6 +30,12 @@ export interface TrainingScene {
   edited?: boolean;
   /** AI notes about what it inferred for this scene (optional). */
   aiNote?: string;
+  /** Screen-recording scenes: start/end seconds in the source video. */
+  sourceStartSec?: number;
+  sourceEndSec?: number;
+  /** Optional Drive ids for source clips (legacy fields from earlier phases). */
+  slideImageDriveFileId?: string;
+  sourceVideoDriveFileId?: string;
 }
 
 export interface AiNotes {
