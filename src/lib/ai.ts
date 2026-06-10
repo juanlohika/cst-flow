@@ -410,17 +410,29 @@ export async function generateWithRetry(model: any, input: any, fallbackModel?: 
         throw e;
       }
 
-      const isOverloaded =
+      const isClaudeOverloaded =
         err?.status === 529 ||
         msg.toLowerCase().includes("overload") ||
         err?.error?.type === "overloaded_error";
+      // Gemini surfaces capacity issues as 503 "Service Unavailable" with
+      // "high demand" / "experiencing high demand" in the message body.
+      const isGeminiOverloaded =
+        err?.status === 503 ||
+        msg.includes("503") ||
+        msg.toLowerCase().includes("high demand") ||
+        msg.toLowerCase().includes("service unavailable");
+      const isOverloaded = isClaudeOverloaded || isGeminiOverloaded;
+
       if (isOverloaded && attempt < delays.length) {
-        console.warn(`[AI] Claude overloaded, retrying in ${delays[attempt]}ms (attempt ${attempt + 1})`);
+        console.warn(`[AI] ${isGeminiOverloaded ? "Gemini" : "Claude"} overloaded, retrying in ${delays[attempt]}ms (attempt ${attempt + 1})`);
         await new Promise(r => setTimeout(r, delays[attempt]));
         continue;
       }
       if (isOverloaded) {
-        const e: any = new Error("Claude is temporarily overloaded. Please wait a moment and try again.");
+        const e: any = new Error(
+          `${isGeminiOverloaded ? "Gemini" : "Claude"} is experiencing high demand right now. ` +
+          `Try again in a minute. (Retried ${delays.length} times automatically.)`
+        );
         e.status = 503;
         throw e;
       }
