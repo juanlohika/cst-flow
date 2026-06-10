@@ -198,55 +198,29 @@ export async function uploadSceneAudio(ctx: DriveCtx, args: {
  *   2. Drive responds with a `Location` header — the URL to PUT bytes to
  *   3. Browser PUTs bytes (chunked or whole), Drive returns 200 with the file id
  */
-export async function createResumableUploadUrl(ctx: DriveCtx, args: {
-  parentFolderId: string;
-  fileName: string;
-  mimeType: string;
-  fileSize: number;
-  // Browser origin that will PUT the bytes. Drive uses this to set up CORS
-  // on the returned session URL. Without it, browser uploads fail with
-  // "No 'Access-Control-Allow-Origin' header is present on the requested
-  // resource." Pass the request's Origin header.
-  uploaderOrigin: string;
-}): Promise<{ uploadUrl: string }> {
+/**
+ * Mint a short-lived (~1 hour) Drive access token the browser can use to
+ * upload directly via Drive's multipart upload endpoint. This endpoint
+ * (/upload/drive/v3/files?uploadType=multipart) DOES support CORS when
+ * called with an Authorization: Bearer <token> header — it's the same path
+ * the Drive JavaScript SDK uses internally.
+ *
+ * We don't bother with resumable here because (a) browser CORS support on
+ * resumable session URLs is unreliable and (b) for 100-500MB recordings
+ * the multipart upload is fast enough that resume isn't critical.
+ */
+export async function mintBrowserUploadToken(ctx: DriveCtx): Promise<{ accessToken: string; expiresAt: number }> {
   const jwt = new JWT({
     email: ctx.credentials.client_email,
     key: ctx.credentials.private_key,
-    scopes: ["https://www.googleapis.com/auth/drive"],
+    scopes: ["https://www.googleapis.com/auth/drive.file"],
   });
   const tokenResp = await jwt.getAccessToken();
   const accessToken = tokenResp?.token;
-  if (!accessToken) throw new Error("Could not obtain Drive access token for resumable upload.");
-
-  const metadata = {
-    name: args.fileName,
-    mimeType: args.mimeType,
-    parents: [args.parentFolderId],
-  };
-
-  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${accessToken}`,
-      "Content-Type": "application/json; charset=UTF-8",
-      "X-Upload-Content-Type": args.mimeType,
-      "X-Upload-Content-Length": String(args.fileSize),
-      // The Origin header tells Drive to return a CORS-enabled session URL.
-      // Without it the upload URL rejects browser PUTs with a CORS error.
-      "Origin": args.uploaderOrigin,
-    },
-    body: JSON.stringify(metadata),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`Drive resumable init failed (HTTP ${res.status}): ${errText.slice(0, 300)}`);
-  }
-  const uploadUrl = res.headers.get("Location") || res.headers.get("location");
-  if (!uploadUrl) {
-    throw new Error("Drive didn't return a Location header for the resumable upload session.");
-  }
-  return { uploadUrl };
+  if (!accessToken) throw new Error("Could not mint Drive access token");
+  // jwt.getAccessToken() doesn't return expiry directly; tokens are typically
+  // valid for 1 hour. We tell the browser the expiry so it can re-fetch.
+  return { accessToken, expiresAt: Date.now() + 55 * 60 * 1000 };
 }
 
 /**

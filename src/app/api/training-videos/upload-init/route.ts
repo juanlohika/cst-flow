@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { trainingVideos, trainingVideoSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { ensureAccessSchema } from "@/lib/access/accounts";
-import { loadDriveCtx, ensureVideoFolder, ensureRawSubfolder, createResumableUploadUrl } from "@/lib/training-video/drive";
+import { loadDriveCtx, ensureVideoFolder, ensureRawSubfolder, mintBrowserUploadToken } from "@/lib/training-video/drive";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -59,21 +59,10 @@ export async function POST(req: Request) {
     const rawFolderId = await ensureRawSubfolder(ctx, folder.folderId);
     const safeName = fileName.replace(/[^\w.\- ]+/g, "_");
 
-    // Origin must match where the browser PUTs from — req.headers.origin gives
-    // us the deployed URL (or http://localhost:3000 in dev). Drive only
-    // CORS-enables the upload URL for the exact origin we declare here.
-    const origin = req.headers.get("origin") || req.headers.get("Origin") || "";
-    if (!origin) {
-      return NextResponse.json({ error: "Origin header missing — cannot mint CORS-safe upload URL" }, { status: 400 });
-    }
-
-    const { uploadUrl } = await createResumableUploadUrl(ctx, {
-      parentFolderId: rawFolderId,
-      fileName: safeName,
-      mimeType: "video/mp4",
-      fileSize,
-      uploaderOrigin: origin,
-    });
+    // The browser will call Drive's multipart upload endpoint directly using
+    // this short-lived access token. The endpoint supports CORS when called
+    // with an Authorization header — Drive's own JS SDK uses this same path.
+    const { accessToken, expiresAt } = await mintBrowserUploadToken(ctx);
 
     const videoId = `tv_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
     await db.insert(trainingVideos).values({
@@ -96,7 +85,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       videoId,
-      uploadUrl,
+      accessToken,
+      expiresAt,
+      parentFolderId: rawFolderId,
       // Echo back what we picked so the UI can show it
       title,
       fileName: safeName,

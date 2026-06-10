@@ -234,9 +234,8 @@ function Content() {
     if (!pendingFile) return;
     setStatus("uploading");
     setUploadProgress(0);
-    let videoIdLocal: string | null = null;
     try {
-      // 1. Init: server mints a Drive resumable upload URL + creates the row
+      // 1. Init: server mints a Drive access token + creates the DB row
       const initRes = await fetch("/api/training-videos/upload-init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -250,13 +249,20 @@ function Content() {
       });
       const initData = await initRes.json();
       if (!initRes.ok) throw new Error(initData?.error || "Upload init failed");
-      videoIdLocal = initData.videoId;
       setVideoId(initData.videoId);
       setTitle(titleForUpload);
       router.replace(`/training-videos?resume=${initData.videoId}`);
 
-      // 2. PUT bytes directly to Drive (use XHR so we get progress events)
-      const driveFileId = await putToResumableUrl(initData.uploadUrl, pendingFile, pct => setUploadProgress(pct));
+      // 2. Upload directly to Drive's multipart endpoint. The browser sends
+      // the metadata + bytes together; Drive returns the new file id.
+      const driveFileId = await uploadToDriveMultipart({
+        accessToken: initData.accessToken,
+        parentFolderId: initData.parentFolderId,
+        fileName: initData.fileName,
+        mimeType: pendingFile.type || "video/mp4",
+        file: pendingFile,
+        onProgress: pct => setUploadProgress(pct),
+      });
       setUploadProgress(100);
 
       // 3. Finalize: server kicks off extract-frames → script → TTS
@@ -284,35 +290,55 @@ function Content() {
     }
   };
 
-  // Upload a file to a Google Drive resumable upload URL using XHR so we
-  // can surface progress to the UI. fetch() doesn't expose upload-progress
-  // events on the browser side yet.
-  const putToResumableUrl = (url: string, file: File, onProgress: (pct: number) => void): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("PUT", url, true);
-      // Don't set Content-Type — the resumable URL already carries it from init.
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          onProgress(Math.round((e.loaded / e.total) * 100));
-        }
-      };
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const data = JSON.parse(xhr.responseText);
-            if (!data?.id) return reject(new Error("Drive returned no file id"));
-            resolve(data.id);
-          } catch (e: any) {
-            reject(new Error(`Bad JSON from Drive: ${e?.message}`));
-          }
-        } else {
-          reject(new Error(`Drive upload failed (HTTP ${xhr.status}): ${xhr.responseText?.slice(0, 300)}`));
-        }
-      };
-      xhr.onerror = () => reject(new Error("Drive upload network error"));
-      xhr.send(file);
+  // Upload a file to Drive's multipart endpoint. The browser builds the
+  // multipart body itself: a JSON metadata part + the binary file part.
+  // This endpoint supports CORS when called with an Authorization header
+  // (same path Drive's own JS SDK uses). XHR gives us upload progress.
+  const uploadToDriveMultipart = (args: {
+    accessToken: string;
+    parentFolderId: string;
+    fileName: string;
+    mimeType: string;
+    file: File;
+    onProgress: (pct: number) => void;
+  }): Promise<string> => new Promise((resolve, reject) => {
+    const boundary = `cstboundary${Date.now()}${Math.random().toString(36).slice(2)}`;
+    const metadata = JSON.stringify({
+      name: args.fileName,
+      mimeType: args.mimeType,
+      parents: [args.parentFolderId],
     });
+    const head = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: ${args.mimeType}\r\n\r\n`;
+    const tail = `\r\n--${boundary}--`;
+    // Assemble the body as a Blob so the browser sets Content-Length and
+    // streams it efficiently.
+    const body = new Blob([head, args.file, tail]);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true", true);
+    xhr.setRequestHeader("Authorization", `Bearer ${args.accessToken}`);
+    xhr.setRequestHeader("Content-Type", `multipart/related; boundary=${boundary}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        args.onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (!data?.id) return reject(new Error("Drive returned no file id"));
+          resolve(data.id);
+        } catch (e: any) {
+          reject(new Error(`Bad JSON from Drive: ${e?.message}`));
+        }
+      } else {
+        reject(new Error(`Drive upload failed (HTTP ${xhr.status}): ${xhr.responseText?.slice(0, 300)}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Drive upload network error"));
+    xhr.send(body);
+  });
 
   const sendChat = async () => {
     if (!videoId || !prompt.trim()) return;
