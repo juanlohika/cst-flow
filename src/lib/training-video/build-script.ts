@@ -209,26 +209,69 @@ OUTPUT FORMAT (STRICT JSON ONLY — no markdown fences, no commentary)
 }
 
 ═══════════════════════════════════════════════════════════
-VOICE & STYLE GUIDELINES
+HOW TO NARRATE — IDENTIFY THE SLIDE KIND FIRST
 ═══════════════════════════════════════════════════════════
-- AUDIENCE: new field staff using Tarkie. Friendly, encouraging, plain language.
-- SENTENCES: 1-3 short sentences per scene. Each scene narrates for roughly 5-15 seconds.
+Before writing each scene's narration, decide what KIND of slide it is. Different kinds get narrated differently. Most decks mix all of these.
+
+A. TITLE / WELCOME slide (first slide, big title, no steps)
+   → Short overview. Set up what the training covers. 1-3 sentences.
+   → Example: "Welcome to Tarkie. In this training, you'll learn how to record a complete field visit, from check-in through expense tagging."
+
+B. SECTION DIVIDER (just a section name, no detail)
+   → Short bridge. 1 sentence.
+   → Example: "Next, let's go through the visit check-in flow."
+
+C. OVERVIEW / AGENDA / SUMMARY slide (lists topics or sections, no steps)
+   → Walk through the items the slide lists. Read each item plainly.
+   → Don't compress 5 items into "a few things" — name each one.
+
+D. STEP-BY-STEP slide (the slide shows steps 1, 2, 3 / numbered actions / a procedure)
+   → Read EVERY step shown. In order. Don't summarize. Don't skip.
+   → Use natural connecting language between steps: "First…", "Then…", "After that…", "Once that's done…", "Finally…".
+   → If the slide says "Step 1: Tap Check-In. Step 2: Pick the customer. Step 3: Snap a photo." then the narration must cover all three steps in order — not "tap a few things to check in."
+   → Length scales with step count. A 5-step slide produces a longer narration than a 1-step slide. THIS IS EXPECTED. Don't try to keep all scenes the same length.
+
+E. CONCEPT / EXPLANATION slide (describes what something is, why it matters)
+   → Explain the concept using the slide's own framing. Don't editorialize. Don't add information not on the slide.
+
+F. SCREENSHOT / UI DIAGRAM (an app screenshot with callouts or labels)
+   → Describe what's on screen and what each labeled element does. Read every callout/label, in reading order (top-to-bottom, left-to-right).
+
+G. CLOSING / "THANK YOU" slide
+   → Short wrap-up. Repeat the next action if there is one. 1-2 sentences.
+
+═══════════════════════════════════════════════════════════
+LENGTH RULES (READ CAREFULLY — THIS IS WHERE PEOPLE GET IT WRONG)
+═══════════════════════════════════════════════════════════
+- The narration's length MUST scale with the slide's content density. Do not impose a fixed time target like "all scenes 10-15 seconds."
+- If a slide has 1 bullet, the narration is short (one sentence).
+- If a slide has 8 bullets or 6 numbered steps, the narration is long (one paragraph). It is normal and good for a step-heavy slide to take 60+ seconds to narrate.
+- NEVER drop steps to keep the narration short. If the slide shows 6 steps, the narration covers 6 steps.
+- NEVER add steps the slide doesn't have. If the slide shows 3 steps, the narration covers exactly 3.
+
+═══════════════════════════════════════════════════════════
+VOICE & STYLE
+═══════════════════════════════════════════════════════════
+- AUDIENCE: new field staff using Tarkie. Friendly, plain, second person ("you'll tap…", "next, you select…").
+- ACTIVE VOICE. NAME THINGS DIRECTLY ("the green Check-In button" beats "the action button").
 - NO JARGON: skip "leverage", "synergy", "best-in-class", "robust", "seamless".
-- ACTIVE VOICE: "You'll tap the check-in button" not "the check-in button will be tapped".
-- NAME THINGS DIRECTLY: "the green Check-In button" not "the action button on the screen".
-- CONTINUITY: scenes should flow into each other. Don't repeat introductions. Each scene assumes the user just heard the previous one.
-- CAPTION = NARRATION: for v1, the caption text matches the spoken text word-for-word. Future versions may shorten captions.
-- LANGUAGE: ${args.language}. If the source slides are in Taglish, match the mix the slides use.
+- CONTINUITY: scenes flow into each other. Don't repeat the intro. Each scene assumes the listener just heard the previous one.
+- LANGUAGE: ${args.language}. If the deck is Taglish, match its mix.
+
+═══════════════════════════════════════════════════════════
+CAPTION FIELD
+═══════════════════════════════════════════════════════════
+The caption shown on screen needs to be readable in lower-third area, so it's SHORTER than the full narration. Set caption to a condensed line (≤ 100 chars) that summarizes the scene — typically the slide title or a key phrase. The narration is the full spoken text; the caption is the visual subtitle.
 
 ═══════════════════════════════════════════════════════════
 RULES
 ═══════════════════════════════════════════════════════════
-1. Read the ENTIRE deck before generating. Don't write the first scene until you understand the arc.
-2. NEVER invent content not implied by the slide + notes. If a slide is empty, generate a placeholder narration and flag it in aiNotes.missing.
-3. NEVER write "[insert X]" or "TBD" in the narrationScript. Either write real text or leave the scene blank and flag it.
-4. Preserve the slide order. One scene per slide.
-5. If a slide is a section divider (only a title, no detail), keep its scene short ("Next, let's talk about field check-ins.").
-6. The final scene should have a clean closing line ("That's it for now. Tap the check-in button to start your first day.").
+1. Read the ENTIRE deck before generating. Decide the slide kinds first, then write narrations.
+2. PREFER speaker notes when they're present and substantive — they're usually the script the author intended. Treat slide content as the structure, notes as the voice.
+3. NEVER invent content not on the slide or in its notes. If a slide is empty, write a placeholder and flag it in aiNotes.missing.
+4. NEVER write "[insert X]" or "TBD" in narrationScript. Either write real narration or flag it.
+5. One scene per slide. Preserve slide order.
+6. Final scene gets a clean closing line that names the next action ("That's it for now. Open Tarkie and tap Check-In to start your first day.").
 
 ═══════════════════════════════════════════════════════════
 GUIDANCE FROM THE TEAM MEMBER (optional)
@@ -261,7 +304,7 @@ WHAT TO LOOK FOR (scene boundaries)
 - A clear pause / completion (loading screen, success message, then continuing)
 - Tutorial-style "step changes" (introducing a feature, then demonstrating, then result)
 
-Aim for 3-8 scenes for a 60-90 second video. Don't over-segment (more than 1 scene per 5 seconds is usually too many).
+Segment based on logical content, not a fixed scene count. A 60-second quick demo may need 4 scenes; a 5-minute walkthrough may need 15+. Don't over-segment (less than 5 seconds per scene is usually too granular) and don't under-segment (a 2-minute scene is usually doing too much).
 
 ═══════════════════════════════════════════════════════════
 OUTPUT FORMAT (STRICT JSON ONLY — no markdown fences)
@@ -300,11 +343,28 @@ CRITICAL FIELD-LEVEL RULES (for screen-recording scenes)
 - narrationScript: describe what's happening on screen for the NEW audience (field staff using Tarkie for the first time). Don't transcribe the original speaker — you can't hear them and the new voice will replace it.
 
 ═══════════════════════════════════════════════════════════
-VOICE & STYLE GUIDELINES
+HOW TO NARRATE — SCENE KIND MATTERS
 ═══════════════════════════════════════════════════════════
-- AUDIENCE: new field staff. Friendly, direct, plain language.
-- SENTENCES: 1-3 short sentences per scene. Aim for narration that's ~80-90% as long as the scene duration (so the voiceover finishes just before the scene ends).
+Decide what each segment is:
+- OPENING (first scene, app launch / home screen) → short overview, set up the demo. 1-2 sentences.
+- ACTION sequence (the user performs a series of taps / fills a form / completes a flow) → describe EVERY action shown, in order, using connecting language ("first you…", "then…", "after that…"). Don't summarize.
+- RESULT / CONFIRMATION (a success message, completed state) → describe what the user sees and what it means.
+- TRANSITION (loading, brief pause) → very short or merge into the next scene.
+- CLOSING (final state, end of demo) → short wrap-up + next action.
+
+═══════════════════════════════════════════════════════════
+LENGTH RULES
+═══════════════════════════════════════════════════════════
+- Narration length scales with how much is happening on screen, NOT with a fixed time target.
+- An action-heavy scene (user taps 5 different things) should produce a LONG narration that names each action. A confirmation screen (single success message) should be SHORT.
+- NEVER skip actions to fit a shorter narration. If the user does 6 things, the narration covers 6 things.
+
+═══════════════════════════════════════════════════════════
+VOICE & STYLE
+═══════════════════════════════════════════════════════════
+- AUDIENCE: new field staff. Friendly, plain, second-person ("you'll tap…").
 - ACTION-ORIENTED: "Tap the green Check-In button" beats "the user taps a button".
+- NAME UI ELEMENTS DIRECTLY (button names, screen labels, field names visible in the frames).
 - NO JARGON: skip "leverage", "synergy", "best-in-class".
 - LANGUAGE: ${args.language}.
 
