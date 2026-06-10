@@ -14,6 +14,7 @@
  */
 import { Readable } from "stream";
 import { loadGoogleConfig, getDriveClient } from "@/lib/drive-export-helpers";
+import { JWT } from "google-auth-library";
 
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -22,6 +23,10 @@ const MP3_MIME = "audio/mpeg";
 export interface DriveCtx {
   drive: any;
   serviceAccountEmail: string;
+  // Raw credentials so callsites that need an access token (e.g. for the
+  // resumable-upload session init) can mint one without reaching into
+  // private internals of the googleapis client.
+  credentials: any;
 }
 
 export async function loadDriveCtx(): Promise<DriveCtx> {
@@ -30,7 +35,7 @@ export async function loadDriveCtx(): Promise<DriveCtx> {
     throw new Error("Google service account isn't configured. Set it in Admin → Auth → Google Integration first.");
   }
   const { drive, credentials } = await getDriveClient(cfg);
-  return { drive, serviceAccountEmail: credentials.client_email || "(unknown)" };
+  return { drive, serviceAccountEmail: credentials.client_email || "(unknown)", credentials };
 }
 
 /** Same URL-id parser as the proposal module. Handles every Drive URL shape. */
@@ -181,6 +186,68 @@ export async function uploadSceneAudio(ctx: DriveCtx, args: {
     fileId,
     webViewLink: created.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`,
   };
+}
+
+/**
+ * Mint a resumable-upload URL for a Drive file. The browser then PUTs the
+ * file bytes directly to that URL — bypassing Cloud Run's 32MB request cap.
+ * The URL embeds an upload session id and stays valid for ~7 days.
+ *
+ * Drive's resumable protocol:
+ *   1. We POST metadata (name, mimeType, parents) to /upload/drive/v3/files?uploadType=resumable
+ *   2. Drive responds with a `Location` header — the URL to PUT bytes to
+ *   3. Browser PUTs bytes (chunked or whole), Drive returns 200 with the file id
+ */
+export async function createResumableUploadUrl(ctx: DriveCtx, args: {
+  parentFolderId: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+}): Promise<{ uploadUrl: string }> {
+  const jwt = new JWT({
+    email: ctx.credentials.client_email,
+    key: ctx.credentials.private_key,
+    scopes: ["https://www.googleapis.com/auth/drive"],
+  });
+  const tokenResp = await jwt.getAccessToken();
+  const accessToken = tokenResp?.token;
+  if (!accessToken) throw new Error("Could not obtain Drive access token for resumable upload.");
+
+  const metadata = {
+    name: args.fileName,
+    mimeType: args.mimeType,
+    parents: [args.parentFolderId],
+  };
+
+  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${accessToken}`,
+      "Content-Type": "application/json; charset=UTF-8",
+      "X-Upload-Content-Type": args.mimeType,
+      "X-Upload-Content-Length": String(args.fileSize),
+    },
+    body: JSON.stringify(metadata),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Drive resumable init failed (HTTP ${res.status}): ${errText.slice(0, 300)}`);
+  }
+  const uploadUrl = res.headers.get("Location") || res.headers.get("location");
+  if (!uploadUrl) {
+    throw new Error("Drive didn't return a Location header for the resumable upload session.");
+  }
+  return { uploadUrl };
+}
+
+/**
+ * Ensure the raw/ subfolder exists under a video folder. Exposed publicly
+ * (not just internal) because the upload-init flow needs to mint a resumable
+ * URL targeting raw/ directly.
+ */
+export async function ensureRawSubfolder(ctx: DriveCtx, videoFolderId: string): Promise<string> {
+  return ensureSubfolder(ctx, videoFolderId, "raw");
 }
 
 /** Download a Drive file as bytes (used for PPTX → Gemini). */

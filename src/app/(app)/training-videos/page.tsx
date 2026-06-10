@@ -28,6 +28,16 @@ export default function TrainingVideosPage() {
   );
 }
 
+function ttsProgressLabel(p: { phase?: string; done?: number; total?: number } | null): string {
+  if (!p) return "Generating";
+  if (p.phase === "extracting-frames") return "Extracting keyframes…";
+  if (p.phase === "generating-script") return "Writing narration…";
+  if (p.phase === "tts" || typeof p.done === "number") {
+    return `Generating voiceover (${p.done ?? 0}/${p.total ?? 0})`;
+  }
+  return "Generating";
+}
+
 function Content() {
   const { data: session } = useSession();
   const router = useRouter();
@@ -43,10 +53,12 @@ function Content() {
   const [messages, setMessages] = useState<ChatBubble[]>([]);
   const [voice, setVoice] = useState("Charon");
   const [voiceFolderUrl, setVoiceFolderUrl] = useState<string | null>(null);
-  const [status, setStatus] = useState<"draft" | "generating" | "ready" | "rendering" | "rendered" | "error">("draft");
+  const [status, setStatus] = useState<"draft" | "uploading" | "generating" | "ready" | "rendering" | "rendered" | "error">("draft");
   const [finalMp4Url, setFinalMp4Url] = useState<string | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
-  const [ttsProgress, setTtsProgress] = useState<{ done: number; total: number; current?: { order: number; status: "ok" | "error"; error?: string } } | null>(null);
+  const [ttsProgress, setTtsProgress] = useState<{ phase?: string; done?: number; total?: number; current?: { order: number; status: "ok" | "error"; error?: string } } | null>(null);
+  // Direct-to-Drive upload progress (percent 0-100) when uploading screen recordings.
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
   const [prompt, setPrompt] = useState("");
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -177,6 +189,19 @@ function Content() {
     if (!titleForUpload.trim()) { setError("Give it a title"); return; }
     setSending(true);
     setError(null);
+
+    if (sourceMode === "video") {
+      // Screen recordings can be hundreds of MB — bypass Cloud Run's 32MB
+      // request cap by uploading directly to Drive's resumable upload URL.
+      await uploadScreenRecording();
+    } else {
+      // PPTX is small (typically <5MB) — multipart form upload is fine.
+      await uploadPptx();
+    }
+  };
+
+  const uploadPptx = async () => {
+    if (!pendingFile) return;
     setStatus("generating");
     try {
       const formData = new FormData();
@@ -184,20 +209,15 @@ function Content() {
       formData.append("title", titleForUpload);
       if (userPromptForUpload.trim()) formData.append("userPrompt", userPromptForUpload);
       formData.append("voice", voice);
-
-      const endpoint = sourceMode === "video"
-        ? "/api/training-videos/create-from-video"
-        : "/api/training-videos/create";
-      const res = await fetch(endpoint, { method: "POST", body: formData });
+      const res = await fetch("/api/training-videos/create", { method: "POST", body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Generation failed");
-
       setVideoId(data.videoId);
       setTitle(titleForUpload);
       setContent(data.content);
       setVoiceFolderUrl(data.videoFolderUrl || null);
       setMessages([
-        { role: "user", content: `Uploaded ${pendingFile.name}${userPromptForUpload ? ` — ${userPromptForUpload}` : ""}`, attachmentNames: [pendingFile.name] },
+        { role: "user", content: `Uploaded ${pendingFile!.name}${userPromptForUpload ? ` — ${userPromptForUpload}` : ""}`, attachmentNames: [pendingFile!.name] },
         { role: "assistant", content: data.reply || "Done — review the scenes on the right." },
       ]);
       setStatus("ready");
@@ -209,6 +229,90 @@ function Content() {
       setSending(false);
     }
   };
+
+  const uploadScreenRecording = async () => {
+    if (!pendingFile) return;
+    setStatus("uploading");
+    setUploadProgress(0);
+    let videoIdLocal: string | null = null;
+    try {
+      // 1. Init: server mints a Drive resumable upload URL + creates the row
+      const initRes = await fetch("/api/training-videos/upload-init", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: titleForUpload,
+          fileName: pendingFile.name,
+          fileSize: pendingFile.size,
+          userPrompt: userPromptForUpload.trim() || undefined,
+          voice,
+        }),
+      });
+      const initData = await initRes.json();
+      if (!initRes.ok) throw new Error(initData?.error || "Upload init failed");
+      videoIdLocal = initData.videoId;
+      setVideoId(initData.videoId);
+      setTitle(titleForUpload);
+      router.replace(`/training-videos?resume=${initData.videoId}`);
+
+      // 2. PUT bytes directly to Drive (use XHR so we get progress events)
+      const driveFileId = await putToResumableUrl(initData.uploadUrl, pendingFile, pct => setUploadProgress(pct));
+      setUploadProgress(100);
+
+      // 3. Finalize: server kicks off extract-frames → script → TTS
+      setStatus("generating");
+      const finRes = await fetch("/api/training-videos/upload-finalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoId: initData.videoId, driveFileId }),
+      });
+      const finData = await finRes.json();
+      if (!finRes.ok) throw new Error(finData?.error || "Pipeline failed after upload");
+      setContent(finData.content);
+      setVoiceFolderUrl(finData.videoFolderUrl || null);
+      setMessages([
+        { role: "user", content: `Uploaded ${pendingFile.name}${userPromptForUpload ? ` — ${userPromptForUpload}` : ""}`, attachmentNames: [pendingFile.name] },
+        { role: "assistant", content: finData.reply || "Done — review the scenes on the right." },
+      ]);
+      setStatus("ready");
+    } catch (e: any) {
+      setError(e?.message || String(e));
+      setStatus("error");
+    } finally {
+      setUploadProgress(null);
+      setSending(false);
+    }
+  };
+
+  // Upload a file to a Google Drive resumable upload URL using XHR so we
+  // can surface progress to the UI. fetch() doesn't expose upload-progress
+  // events on the browser side yet.
+  const putToResumableUrl = (url: string, file: File, onProgress: (pct: number) => void): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", url, true);
+      // Don't set Content-Type — the resumable URL already carries it from init.
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (!data?.id) return reject(new Error("Drive returned no file id"));
+            resolve(data.id);
+          } catch (e: any) {
+            reject(new Error(`Bad JSON from Drive: ${e?.message}`));
+          }
+        } else {
+          reject(new Error(`Drive upload failed (HTTP ${xhr.status}): ${xhr.responseText?.slice(0, 300)}`));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Drive upload network error"));
+      xhr.send(file);
+    });
 
   const sendChat = async () => {
     if (!videoId || !prompt.trim()) return;
@@ -482,12 +586,16 @@ function Content() {
                 {content.scenes.length} scene{content.scenes.length === 1 ? "" : "s"}
               </span>
             )}
+            {status === "uploading" && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-bold">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {uploadProgress !== null ? `Uploading (${uploadProgress}%)` : "Uploading"}
+              </span>
+            )}
             {status === "generating" && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-bold">
                 <Loader2 className="w-3 h-3 animate-spin" />
-                {ttsProgress
-                  ? `Generating voiceover (${ttsProgress.done}/${ttsProgress.total})`
-                  : "Generating"}
+                {ttsProgressLabel(ttsProgress)}
               </span>
             )}
             {status === "ready" && (
