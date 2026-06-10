@@ -69,6 +69,18 @@ function Content() {
   const [sending, setSending] = useState(false);
   const [regeneratingScene, setRegeneratingScene] = useState<number | null>(null);
   const [downloading, setDownloading] = useState(false);
+  // Recent-videos drawer (sidebar list of past videos)
+  const [recentOpen, setRecentOpen] = useState(false);
+  const [recentVideos, setRecentVideos] = useState<Array<{
+    id: string;
+    title: string;
+    status: string;
+    voice: string;
+    aspectRatio: string;
+    generatedAt: string;
+    updatedAt: string;
+  }>>([]);
+  const [recentLoading, setRecentLoading] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -341,6 +353,35 @@ function Content() {
     }
   };
 
+  // Load the user's recent videos for the sidebar drawer. Called when the
+  // user opens the drawer; cheap enough to refresh every time so we don't
+  // have to invalidate after edits.
+  const loadRecentVideos = async () => {
+    setRecentLoading(true);
+    try {
+      const res = await fetch("/api/training-videos");
+      const data = await res.json();
+      if (res.ok) setRecentVideos(data.videos || []);
+    } catch {
+      // Silent — the empty list is informative enough
+    } finally {
+      setRecentLoading(false);
+    }
+  };
+
+  const openRecent = () => {
+    setRecentOpen(true);
+    loadRecentVideos();
+  };
+
+  // Resume a video from the drawer — same effect as navigating with ?resume=
+  // but without a hard reload (preserves any in-flight pipeline this tab is
+  // running on a different video).
+  const resumeVideo = (id: string) => {
+    setRecentOpen(false);
+    router.push(`/training-videos?resume=${id}`);
+  };
+
   // Retry the failed pipeline stage. Reads current row status to know
   // where to resume.
   const retryPipeline = async () => {
@@ -489,7 +530,7 @@ function Content() {
   return (
     <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden bg-slate-50">
       {/* Left: chat / upload */}
-      <div className="w-[400px] border-r bg-white flex flex-col shadow-xl z-20">
+      <div className="w-[400px] border-r bg-white flex flex-col shadow-xl z-20 relative">
         <div className="p-5 border-b shrink-0">
           <div className="flex items-center gap-2 mb-1">
             <div className="bg-violet-500 text-white p-1 rounded-md shadow-sm"><MonitorPlay size={16} /></div>
@@ -504,6 +545,12 @@ function Content() {
                 + New Video
               </button>
             )}
+            <button
+              onClick={openRecent}
+              className="text-[10px] font-black uppercase text-slate-400 hover:text-violet-600 hover:underline flex items-center gap-1"
+            >
+              <RefreshCw size={11} /> My Videos
+            </button>
             {isAdmin && (
               <ForceLink href="/training-videos/settings" className="text-[10px] font-black uppercase text-slate-400 hover:text-violet-600 hover:underline flex items-center gap-1">
                 <Settings size={11} /> Settings
@@ -511,6 +558,18 @@ function Content() {
             )}
           </div>
         </div>
+
+        {/* Recent videos drawer — slides in from the left edge of the left column */}
+        {recentOpen && (
+          <RecentVideosDrawer
+            videos={recentVideos}
+            loading={recentLoading}
+            currentId={videoId}
+            onClose={() => setRecentOpen(false)}
+            onResume={resumeVideo}
+            onRefresh={loadRecentVideos}
+          />
+        )}
 
         {/* Messages or upload form */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/30">
@@ -1056,4 +1115,133 @@ function SceneCard({
       </div>
     </div>
   );
+}
+
+/**
+ * Slide-in panel showing the user's recent training videos. Lives inside
+ * the left column so it doesn't cover the main scene editor when open.
+ * Click any row to resume that video in place.
+ */
+function RecentVideosDrawer({
+  videos,
+  loading,
+  currentId,
+  onClose,
+  onResume,
+  onRefresh,
+}: {
+  videos: Array<{ id: string; title: string; status: string; voice: string; aspectRatio: string; generatedAt: string; updatedAt: string }>;
+  loading: boolean;
+  currentId: string | null;
+  onClose: () => void;
+  onResume: (id: string) => void;
+  onRefresh: () => void;
+}) {
+  // ESC closes
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <>
+      {/* Backdrop — clicking it closes */}
+      <div
+        className="absolute inset-0 bg-slate-900/20 z-30"
+        onClick={onClose}
+      />
+      {/* Panel */}
+      <div className="absolute inset-y-0 left-0 w-[360px] bg-white shadow-2xl z-40 flex flex-col">
+        <div className="px-5 py-4 border-b shrink-0 flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">My Training Videos</div>
+            <div className="text-[12px] text-slate-500 mt-0.5">{videos.length} {videos.length === 1 ? "video" : "videos"}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={onRefresh} disabled={loading} className="text-[10px] font-bold text-slate-500 hover:text-violet-600 disabled:opacity-50 flex items-center gap-1">
+              {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              Refresh
+            </button>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-700" aria-label="Close">×</button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+          {loading && videos.length === 0 ? (
+            <div className="text-[12px] text-slate-400 text-center py-8">Loading…</div>
+          ) : videos.length === 0 ? (
+            <div className="text-[12px] text-slate-400 text-center py-8">
+              No videos yet. Upload a PPTX or screen recording to get started.
+            </div>
+          ) : (
+            videos.map(v => {
+              const isCurrent = v.id === currentId;
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => onResume(v.id)}
+                  className={`w-full text-left p-3 rounded-lg border transition ${
+                    isCurrent
+                      ? "border-violet-300 bg-violet-50"
+                      : "border-slate-200 bg-white hover:border-violet-200 hover:bg-violet-50/40"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <div className="font-bold text-[13px] text-slate-800 truncate">
+                      {v.title || "Untitled"}
+                    </div>
+                    <StatusPill status={v.status} />
+                  </div>
+                  <div className="text-[10px] text-slate-400 flex items-center gap-2">
+                    <span>{relativeTime(v.updatedAt)}</span>
+                    <span>·</span>
+                    <span>{v.voice}</span>
+                    <span>·</span>
+                    <span>{v.aspectRatio}</span>
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const map: Record<string, { label: string; bg: string; fg: string }> = {
+    draft: { label: "Draft", bg: "bg-slate-100", fg: "text-slate-600" },
+    uploading: { label: "Uploading", bg: "bg-amber-50", fg: "text-amber-700" },
+    "source-uploaded": { label: "Processing", bg: "bg-amber-50", fg: "text-amber-700" },
+    "content-extracted": { label: "Writing", bg: "bg-amber-50", fg: "text-amber-700" },
+    "script-generated": { label: "Voiceover", bg: "bg-amber-50", fg: "text-amber-700" },
+    "generating-audio": { label: "Voiceover", bg: "bg-amber-50", fg: "text-amber-700" },
+    generating: { label: "Generating", bg: "bg-amber-50", fg: "text-amber-700" },
+    ready: { label: "Ready", bg: "bg-emerald-50", fg: "text-emerald-700" },
+    rendering: { label: "Rendering", bg: "bg-amber-50", fg: "text-amber-700" },
+    rendered: { label: "MP4 ready", bg: "bg-violet-50", fg: "text-violet-700" },
+    error: { label: "Error", bg: "bg-rose-50", fg: "text-rose-700" },
+  };
+  const m = map[status] || { label: status, bg: "bg-slate-100", fg: "text-slate-600" };
+  return (
+    <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${m.bg} ${m.fg} shrink-0`}>
+      {m.label}
+    </span>
+  );
+}
+
+function relativeTime(iso: string): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  const now = Date.now();
+  const diff = Math.max(0, now - then);
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(iso).toLocaleDateString();
 }
