@@ -59,11 +59,20 @@ export async function POST(req: Request) {
     const rawFolderId = await ensureRawSubfolder(ctx, folder.folderId);
     const safeName = fileName.replace(/[^\w.\- ]+/g, "_");
 
+    // Origin must match where the browser PUTs from — req.headers.origin gives
+    // us the deployed URL (or http://localhost:3000 in dev). Drive only
+    // CORS-enables the upload URL for the exact origin we declare here.
+    const origin = req.headers.get("origin") || req.headers.get("Origin") || "";
+    if (!origin) {
+      return NextResponse.json({ error: "Origin header missing — cannot mint CORS-safe upload URL" }, { status: 400 });
+    }
+
     const { uploadUrl } = await createResumableUploadUrl(ctx, {
       parentFolderId: rawFolderId,
       fileName: safeName,
       mimeType: "video/mp4",
       fileSize,
+      uploaderOrigin: origin,
     });
 
     const videoId = `tv_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;

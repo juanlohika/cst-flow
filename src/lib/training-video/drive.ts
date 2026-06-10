@@ -203,6 +203,11 @@ export async function createResumableUploadUrl(ctx: DriveCtx, args: {
   fileName: string;
   mimeType: string;
   fileSize: number;
+  // Browser origin that will PUT the bytes. Drive uses this to set up CORS
+  // on the returned session URL. Without it, browser uploads fail with
+  // "No 'Access-Control-Allow-Origin' header is present on the requested
+  // resource." Pass the request's Origin header.
+  uploaderOrigin: string;
 }): Promise<{ uploadUrl: string }> {
   const jwt = new JWT({
     email: ctx.credentials.client_email,
@@ -226,6 +231,9 @@ export async function createResumableUploadUrl(ctx: DriveCtx, args: {
       "Content-Type": "application/json; charset=UTF-8",
       "X-Upload-Content-Type": args.mimeType,
       "X-Upload-Content-Length": String(args.fileSize),
+      // The Origin header tells Drive to return a CORS-enabled session URL.
+      // Without it the upload URL rejects browser PUTs with a CORS error.
+      "Origin": args.uploaderOrigin,
     },
     body: JSON.stringify(metadata),
   });
