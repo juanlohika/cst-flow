@@ -76,6 +76,10 @@ export async function buildScriptFromPptx(args: BuildScriptArgs): Promise<AiResu
         { inlineData: { mimeType: PPTX_MIME, data: args.pptxBuffer.toString("base64") } },
       ],
     }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      maxOutputTokens: 16384,
+    },
   });
 
   const raw = (result?.response?.text?.() || "").trim();
@@ -94,6 +98,11 @@ export async function buildScriptFromVideoFrames(args: BuildScriptFromVideoArgs)
   const model = await getModelForApp("training-videos").catch(() => null);
   if (!model) return { ok: false, error: "No AI model configured" };
 
+  // Sample down to ~40 frames max. Beyond that, Gemini's output token budget
+  // starts truncating mid-JSON for long screen recordings. Spacing the
+  // frames evenly across the timeline preserves enough visual context.
+  const sampledFrames = downsampleFrames(args.frames, 40);
+
   const skillsBlock = await loadSkillsBlock();
   const promptText = buildVideoPrompt({
     skillsBlock,
@@ -101,26 +110,42 @@ export async function buildScriptFromVideoFrames(args: BuildScriptFromVideoArgs)
     userPrompt: args.userPrompt || "",
     language: args.language || "en-US",
     durationSec: args.durationSec,
-    frameCount: args.frames.length,
+    frameCount: sampledFrames.length,
   });
 
-  // Build the Gemini contents: prompt text + each frame inlineData with a
-  // small text label noting its timestamp. Gemini's context window can hold
-  // dozens of small frames; we cap at 60 to keep latency + cost reasonable.
-  const cappedFrames = args.frames.slice(0, 60);
   const parts: any[] = [{ text: promptText }];
-  for (const f of cappedFrames) {
+  for (const f of sampledFrames) {
     parts.push({ text: `[t=${f.timestampSec.toFixed(1)}s]` });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: f.jpegBase64 } });
   }
 
   const result = await generateWithRetry(model, {
     contents: [{ role: "user", parts }],
+    generationConfig: {
+      // Force JSON output so we never get markdown preamble or prose.
+      responseMimeType: "application/json",
+      // High ceiling so 15+ scenes don't get truncated.
+      maxOutputTokens: 16384,
+    },
   });
   const raw = (result?.response?.text?.() || "").trim();
   const parsed = parseAiResponse(raw);
   if (!parsed) return { ok: false, error: "AI returned non-JSON output", rawAi: raw };
   return { ok: true, content: parsed.content, reply: parsed.reply };
+}
+
+/**
+ * Evenly downsample a frame array to roughly `target` frames while keeping
+ * the first and last frames. Drops middle frames as needed.
+ */
+function downsampleFrames<T>(frames: T[], target: number): T[] {
+  if (frames.length <= target) return frames;
+  const out: T[] = [];
+  const step = (frames.length - 1) / (target - 1);
+  for (let i = 0; i < target; i++) {
+    out.push(frames[Math.round(i * step)]);
+  }
+  return out;
 }
 
 /**
