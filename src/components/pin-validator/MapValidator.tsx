@@ -11,7 +11,7 @@
  * with canWrite=false so internal users see the same map but can't
  * accidentally save decisions.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapPin } from "lucide-react";
 
 interface Pin {
@@ -70,10 +70,19 @@ export function MapValidator({ projectId, apiBase, validatorLabel }: Props) {
   const leafletRef = useRef<any>(null);
 
   // ─── Load pins ────────────────────────────────────────────────
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
+  // Re-fetches the Sheet via the API. The Sheet is the source of truth, so
+  // any change a CST user makes directly in Google Sheets (clearing a row,
+  // editing a Location, manually flipping a Status back to Pending) needs
+  // a fresh fetch to show up here. We trigger this:
+  //   - on mount
+  //   - on tab focus (visibilitychange → 'visible')
+  //   - on manual Refresh button click
+  // We deliberately do NOT auto-poll on an interval — that would burn the
+  // Sheets API read quota on idle tabs for very little benefit.
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshPins = useCallback(
+    async (opts: { showSpinner?: boolean } = {}) => {
+      if (opts.showSpinner !== false) setIsRefreshing(true);
       try {
         const res = await fetch(base, { cache: "no-store" });
         if (!res.ok) {
@@ -81,21 +90,32 @@ export function MapValidator({ projectId, apiBase, validatorLabel }: Props) {
           throw new Error(data.error || `HTTP ${res.status}`);
         }
         const data = await res.json();
-        if (cancelled) return;
         setPins(data.pins || []);
         setCanWrite(Boolean(data.canWrite));
         setError(null);
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || "Failed to load pins");
+        setError(e?.message || "Failed to load pins");
       } finally {
-        if (!cancelled) setLoading(false);
+        setIsRefreshing(false);
+        setLoading(false);
       }
-    }
-    load();
-    return () => {
-      cancelled = true;
+    },
+    [base],
+  );
+
+  // Initial load + refresh on tab focus.
+  useEffect(() => {
+    refreshPins({ showSpinner: false });
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        // Silent refresh on tab focus — no spinner so the UI doesn't flicker
+        // every time the user comes back. Errors still surface.
+        refreshPins({ showSpinner: false });
+      }
     };
-  }, [base]);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [refreshPins]);
 
   // ─── Initialize Leaflet ───────────────────────────────────────
   useEffect(() => {
@@ -512,7 +532,7 @@ export function MapValidator({ projectId, apiBase, validatorLabel }: Props) {
         <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800">
           {stats.flagged} Flagged
         </span>
-        <div className="ml-auto flex gap-1">
+        <div className="ml-auto flex items-center gap-1">
           {(["All", "Pending", "Flagged", "Approved"] as Filter[]).map((f) => (
             <button
               key={f}
@@ -529,6 +549,17 @@ export function MapValidator({ projectId, apiBase, validatorLabel }: Props) {
               {f}
             </button>
           ))}
+          {/* Manual refresh — re-reads the Google Sheet. Use when you've
+              edited the Sheet directly (e.g. cleared a row, changed a
+              Status back to Pending) and want the UI to catch up. */}
+          <button
+            onClick={() => refreshPins()}
+            disabled={isRefreshing}
+            className="ml-2 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+            title="Re-read the Google Sheet"
+          >
+            {isRefreshing ? "Refreshing…" : "↻ Refresh"}
+          </button>
         </div>
         {validatorLabel && (
           <span className="ml-2 text-[11px] text-slate-400">🔐 {validatorLabel}</span>
