@@ -3,18 +3,29 @@
 /**
  * QuotaMeter — visible monthly geocoding usage indicator.
  *
- * Polls /api/pin-validator/quota every 30 s while mounted so any CST team
- * member who has the AI Tools page open sees the meter advance in close to
- * real time. Color-coded:
- *   < 80%   green   — normal
- *   80-87.5% yellow — approaching limit
- *   >= 87.5% red    — final warning / exhausted
+ * Fetch policy (event-driven, NOT polling):
+ *   • Loads ONCE when the component mounts.
+ *   • Exposes a `refreshKey` prop — bumping it via the parent re-fetches.
+ *     Used by the AccountHub Pin Validator tab to refresh after a geocode
+ *     batch completes.
+ *   • Manual refresh button surfaces for any team member who wants the
+ *     latest read.
  *
- * Used in two places:
+ * Why no polling: at our scale (~8 clients/month, intermittent geocoding)
+ * the quota number changes in bursts. Periodic polling would burn DB
+ * round-trips for a number that rarely moves. Event-driven refresh is
+ * accurate without the overhead.
+ *
+ * Color tiers:
+ *   < 80%       green   — normal
+ *   80%-87.5%   yellow  — approaching limit
+ *   >= 87.5%    red     — final warning / exhausted
+ *
+ * Used in:
  *   • AI Tools landing page (full card with title + reset date)
  *   • Pin Validator account tab (compact variant via `compact` prop)
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 interface QuotaState {
   monthKey: string;
@@ -26,41 +37,50 @@ interface QuotaState {
   resetsAt: string;
 }
 
-export function QuotaMeter({ compact = false }: { compact?: boolean }) {
+interface Props {
+  compact?: boolean;
+  /** Bump this number to force a re-fetch (e.g. after a geocode batch). */
+  refreshKey?: number;
+}
+
+export function QuotaMeter({ compact = false, refreshKey = 0 }: Props) {
   const [state, setState] = useState<QuotaState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    async function tick() {
-      try {
-        const res = await fetch("/api/pin-validator/quota", { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: QuotaState = await res.json();
-        if (!cancelled) {
-          setState(data);
-          setError(null);
-        }
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || "Failed to load quota");
-      } finally {
-        if (!cancelled) timer = setTimeout(tick, 30_000);
-      }
+  const fetchNow = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const res = await fetch("/api/pin-validator/quota", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: QuotaState = await res.json();
+      setState(data);
+      setError(null);
+    } catch (e: any) {
+      setError(e?.message || "Failed to load quota");
+    } finally {
+      setRefreshing(false);
     }
-
-    tick();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
   }, []);
+
+  // Fetch once on mount AND whenever the parent bumps refreshKey.
+  useEffect(() => {
+    fetchNow();
+  }, [fetchNow, refreshKey]);
 
   if (error) {
     return (
       <div className={shellClass(compact, "border-red-200 bg-red-50 text-red-700")}>
-        Geocoding quota unavailable: {error}
+        <div className="flex items-center justify-between gap-2">
+          <span>Geocoding quota unavailable: {error}</span>
+          <button
+            onClick={fetchNow}
+            disabled={refreshing}
+            className="text-xs underline disabled:opacity-50"
+          >
+            {refreshing ? "…" : "Retry"}
+          </button>
+        </div>
       </div>
     );
   }
@@ -73,13 +93,8 @@ export function QuotaMeter({ compact = false }: { compact?: boolean }) {
   }
 
   const pct = Math.min(100, Math.round((state.used / state.limit) * 100));
-  const tone = state.exhausted
-    ? "red"
-    : state.used / state.limit >= 0.875
-    ? "red"
-    : state.used / state.limit >= 0.8
-    ? "yellow"
-    : "green";
+  const ratio = state.used / state.limit;
+  const tone = state.exhausted ? "red" : ratio >= 0.875 ? "red" : ratio >= 0.8 ? "yellow" : "green";
   const tones = TONE_CLASSES[tone];
   const resetDate = state.resetsAt.slice(0, 10);
 
@@ -90,14 +105,24 @@ export function QuotaMeter({ compact = false }: { compact?: boolean }) {
           <div className="text-sm font-semibold text-slate-700">
             📍 Pin Validator — Monthly geocoding quota
           </div>
-          <div className={`text-xs font-medium ${tones.label}`}>
-            {state.exhausted
-              ? "Monthly limit reached"
-              : tone === "red"
-              ? "Near monthly limit"
-              : tone === "yellow"
-              ? "Approaching monthly limit"
-              : "Quota normal"}
+          <div className="flex items-center gap-2">
+            <span className={`text-xs font-medium ${tones.label}`}>
+              {state.exhausted
+                ? "Monthly limit reached"
+                : tone === "red"
+                ? "Near monthly limit"
+                : tone === "yellow"
+                ? "Approaching monthly limit"
+                : "Quota normal"}
+            </span>
+            <button
+              onClick={fetchNow}
+              disabled={refreshing}
+              className="text-[11px] text-slate-500 hover:text-slate-900 disabled:opacity-50"
+              title="Refresh"
+            >
+              {refreshing ? "…" : "↻"}
+            </button>
           </div>
         </div>
       )}
@@ -115,7 +140,7 @@ export function QuotaMeter({ compact = false }: { compact?: boolean }) {
         <span className="text-slate-500">
           {state.exhausted
             ? `🛑 Resets ${resetDate}`
-            : `Resets ${resetDate} · Free tier (Google Maps)`}
+            : `Resets ${resetDate}`}
         </span>
       </div>
     </div>

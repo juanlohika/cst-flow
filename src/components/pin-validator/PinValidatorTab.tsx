@@ -41,6 +41,7 @@ export function PinValidatorTab({ accountId, companyName }: Props) {
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
+  const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -102,6 +103,8 @@ export function PinValidatorTab({ accountId, companyName }: Props) {
       setInfo(
         `Geocode finished — ${o.processed} processed, ${o.notFound} not found, ${o.failed} failed.`,
       );
+      // Refresh the visible quota meter — geocoding just spent quota.
+      setQuotaRefreshKey((k) => k + 1);
     } catch (e: any) {
       setError(e?.message || "Geocoding failed");
     } finally {
@@ -219,7 +222,7 @@ export function PinValidatorTab({ accountId, companyName }: Props) {
           </button>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <QuotaMeter compact />
+          <QuotaMeter compact refreshKey={quotaRefreshKey} />
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 leading-relaxed">
             <strong className="text-slate-700">How to use:</strong> Open the
             Sheet → paste store names into column A → return here and click
