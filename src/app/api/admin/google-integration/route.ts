@@ -13,7 +13,13 @@ function requireAdmin(session: any) {
   return { ok: true as const };
 }
 
-const KEYS = ["GOOGLE_SERVICE_ACCOUNT_JSON", "GOOGLE_DRIVE_BRD_FOLDER_ID", "GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID"] as const;
+const KEYS = [
+  "GOOGLE_SERVICE_ACCOUNT_JSON",
+  "GOOGLE_DRIVE_BRD_FOLDER_ID",
+  "GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID",
+  "GOOGLE_MAPS_API_KEY",
+  "PIN_VALIDATOR_DRIVE_FOLDER_ID",
+] as const;
 
 /** GET /api/admin/google-integration — returns whether credentials are configured (NOT the secrets themselves). */
 export async function GET() {
@@ -28,6 +34,8 @@ export async function GET() {
     const serviceAccountJson = map.get("GOOGLE_SERVICE_ACCOUNT_JSON") || process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "";
     const driveFolderId = map.get("GOOGLE_DRIVE_BRD_FOLDER_ID") || process.env.GOOGLE_DRIVE_BRD_FOLDER_ID || "";
     const dashboardsFolderId = map.get("GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID") || process.env.GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID || "";
+    const mapsApiKey = map.get("GOOGLE_MAPS_API_KEY") || process.env.GOOGLE_MAPS_API_KEY || "";
+    const pinValidatorFolderId = map.get("PIN_VALIDATOR_DRIVE_FOLDER_ID") || process.env.PIN_VALIDATOR_DRIVE_FOLDER_ID || "";
 
     // Surface only meta info, not the secrets
     let serviceAccountEmail = "";
@@ -45,10 +53,14 @@ export async function GET() {
     return NextResponse.json({
       configured: !!(serviceAccountValid && driveFolderId),
       dashboardsConfigured: !!(serviceAccountValid && dashboardsFolderId),
+      pinValidatorConfigured: !!(serviceAccountValid && mapsApiKey),
       serviceAccountEmail,
       serviceAccountValid,
       driveFolderId,
       dashboardsFolderId,
+      // mapsApiKey is a secret — surface ONLY whether it's set, never the value
+      mapsApiKeySet: !!mapsApiKey,
+      pinValidatorFolderId,
       source: rows.length > 0 ? "db" : (process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? "env" : "none"),
     });
   } catch (error: any) {
@@ -69,6 +81,8 @@ export async function POST(req: Request) {
     const serviceAccountJson = String(body?.serviceAccountJson || "").trim();
     const driveFolderId = String(body?.driveFolderId || "").trim();
     const dashboardsFolderId = String(body?.dashboardsFolderId || "").trim();
+    const mapsApiKey = String(body?.mapsApiKey || "").trim();
+    const pinValidatorFolderId = String(body?.pinValidatorFolderId || "").trim();
 
     // Load existing values so we can keep them when the admin only edits one
     // field (e.g. just adding the Dashboards folder later).
@@ -98,6 +112,8 @@ export async function POST(req: Request) {
     if (serviceAccountJson) upserts.push({ key: "GOOGLE_SERVICE_ACCOUNT_JSON", value: serviceAccountJson });
     if (driveFolderId) upserts.push({ key: "GOOGLE_DRIVE_BRD_FOLDER_ID", value: driveFolderId });
     if (dashboardsFolderId) upserts.push({ key: "GOOGLE_DRIVE_DASHBOARDS_FOLDER_ID", value: dashboardsFolderId });
+    if (mapsApiKey) upserts.push({ key: "GOOGLE_MAPS_API_KEY", value: mapsApiKey });
+    if (pinValidatorFolderId) upserts.push({ key: "PIN_VALIDATOR_DRIVE_FOLDER_ID", value: pinValidatorFolderId });
 
     if (upserts.length === 0) {
       return NextResponse.json({ error: "Nothing to save — all fields were blank." }, { status: 400 });
