@@ -40,7 +40,7 @@ function generateSessionId(): string {
 
 export type ConsumeResult =
   | { ok: true; sessionId: string; session: PinValidatorSessionData }
-  | { ok: false; reason: string; code: "already_used" | "expired" | "invalid" | "purpose_mismatch" | "disabled" | "missing_project" };
+  | { ok: false; reason: string; code: "expired" | "invalid" | "purpose_mismatch" | "disabled" | "missing_project" };
 
 export async function consumePinValidatorMagicLink(
   token: string,
@@ -68,9 +68,6 @@ export async function consumePinValidatorMagicLink(
   if (!link.projectId) {
     return { ok: false, reason: "Link is missing its target project.", code: "missing_project" };
   }
-  if (link.usedAt) {
-    return { ok: false, reason: "This link has already been used.", code: "already_used" };
-  }
   if (new Date(link.expiresAt).getTime() < Date.now()) {
     return { ok: false, reason: "This link has expired.", code: "expired" };
   }
@@ -88,12 +85,17 @@ export async function consumePinValidatorMagicLink(
     return { ok: false, reason: "Validator access is disabled for this contact.", code: "disabled" };
   }
 
-  // Mark link used, activate the contact, create the session.
+  // The link stays REUSABLE for its full 7-day lifespan. Each click just
+  // mints a fresh session; the link itself is not consumed. Marking
+  // `usedAt` on FIRST click records the activation moment (for the
+  // 'invited' → 'active' transition), but subsequent clicks don't fail.
   const now = new Date().toISOString();
-  await db
-    .update(subscriberMagicLinks)
-    .set({ usedAt: now })
-    .where(eq(subscriberMagicLinks.id, link.id));
+  if (!link.usedAt) {
+    await db
+      .update(subscriberMagicLinks)
+      .set({ usedAt: now })
+      .where(eq(subscriberMagicLinks.id, link.id));
+  }
   await db
     .update(clientContacts)
     .set({ status: "active", activatedAt: now, lastSeenAt: now, updatedAt: now })

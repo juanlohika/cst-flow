@@ -63,9 +63,7 @@ export async function GET(req: NextRequest) {
 
   if (!result.ok) {
     const title =
-      result.code === "already_used"
-        ? "Link already used"
-        : result.code === "expired"
+      result.code === "expired"
         ? "Link expired"
         : "Link invalid";
     return buildErrorRedirect(

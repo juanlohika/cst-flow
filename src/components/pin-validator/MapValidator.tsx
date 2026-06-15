@@ -96,6 +96,67 @@ export function MapValidator({ projectId, apiBase, validatorLabel }: Props) {
         link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
         document.head.appendChild(link);
       }
+      // Custom popup styles — Leaflet's defaults are too big/opaque and
+      // hide nearby pins when the user is zoomed out. We want a compact,
+      // semi-transparent card with a status accent stripe.
+      if (!document.getElementById("pin-validator-popup-css")) {
+        const style = document.createElement("style");
+        style.id = "pin-validator-popup-css";
+        style.textContent = `
+          .pin-popup .leaflet-popup-content-wrapper {
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            border-radius: 8px;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+            padding: 0;
+          }
+          .pin-popup .leaflet-popup-content {
+            margin: 0;
+            width: 190px !important;
+            line-height: 1.35;
+          }
+          .pin-popup .leaflet-popup-tip {
+            background: rgba(255,255,255,0.92);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+          }
+          .pin-popup .leaflet-popup-close-button {
+            color: #94a3b8;
+            font-size: 16px;
+            padding: 2px 4px 0 0;
+          }
+          .pin-popup-inner {
+            padding: 8px 10px;
+            font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+          }
+          .pin-popup-status {
+            font-size: 9.5px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: #475569;
+            margin-bottom: 2px;
+          }
+          .pin-popup-name {
+            font-size: 12px;
+            font-weight: 600;
+            color: #0f172a;
+            margin-bottom: 2px;
+            line-height: 1.3;
+          }
+          .pin-popup-addr {
+            font-size: 10.5px;
+            color: #64748b;
+            margin-bottom: 4px;
+            line-height: 1.3;
+          }
+          .pin-popup-meta {
+            font-size: 9.5px;
+            color: #94a3b8;
+          }
+        `;
+        document.head.appendChild(style);
+      }
       if (cancelled) return;
       leafletRef.current = L;
       if (!mapInstance.current && mapRef.current) {
@@ -118,22 +179,32 @@ export function MapValidator({ projectId, apiBase, validatorLabel }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, pins.length === 0]);
 
-  // Update markers whenever a pin's status flips.
+  // ─── Filter + stats ──────────────────────────────────────────
+  // Filter pins by the current chip selection. Drives BOTH the sidebar list
+  // and the map markers — the filter is a viewport, not a list-only filter.
+  const visible = useMemo(() => {
+    if (filter === "All") return pins;
+    return pins.filter((p) => p.status === filter);
+  }, [pins, filter]);
+
+  // Update markers whenever the visible set changes (a status flip OR a
+  // filter change). Picking 'Approved' should make only approved markers
+  // appear on the map.
   useEffect(() => {
     if (!mapInstance.current) return;
     refreshMarkers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pins]);
+  }, [visible]);
 
   function refreshMarkers() {
     const L = leafletRef.current;
     if (!L || !mapInstance.current) return;
     markers.current.forEach((m) => mapInstance.current.removeLayer(m));
     markers.current.clear();
-    for (const p of pins) {
+    for (const p of visible) {
       if (!p.lat || !p.lng) continue;
       const m = L.marker([p.lat, p.lng], { icon: makeIcon(L, p.status) }).addTo(mapInstance.current);
-      m.bindPopup(renderPopup(p));
+      m.bindPopup(renderPopup(p), { className: "pin-popup", maxWidth: 200, autoPan: false });
       m.on("click", () => {
         const el = document.querySelector(`[data-row="${p.row}"]`);
         if (el) el.scrollIntoView({ block: "nearest" });
@@ -141,12 +212,6 @@ export function MapValidator({ projectId, apiBase, validatorLabel }: Props) {
       markers.current.set(p.row, m);
     }
   }
-
-  // ─── Filter + stats ──────────────────────────────────────────
-  const visible = useMemo(() => {
-    if (filter === "All") return pins;
-    return pins.filter((p) => p.status === filter);
-  }, [pins, filter]);
 
   const stats = useMemo(() => {
     const total = pins.length;
@@ -518,16 +583,15 @@ function makeIcon(L: any, status: string): any {
 function renderPopup(p: Pin): string {
   const escape = (s: string) =>
     String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const badge =
-    p.status === "Approved"
-      ? "bg-emerald-100 text-emerald-800"
-      : p.status === "Flagged"
-      ? "bg-red-100 text-red-800"
-      : "bg-amber-100 text-amber-800";
-  return `<div class="popup-inner" style="padding:12px;font-family:-apple-system,sans-serif;max-width:220px">
-    <span class="popup-badge ${badge}" style="display:inline-block;padding:1px 7px;border-radius:20px;font-size:10px;margin-bottom:6px">${escape(p.status)}</span>
-    <div style="font-size:12px;font-weight:600;color:#111;margin-bottom:2px">${escape(p.location)}</div>
-    <div style="font-size:10px;color:#6b7280;margin-bottom:6px">${escape(p.address || "—")}</div>
-    <div style="font-size:10px;color:#9ca3af">Lat ${p.lat} Lng ${p.lng} · Row ${p.row}</div>
+  // Status accent stripe — slim color cue without a fully colored pill that
+  // demands attention. Keeps the popup readable when zoomed-out and
+  // overlapping other markers.
+  const accent =
+    p.status === "Approved" ? "#10B981" : p.status === "Flagged" ? "#EF4444" : "#F59E0B";
+  return `<div class="pin-popup-inner" style="border-left:3px solid ${accent}">
+    <div class="pin-popup-status">${escape(p.status)}</div>
+    <div class="pin-popup-name">${escape(p.location)}</div>
+    <div class="pin-popup-addr">${escape(p.address || "—")}</div>
+    <div class="pin-popup-meta">Lat ${p.lat.toFixed(5)} · Lng ${p.lng.toFixed(5)}</div>
   </div>`;
 }

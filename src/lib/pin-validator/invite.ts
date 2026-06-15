@@ -32,13 +32,20 @@ function generateToken(): string {
   return crypto.randomBytes(32).toString("hex");
 }
 
+// Production URL fallback for any environment that doesn't have AUTH_URL /
+// PUBLIC_BASE_URL wired up. The previous fallback was an empty string, which
+// produced "0.0.0.0:8080/pin-validator/welcome?..." in some deployments
+// because the email client's link parser would coerce the relative URL
+// against its own host. Always producing a fully-qualified URL prevents that.
+const PRODUCTION_BASE_URL = "https://cst-flow--cst-flowdesk.asia-east1.hosted.app";
+
 function buildInviteUrl(token: string, baseUrl?: string): string {
   const base =
     baseUrl ||
     process.env.PUBLIC_BASE_URL ||
     process.env.AUTH_URL ||
     process.env.NEXTAUTH_URL ||
-    "";
+    PRODUCTION_BASE_URL;
   return `${base.replace(/\/$/, "")}/pin-validator/welcome?token=${token}`;
 }
 
@@ -217,7 +224,7 @@ function renderInviteText(opts: {
     "",
     `Open the validator: ${opts.inviteUrl}`,
     "",
-    "This link is single-use and expires in 7 days.",
+    "This link is valid for 7 days — open it as many times as you need.",
   ].join("\n");
 }
 
@@ -250,7 +257,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <p class="text"><strong>${escape(opts.inviterName)}</strong> has invited you to review and approve the store pin locations for <strong>${escape(opts.accountName)}</strong>.</p>
     <p class="text">Open the validator below to view the pins on a map. You can approve, flag, or note each one.</p>
     <a href="${opts.inviteUrl}" class="cta" style="display:inline-block;background:#2162F9;color:#ffffff;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;text-decoration:none;margin:20px 0"><span style="color:#ffffff">Open Pin Validator →</span></a>
-    <p class="fine">This link is single-use and expires in 7 days. If you weren't expecting this, you can safely ignore it.</p>
+    <p class="fine">This link is valid for 7 days — open it as many times as you need. If you weren't expecting this, you can safely ignore it.</p>
   </div>
   <div class="card-footer">CST OS · Pin Validator</div>
 </div>

@@ -28,6 +28,21 @@ interface Project {
   createdAt: string;
 }
 
+interface ValidatorRow {
+  contactId: string;
+  name: string;
+  email: string;
+  role: string | null;
+  status: string;
+  invitedAt: string | null;
+  activatedAt: string | null;
+  lastSeenAt: string | null;
+  linkActive: boolean;
+  linkExpiresAt: string | null;
+  linkUsedAt: string | null;
+  linkCreatedAt: string | null;
+}
+
 interface Props {
   accountId: string;
   companyName: string;
@@ -43,6 +58,8 @@ export function PinValidatorTab({ accountId, companyName }: Props) {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
   const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
+  const [validators, setValidators] = useState<ValidatorRow[]>([]);
+  const [validatorsLoading, setValidatorsLoading] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -61,9 +78,31 @@ export function PinValidatorTab({ accountId, companyName }: Props) {
     }
   }, [accountId]);
 
+  const refreshValidators = useCallback(async () => {
+    setValidatorsLoading(true);
+    try {
+      const res = await fetch(
+        `/api/accounts/${accountId}/pin-validator/validators`,
+        { cache: "no-store" },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setValidators(data.validators || []);
+    } catch (e: any) {
+      // Non-fatal — the list is supplemental info. Silently ignore.
+      console.warn("[pin-validator] failed to load validators:", e);
+    } finally {
+      setValidatorsLoading(false);
+    }
+  }, [accountId]);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (project) refreshValidators();
+  }, [project, refreshValidators]);
 
   async function onActivate() {
     setBusy("activate");
@@ -113,6 +152,26 @@ export function PinValidatorTab({ accountId, companyName }: Props) {
     }
   }
 
+  async function sendInviteFor(email: string, name?: string): Promise<void> {
+    if (!project) return;
+    const res = await fetch(
+      `/api/accounts/${accountId}/pin-validator/invite`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, name }),
+      },
+    );
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    setInfo(
+      data.emailSent
+        ? `Invite sent to ${email}.`
+        : `Invite created (email send failed: ${data.emailError || "unknown"}). Share this link: ${data.inviteUrl}`,
+    );
+    await refreshValidators();
+  }
+
   async function onSendInvite(e: React.FormEvent) {
     e.preventDefault();
     if (!project) return;
@@ -122,24 +181,24 @@ export function PinValidatorTab({ accountId, companyName }: Props) {
     setError(null);
     setInfo(null);
     try {
-      const res = await fetch(
-        `/api/accounts/${accountId}/pin-validator/invite`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email, name: inviteName || undefined }),
-        },
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setInfo(
-        data.emailSent
-          ? `Invite sent to ${email}.`
-          : `Invite created (email send failed: ${data.emailError || "unknown"}). Share this link: ${data.inviteUrl}`,
-      );
+      await sendInviteFor(email, inviteName || undefined);
       setInviteEmail("");
       setInviteName("");
       setShowInvite(false);
+    } catch (e: any) {
+      setError(e?.message || "Invite failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onResendInvite(v: ValidatorRow) {
+    if (!project) return;
+    setBusy(`resend-${v.contactId}`);
+    setError(null);
+    setInfo(null);
+    try {
+      await sendInviteFor(v.email, v.name);
     } catch (e: any) {
       setError(e?.message || "Invite failed");
     } finally {
@@ -277,14 +336,81 @@ export function PinValidatorTab({ accountId, companyName }: Props) {
         </p>
       )}
 
-      {/* Map — fixed viewport height keeps the canvas inside the tab. The
-          AccountHub doesn't pass height all the way down here, so relying on
-          h-full leaves the map unbounded and overflowing the page. 560px is
-          big enough to feel like a map and small enough to keep the action
-          bar at the top visible. */}
-      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden h-[560px]">
+      {/* Validators list — every contact with pinValidatorEnabled=true,
+          plus their most-recent magic link's expiry. 'Resend invite' issues
+          a fresh link and re-emails it. */}
+      {validators.length > 0 && (
+        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+          <div className="px-3 py-2 border-b border-slate-100 text-[11px] font-semibold uppercase tracking-wider text-slate-500 flex items-center justify-between">
+            <span>Validators ({validators.length})</span>
+            {validatorsLoading && <span className="text-slate-400">refreshing…</span>}
+          </div>
+          <ul className="divide-y divide-slate-100">
+            {validators.map((v) => (
+              <li
+                key={v.contactId}
+                className="flex items-center gap-3 px-3 py-2 text-xs"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-slate-900 truncate">
+                      {v.name}
+                    </span>
+                    <span className="text-slate-400 truncate">{v.email}</span>
+                    {v.role && (
+                      <span className="text-slate-400">· {v.role}</span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    {v.linkActive
+                      ? `Link active until ${formatDate(v.linkExpiresAt)}`
+                      : v.linkExpiresAt
+                      ? `Link expired ${formatDate(v.linkExpiresAt)} · needs new invite`
+                      : "No link sent yet"}
+                    {v.lastSeenAt && ` · last opened ${formatDate(v.lastSeenAt)}`}
+                  </div>
+                </div>
+                <button
+                  onClick={() => onResendInvite(v)}
+                  disabled={busy === `resend-${v.contactId}`}
+                  className="shrink-0 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {busy === `resend-${v.contactId}`
+                    ? "Sending…"
+                    : v.linkActive
+                    ? "Resend"
+                    : "Send new invite"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Map — fills the remaining viewport. We use 'h-[calc(100vh-360px)]'
+          so the map grows with the browser window and there's no dead space
+          below it on tall monitors. 360px is roughly the height of all the
+          chrome above (account header + tab strip + this tab's action bar +
+          quota row). Min 480px on tiny laptops. */}
+      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden h-[calc(100vh-360px)] min-h-[480px]">
         <MapValidator projectId={project.id} />
       </div>
     </div>
   );
+}
+
+function formatDate(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const sameYear = d.getFullYear() === now.getFullYear();
+    return d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      ...(sameYear ? {} : { year: "numeric" }),
+    });
+  } catch {
+    return iso;
+  }
 }
