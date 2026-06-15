@@ -22,6 +22,7 @@ import {
   listPins,
   saveDecision,
   saveDecisionsBulk,
+  savePinAdjustment,
   type Decision,
 } from "@/lib/pin-validator/pins";
 
@@ -126,6 +127,47 @@ export async function POST(
   }
 
   try {
+    // Manual pin adjustment — validator dragged the marker to a corrected
+    // location. Counts as an implicit Approved.
+    if (body?.kind === "adjust") {
+      const rowNumber = Number(body?.rowNumber);
+      const newLat = Number(body?.newLat);
+      const newLng = Number(body?.newLng);
+      const originalLat = Number(body?.originalLat);
+      const originalLng = Number(body?.originalLng);
+      const note = body?.note ? String(body.note) : "";
+      if (
+        !Number.isFinite(rowNumber) ||
+        !Number.isFinite(newLat) ||
+        !Number.isFinite(newLng) ||
+        !Number.isFinite(originalLat) ||
+        !Number.isFinite(originalLng)
+      ) {
+        return NextResponse.json(
+          { error: "rowNumber + newLat + newLng + originalLat + originalLng required (numbers)" },
+          { status: 400 },
+        );
+      }
+      // Basic sanity — coordinates inside valid Earth ranges.
+      if (Math.abs(newLat) > 90 || Math.abs(newLng) > 180) {
+        return NextResponse.json(
+          { error: "newLat/newLng out of range" },
+          { status: 400 },
+        );
+      }
+      await savePinAdjustment(
+        r.googleSheetId,
+        rowNumber,
+        newLat,
+        newLng,
+        originalLat,
+        originalLng,
+        note,
+        r.validatorEmail,
+      );
+      return NextResponse.json({ ok: true });
+    }
+
     if (Array.isArray(body?.decisions)) {
       const decisions: Array<{ rowNumber: number; decision: Decision; note: string }> = [];
       for (const d of body.decisions) {

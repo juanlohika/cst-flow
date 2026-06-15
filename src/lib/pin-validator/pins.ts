@@ -146,3 +146,61 @@ export async function saveDecisionsBulk(
     },
   });
 }
+
+/**
+ * Save a manual lat/lng adjustment. The validator dragged the marker to
+ * a corrected location and confirmed. We write:
+ *   B (Lng), C (Lat)       — the new coordinates (6 decimal precision,
+ *                            ~10 cm accuracy, well beyond any human eye)
+ *   D (Address)            — replaced with "Manually adjusted by <email>"
+ *                            (Option b — no reverse-geocode quota burn)
+ *   E (Map link)           — updated to the new coords
+ *   F (Status)             — set to "Approved" (a manual adjustment IS
+ *                            an approval per the agreed flow)
+ *   G (Note)               — "Pin moved from x,y to x,y · <free-text>"
+ *   H (Validator), I (Timestamp) — bookkeeping
+ *
+ * This bypasses the Geocoding quota — no Google API call is made.
+ */
+export async function savePinAdjustment(
+  sheetId: string,
+  rowNumber: number,
+  newLat: number,
+  newLng: number,
+  originalLat: number,
+  originalLng: number,
+  extraNote: string,
+  validatorEmail: string,
+): Promise<void> {
+  const { sheets } = await loadSheetsClient();
+  const now = new Date().toISOString();
+  // 6 decimal places ~= 11 cm precision. Drop further digits to keep the
+  // Sheet readable.
+  const lat = Number(newLat.toFixed(6));
+  const lng = Number(newLng.toFixed(6));
+  const origLat = Number(originalLat.toFixed(6));
+  const origLng = Number(originalLng.toFixed(6));
+  const mapsUrl = `https://www.google.com/maps?q=${lat},${lng}`;
+  const auditNote =
+    `Pin moved from (${origLat}, ${origLng}) to (${lat}, ${lng})` +
+    (extraNote ? ` · ${extraNote}` : "");
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId,
+    range: `Pins!B${rowNumber}:I${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [
+        [
+          lng,                                                  // B
+          lat,                                                  // C
+          `Manually adjusted by ${validatorEmail}`,             // D
+          `=HYPERLINK("${mapsUrl}","View on Map")`,             // E
+          "Approved",                                           // F
+          auditNote,                                            // G
+          validatorEmail,                                       // H
+          now,                                                  // I
+        ],
+      ],
+    },
+  });
+}
