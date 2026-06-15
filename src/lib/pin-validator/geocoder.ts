@@ -1,39 +1,57 @@
 /**
- * Server-side geocoder — Pin Validator.
+ * Server-side place lookup — Pin Validator.
  *
- * Reads column A (Location) of a per-account Pin Validator Sheet, finds rows
- * that don't yet have lat/lng (columns B/C), and calls Google Maps
- * Geocoding API for each. Results are written back to the Sheet:
- *   B = Lng
- *   C = Lat
- *   D = Address (formatted from the geocoder's first result)
- *   E = Map link (HYPERLINK formula to maps.google.com/?q=lat,lng)
- *   F = Status   (left as "Pending" — validators set this)
+ * Uses Google **Places API (New) — Text Search (Essentials SKU)**
+ * instead of the address-only Geocoding API. Reason:
+ * the store names in column A are typically brand + location keywords
+ * ("SM City Fairview", "Tapa King North EDSA", "Samsung Store Uptown
+ * Mall C5"), which Geocoding API mishandles. Text Search uses Google's
+ * business directory and reliably resolves these.
  *
  * Cost discipline:
- *   • 300 ms sleep between requests (matches the legacy Apps Script and stays
- *     well under Google's 50 req/sec rate limit).
- *   • Quota guard via lib/pin-validator/quota.ts — refuses to start any batch
- *     that would exceed the 40,000/month free tier.
+ *   • Essentials SKU is $5 per 1,000 calls — same as the legacy Geocoding API
+ *   • Both billed against the SAME monthly $200 free credit pool (~40k calls)
+ *   • Field mask restricts the response to Essentials-tier fields only —
+ *     this is what locks the per-call price at $5/1k (asking for `rating`
+ *     or `currentOpeningHours` would bump to the $35/1k Pro SKU).
+ *   • 200 ms throttle between calls (Places quota is generous; this is
+ *     headroom against transient 429s)
+ *   • Quota guard via lib/pin-validator/quota.ts — refuses to start any
+ *     batch that would exceed the 40,000/month free tier (same monthly
+ *     counter, same cap — the meter doesn't care which Google API we use).
  *   • Idempotent — skips rows whose Lat is already set (and not "Not Found").
  *
- * Returns a summary so the UI can show "Processed: 12, Skipped: 4, Errors: 1".
+ * Sheet output (unchanged from the previous Geocoding implementation):
+ *   B = Lng    C = Lat   D = Address (formatted_address)
+ *   E = Map link (HYPERLINK to maps.google.com/?q=lat,lng)
+ *   F = Status (set to "Pending" — validators set their own decision later)
  */
 import { db } from "@/db";
 import { globalSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { canGeocodeBatch, incrementUsage } from "./quota";
 
-const GEOCODE_API_BASE = "https://maps.googleapis.com/maps/api/geocode/json";
+const PLACES_API_URL =
+  "https://places.googleapis.com/v1/places:searchText";
 const SETTING_KEY_API_KEY = "GOOGLE_MAPS_API_KEY";
-const THROTTLE_MS = 300;
+const THROTTLE_MS = 200;
+
+/** Field mask MUST stay limited to Essentials-tier fields to keep the
+ * billed SKU at $5/1k. Adding "rating", "currentOpeningHours", "photos"
+ * etc. promotes the call to Pro ($35/1k) or Enterprise ($50/1k). */
+const FIELD_MASK = [
+  "places.displayName",
+  "places.formattedAddress",
+  "places.location",
+  "places.id",
+].join(",");
 
 const COL_LOCATION = 0; // A
-const COL_LNG = 1; // B
-const COL_LAT = 2; // C
-const COL_ADDRESS = 3; // D
-const COL_MAPLINK = 4; // E
-const COL_STATUS = 5; // F
+const COL_LNG = 1;      // B
+const COL_LAT = 2;      // C
+const COL_ADDRESS = 3;  // D
+const COL_MAPLINK = 4;  // E
+const COL_STATUS = 5;   // F
 
 interface AuthedSheetsClient {
   sheets: any;
@@ -72,7 +90,8 @@ async function loadMapsApiKey(): Promise<string> {
   const apiKey = rows[0]?.value || process.env.GOOGLE_MAPS_API_KEY || "";
   if (!apiKey) {
     throw new Error(
-      "GOOGLE_MAPS_API_KEY missing. Add it under Admin → Google Integration to enable geocoding.",
+      "GOOGLE_MAPS_API_KEY missing. Add it under Admin → Google Integration, " +
+        "and make sure the Google Cloud project has Places API (New) enabled.",
     );
   }
   return apiKey;
@@ -84,9 +103,9 @@ export interface GeocodeRow {
 }
 
 export interface GeocodeOutcome {
-  processed: number; // successfully geocoded this run
+  processed: number; // successfully resolved this run
   skipped: number;   // already had lat/lng
-  notFound: number;  // Google returned no result
+  notFound: number;  // Places returned zero matches
   failed: number;    // HTTP/transport errors
   total: number;     // candidate rows we looked at
   detail: string[];  // human-readable lines for the UI
@@ -94,54 +113,76 @@ export interface GeocodeOutcome {
 
 const SLEEP = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-interface GoogleGeocodeResponse {
-  status: string;
-  results: Array<{
-    formatted_address: string;
-    geometry: { location: { lat: number; lng: number } };
+interface PlacesSearchResponse {
+  places?: Array<{
+    id?: string;
+    displayName?: { text?: string };
+    formattedAddress?: string;
+    location?: { latitude?: number; longitude?: number };
   }>;
-  error_message?: string;
+  error?: { code: number; message: string; status: string };
 }
 
-async function geocodeOne(
-  location: string,
+async function lookupOne(
+  query: string,
   apiKey: string,
 ): Promise<
-  | { ok: true; lat: number; lng: number; address: string }
+  | { ok: true; lat: number; lng: number; address: string; name: string; placeId: string }
   | { ok: false; reason: "not_found" | "transport_error"; detail?: string }
 > {
   try {
-    const url = `${GEOCODE_API_BASE}?address=${encodeURIComponent(location)}&key=${apiKey}`;
-    const res = await fetch(url);
-    const data: GoogleGeocodeResponse = await res.json();
-    if (data.status === "OK" && data.results.length > 0) {
-      const r = data.results[0];
+    const res = await fetch(PLACES_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": FIELD_MASK,
+      },
+      // pageSize 1 — we only ever take the top match; this minimizes
+      // bandwidth, doesn't change cost (cost is per call, not per result).
+      body: JSON.stringify({
+        textQuery: query,
+        pageSize: 1,
+      }),
+    });
+
+    let data: PlacesSearchResponse;
+    try {
+      data = await res.json();
+    } catch (e: any) {
       return {
-        ok: true,
-        lat: r.geometry.location.lat,
-        lng: r.geometry.location.lng,
-        address: r.formatted_address,
+        ok: false,
+        reason: "transport_error",
+        detail: `Invalid JSON from Places API: ${e?.message}`,
       };
     }
-    if (data.status === "ZERO_RESULTS") {
+
+    if (!res.ok || data.error) {
+      const status = data.error?.status || `HTTP ${res.status}`;
+      const msg = data.error?.message || JSON.stringify(data).slice(0, 200);
+      return { ok: false, reason: "transport_error", detail: `${status}: ${msg}` };
+    }
+
+    const top = (data.places || [])[0];
+    if (!top || !top.location?.latitude || !top.location?.longitude) {
       return { ok: false, reason: "not_found" };
     }
     return {
-      ok: false,
-      reason: "transport_error",
-      detail: data.error_message || data.status,
+      ok: true,
+      lat: top.location.latitude,
+      lng: top.location.longitude,
+      address: top.formattedAddress || top.displayName?.text || query,
+      name: top.displayName?.text || "",
+      placeId: top.id || "",
     };
   } catch (e: any) {
     return { ok: false, reason: "transport_error", detail: e?.message || String(e) };
   }
 }
 
-/** Read the full Pins sheet to find rows that need geocoding. */
+/** Read the full Pins sheet to find rows that need a lookup. */
 export async function findPendingRows(sheetId: string): Promise<GeocodeRow[]> {
   const { sheets } = await loadSheetsClient();
-  // Read everything from A2 to F<lastRow>. We need columns A-C to decide
-  // whether the row already has lat/lng; status (F) is irrelevant for
-  // geocoding decisions.
   const resp = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
     range: "Pins!A2:F",
@@ -154,7 +195,12 @@ export async function findPendingRows(sheetId: string): Promise<GeocodeRow[]> {
     const location = String(row[COL_LOCATION] ?? "").trim();
     if (!location) continue;
     const existingLat = row[COL_LAT];
-    if (existingLat !== undefined && existingLat !== null && existingLat !== "" && existingLat !== "Not Found") {
+    if (
+      existingLat !== undefined &&
+      existingLat !== null &&
+      existingLat !== "" &&
+      existingLat !== "Not Found"
+    ) {
       continue;
     }
     pending.push({ rowNumber: i + 2, location });
@@ -162,7 +208,7 @@ export async function findPendingRows(sheetId: string): Promise<GeocodeRow[]> {
   return pending;
 }
 
-/** Run the geocoder over a Sheet. Honors the monthly quota cap. */
+/** Run the place lookup over a Sheet. Honors the monthly quota cap. */
 export async function geocodeSheet(sheetId: string): Promise<GeocodeOutcome> {
   const pending = await findPendingRows(sheetId);
   if (pending.length === 0) {
@@ -191,37 +237,38 @@ export async function geocodeSheet(sheetId: string): Promise<GeocodeOutcome> {
 
   for (let i = 0; i < pending.length; i++) {
     const { rowNumber, location } = pending[i];
-    // Re-check the quota every 200 rows to bail early if usage hits the cap
-    // (concurrent geocoders elsewhere in CST OS could be burning quota too).
+    // Re-check the quota every 200 rows so a long batch bails early if
+    // concurrent geocoding elsewhere drove usage to the cap.
     if (i > 0 && i % 200 === 0) {
       const g = await canGeocodeBatch(pending.length - i);
       if (!g.ok) {
         detail.push(
-          `Aborted at row ${rowNumber}: ${g.reason}. ${processed} geocoded so far.`,
+          `Aborted at row ${rowNumber}: ${g.reason}. ${processed} resolved so far.`,
         );
         break;
       }
     }
 
-    const result = await geocodeOne(location, apiKey);
+    const result = await lookupOne(location, apiKey);
     if (result.ok) {
       const mapsUrl = `https://www.google.com/maps?q=${result.lat},${result.lng}`;
-      // Use batchUpdate to write columns B-E for this row in a single call.
       await sheets.spreadsheets.values.update({
         spreadsheetId: sheetId,
         range: `Pins!B${rowNumber}:E${rowNumber}`,
         valueInputOption: "USER_ENTERED",
         requestBody: {
-          values: [[
-            result.lng,
-            result.lat,
-            result.address,
-            `=HYPERLINK("${mapsUrl}","View on Map")`,
-          ]],
+          values: [
+            [
+              result.lng,
+              result.lat,
+              result.address,
+              `=HYPERLINK("${mapsUrl}","View on Map")`,
+            ],
+          ],
         },
       });
-      // Set Status to "Pending" if the cell is still blank (don't overwrite
-      // an existing validator decision).
+      // Only set Status to "Pending" if the cell is blank — don't overwrite
+      // an existing validator decision.
       await sheets.spreadsheets.values.update({
         spreadsheetId: sheetId,
         range: `Pins!F${rowNumber}`,
@@ -240,7 +287,7 @@ export async function geocodeSheet(sheetId: string): Promise<GeocodeOutcome> {
         },
       });
       notFound++;
-      // Counted against the quota — Google charges for ZERO_RESULTS too.
+      // ZERO_RESULTS still counts against billing — increment the meter.
       await incrementUsage(1);
     } else {
       failed++;
@@ -253,7 +300,7 @@ export async function geocodeSheet(sheetId: string): Promise<GeocodeOutcome> {
   }
 
   detail.unshift(
-    `✓ ${processed} geocoded, ${notFound} not found, ${failed} failed (of ${pending.length} pending).`,
+    `✓ ${processed} resolved, ${notFound} not found, ${failed} failed (of ${pending.length} pending).`,
   );
   return {
     processed,
