@@ -10,6 +10,11 @@ export default auth((req) => {
                      pathname === "/api/branding" ||
                      pathname === "/api/telegram/webhook" ||
                      pathname.startsWith("/api/portal/") ||
+                     // Pin Validator API: cookie-session auth + per-project
+                     // permission checks in each route. The /pins endpoint
+                     // gracefully falls back to internal CST OS auth when
+                     // there's no cookie, so this is safe to expose.
+                     pathname.startsWith("/api/pin-validator/") ||
                      /^\/api\/meetings\/[^/]+\/register$/.test(pathname) ||
                      /^\/api\/share\/[^/]+$/.test(pathname);
   const isPublicPage = pathname === "/" ||
@@ -17,7 +22,10 @@ export default auth((req) => {
                       pathname.startsWith("/meetings/scan") ||
                       pathname.startsWith("/share/") ||
                       pathname.startsWith("/portal") ||
-                      pathname.startsWith("/addin");
+                      pathname.startsWith("/addin") ||
+                      // External validator UI — magic-link cookie session,
+                      // not NextAuth. Don't bounce through Google sign-in.
+                      pathname.startsWith("/pin-validator");
 
   // Allow auth-related paths to bypass middleware
   if (isAuthPage || isAuthApi) {
