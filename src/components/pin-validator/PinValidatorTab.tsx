@@ -14,6 +14,7 @@
  * that already enforce canAccessClient() server-side.
  */
 import { useCallback, useEffect, useState } from "react";
+import { MapPin } from "lucide-react";
 import { MapValidator } from "./MapValidator";
 import { QuotaMeter } from "./QuotaMeter";
 
@@ -156,8 +157,9 @@ export function PinValidatorTab({ accountId, companyName }: Props) {
     return (
       <div className="p-6 max-w-2xl space-y-4">
         <header>
-          <h2 className="text-base font-semibold text-slate-900">
-            📍 Pin Validator
+          <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+            <MapPin className="w-4 h-4 text-blue-600" />
+            Pin Validator
           </h2>
           <p className="mt-1 text-sm text-slate-500">
             Generate a Google Sheet for {companyName} where you paste store
@@ -193,83 +195,94 @@ export function PinValidatorTab({ accountId, companyName }: Props) {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-4 border-b border-slate-200 bg-white space-y-3">
-        <div className="flex items-center gap-3 flex-wrap">
-          <h2 className="text-sm font-semibold text-slate-900">
-            📍 {project.name}
-          </h2>
-          <a
-            href={project.googleSheetUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs text-blue-600 underline"
-          >
-            Open Google Sheet ↗
-          </a>
-          <button
-            onClick={onGeocode}
-            disabled={busy === "geocode"}
-            className="ml-auto rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-          >
-            {busy === "geocode" ? "Geocoding…" : "Geocode pending"}
-          </button>
-          <button
-            onClick={() => setShowInvite((v) => !v)}
-            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
-          >
-            {showInvite ? "Cancel invite" : "Invite validator"}
-          </button>
+    <div className="p-4 space-y-3">
+      {/* Header row — title + quick actions */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <MapPin className="w-4 h-4 text-blue-600" />
+          <h2 className="text-sm font-semibold text-slate-900">{project.name}</h2>
         </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <QuotaMeter compact refreshKey={quotaRefreshKey} />
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 leading-relaxed">
-            <strong className="text-slate-700">How to use:</strong> Open the
-            Sheet → paste store names into column A → return here and click
-            <em> Geocode pending</em>. Then invite a client contact to validate.
-          </div>
-        </div>
-        {showInvite && (
-          <form
-            onSubmit={onSendInvite}
-            className="rounded-xl border border-slate-200 bg-slate-50 p-3 grid gap-2 md:grid-cols-[1fr_1fr_auto]"
-          >
-            <input
-              type="email"
-              placeholder="Validator email"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              required
-              className="rounded-md border border-slate-300 px-3 py-1.5 text-xs"
-            />
-            <input
-              type="text"
-              placeholder="Name (optional)"
-              value={inviteName}
-              onChange={(e) => setInviteName(e.target.value)}
-              className="rounded-md border border-slate-300 px-3 py-1.5 text-xs"
-            />
-            <button
-              type="submit"
-              disabled={busy === "invite"}
-              className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {busy === "invite" ? "Sending…" : "Send invite"}
-            </button>
-          </form>
-        )}
-        {info && (
-          <p className="rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-            {info}
-          </p>
-        )}
-        {error && (
-          <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
-            {error}
-          </p>
-        )}
+        <a
+          href={project.googleSheetUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs text-blue-600 hover:underline"
+        >
+          Open Google Sheet ↗
+        </a>
+        <button
+          onClick={onGeocode}
+          disabled={busy === "geocode"}
+          className="ml-auto rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+        >
+          {busy === "geocode" ? "Geocoding…" : "Geocode pending"}
+        </button>
+        <button
+          onClick={() => setShowInvite((v) => !v)}
+          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
+        >
+          {showInvite ? "Cancel invite" : "Invite validator"}
+        </button>
       </div>
-      <div className="flex-1 min-h-0">
+
+      {/* Quota + how-to */}
+      <div className="grid gap-3 md:grid-cols-2">
+        <QuotaMeter compact refreshKey={quotaRefreshKey} />
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 leading-relaxed">
+          <strong className="text-slate-700">How to use:</strong> Open the
+          Sheet → paste store names into column A → return here and click
+          <em> Geocode pending</em>. Then invite a client contact to validate.
+        </div>
+      </div>
+
+      {/* Invite form */}
+      {showInvite && (
+        <form
+          onSubmit={onSendInvite}
+          className="rounded-xl border border-slate-200 bg-slate-50 p-3 grid gap-2 md:grid-cols-[1fr_1fr_auto]"
+        >
+          <input
+            type="email"
+            placeholder="Validator email"
+            value={inviteEmail}
+            onChange={(e) => setInviteEmail(e.target.value)}
+            required
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs"
+          />
+          <input
+            type="text"
+            placeholder="Name (optional)"
+            value={inviteName}
+            onChange={(e) => setInviteName(e.target.value)}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs"
+          />
+          <button
+            type="submit"
+            disabled={busy === "invite"}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {busy === "invite" ? "Sending…" : "Send invite"}
+          </button>
+        </form>
+      )}
+
+      {info && (
+        <p className="rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+          {info}
+        </p>
+      )}
+      {error && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+          {error}
+        </p>
+      )}
+
+      {/* Map — fixed viewport height keeps the canvas inside the tab. The
+          AccountHub doesn't pass height all the way down here, so relying on
+          h-full leaves the map unbounded and overflowing the page. 560px is
+          big enough to feel like a map and small enough to keep the action
+          bar at the top visible. */}
+      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden h-[560px]">
         <MapValidator projectId={project.id} />
       </div>
     </div>

@@ -11,6 +11,8 @@
  */
 import Link from "next/link";
 import { useEffect } from "react";
+import { MapPin } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import { QuotaMeter } from "@/components/pin-validator/QuotaMeter";
 
@@ -43,7 +45,7 @@ export default function AiToolsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <ToolCard
             href="/ai-tools/pin-validator"
-            emoji="📍"
+            icon={MapPin}
             title="Pin Validator"
             blurb="Generate a Google Sheet of store coordinates, geocode store names, then send a magic link to client validators to confirm the pins. Used per account; activate from an account's hub."
             footer="Activate per account · Magic-link client review"
@@ -57,19 +59,20 @@ export default function AiToolsPage() {
 
 function ToolCard(props: {
   href: string;
-  emoji: string;
+  icon: LucideIcon;
   title: string;
   blurb: string;
   footer: string;
 }) {
+  const Icon = props.icon;
   return (
     <Link
       href={props.href}
       className="block rounded-2xl border border-slate-200 bg-white p-5 transition-shadow hover:shadow-md"
     >
       <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-xl">
-          {props.emoji}
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+          <Icon className="w-5 h-5" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-base font-semibold text-slate-900">

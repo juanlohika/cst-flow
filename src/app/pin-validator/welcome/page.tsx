@@ -8,6 +8,7 @@
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import Link from "next/link";
+import { MapPin } from "lucide-react";
 import {
   consumePinValidatorMagicLink,
   setPinValidatorSessionCookie,
@@ -61,7 +62,11 @@ function Failure({ title, body }: { title: string; body: string }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
       <div className="max-w-md w-full bg-white border border-slate-200 rounded-2xl p-8 shadow-sm text-center">
-        <div className="text-4xl mb-3">📍</div>
+        <div className="flex justify-center mb-3">
+          <div className="h-12 w-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+            <MapPin className="w-6 h-6" />
+          </div>
+        </div>
         <h1 className="text-lg font-semibold text-slate-900 mb-2">{title}</h1>
         <p className="text-sm text-slate-600 mb-6">{body}</p>
         <p className="text-xs text-slate-400">

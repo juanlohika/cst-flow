@@ -26,6 +26,7 @@
  *   • Pin Validator account tab (compact variant via `compact` prop)
  */
 import { useCallback, useEffect, useState } from "react";
+import { MapPin } from "lucide-react";
 
 interface QuotaState {
   monthKey: string;
@@ -102,8 +103,9 @@ export function QuotaMeter({ compact = false, refreshKey = 0 }: Props) {
     <div className={shellClass(compact, tones.outer)}>
       {!compact && (
         <div className="flex items-center justify-between gap-3 mb-2">
-          <div className="text-sm font-semibold text-slate-700">
-            📍 Pin Validator — Monthly geocoding quota
+          <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+            <MapPin className="w-4 h-4 text-blue-600" />
+            Pin Validator — Monthly geocoding quota
           </div>
           <div className="flex items-center gap-2">
             <span className={`text-xs font-medium ${tones.label}`}>

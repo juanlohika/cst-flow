@@ -12,6 +12,7 @@
  * accidentally save decisions.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { MapPin } from "lucide-react";
 
 interface Pin {
   row: number;
@@ -246,7 +247,9 @@ export function MapValidator({ projectId, apiBase, validatorLabel }: Props) {
   if (pins.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-slate-500">
-        <div className="text-3xl">📍</div>
+        <div className="h-10 w-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+          <MapPin className="w-5 h-5" />
+        </div>
         <div>No pins yet. Geocode the Sheet to populate this map.</div>
       </div>
     );
@@ -256,7 +259,10 @@ export function MapValidator({ projectId, apiBase, validatorLabel }: Props) {
     <div className="flex flex-col h-full bg-slate-50">
       {/* Top bar */}
       <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 text-xs">
-        <span className="font-semibold text-slate-900">📍 Pin Validator</span>
+        <span className="flex items-center gap-1.5 font-semibold text-slate-900">
+          <MapPin className="w-3.5 h-3.5 text-blue-600" />
+          Pin Validator
+        </span>
         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
           {stats.pending} Pending
         </span>
@@ -493,15 +499,19 @@ function Stat({
 function makeIcon(L: any, status: string): any {
   const color =
     status === "Approved" ? "#10B981" : status === "Flagged" ? "#EF4444" : "#F59E0B";
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="34" viewBox="0 0 24 34">
-    <path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 22 12 22s12-13 12-22C24 5.373 18.627 0 12 0z" fill="${color}" stroke="white" stroke-width="1.5"/>
-    <circle cx="12" cy="12" r="5" fill="white"/></svg>`;
+  // Lucide MapPin path — kept in sync with lucide-react's MapPin component
+  // (https://lucide.dev/icons/map-pin). Inline-SVG lets us color it per
+  // status while staying visually consistent with the rest of CST OS.
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="${color}" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 1px 2px rgba(0,0,0,0.25))">
+    <path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/>
+    <circle cx="12" cy="10" r="3" fill="white" stroke="${color}" stroke-width="2"/>
+  </svg>`;
   return L.divIcon({
     html: svg,
     className: "",
-    iconSize: [24, 34],
-    iconAnchor: [12, 34],
-    popupAnchor: [0, -36],
+    iconSize: [28, 28],
+    iconAnchor: [14, 26],
+    popupAnchor: [0, -26],
   });
 }
 

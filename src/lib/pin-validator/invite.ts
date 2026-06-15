@@ -248,7 +248,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <p class="text">Hi ${escape(opts.validatorName)},</p>
     <p class="text"><strong>${escape(opts.inviterName)}</strong> has invited you to review and approve the store pin locations for <strong>${escape(opts.accountName)}</strong>.</p>
     <p class="text">Open the validator below to view the pins on a map. You can approve, flag, or note each one.</p>
-    <a href="${opts.inviteUrl}" class="cta">📍 Open Pin Validator →</a>
+    <a href="${opts.inviteUrl}" class="cta">Open Pin Validator →</a>
     <p class="fine">This link is single-use and expires in 7 days. If you weren't expecting this, you can safely ignore it.</p>
   </div>
   <div class="card-footer">CST OS · Pin Validator</div>
