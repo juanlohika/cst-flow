@@ -77,6 +77,32 @@ function toNum(v: any): number | null {
   return null;
 }
 
+/**
+ * Stamp the Sheet's Timestamp column in Philippine local time so non-tech
+ * reviewers can read it at a glance. Sample output:
+ *   "2026-06-16 21:31:45 PHT"
+ *
+ * If you ever need date math / sorting on this column, swap this for a
+ * real Sheet date value (USER_ENTERED + 'M/d/yyyy h:mm:ss' format parses
+ * into a proper Sheets date). Today it's a string — fine because the
+ * column is read by humans, not formulas.
+ */
+function philippineTimestamp(now = new Date()): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  // en-CA with these options yields "2026-06-16, 21:31:45". Replace the
+  // comma so the column shows ISO-style separation.
+  return fmt.format(now).replace(", ", " ") + " PHT";
+}
+
 export async function listPins(sheetId: string): Promise<Pin[]> {
   const { sheets } = await loadSheetsClient();
   const resp = await sheets.spreadsheets.values.get({
@@ -115,7 +141,7 @@ export async function saveDecision(
   validatorEmail: string,
 ): Promise<void> {
   const { sheets } = await loadSheetsClient();
-  const now = new Date().toISOString();
+  const now = philippineTimestamp();
   await sheets.spreadsheets.values.update({
     spreadsheetId: sheetId,
     range: `Pins!${COL_STATUS_LETTER}${rowNumber}:I${rowNumber}`,
@@ -133,7 +159,7 @@ export async function saveDecisionsBulk(
 ): Promise<void> {
   if (decisions.length === 0) return;
   const { sheets } = await loadSheetsClient();
-  const now = new Date().toISOString();
+  const now = philippineTimestamp();
   const data = decisions.map((d) => ({
     range: `Pins!${COL_STATUS_LETTER}${d.rowNumber}:I${d.rowNumber}`,
     values: [[d.decision, d.note || "", validatorEmail, now]],
@@ -173,7 +199,7 @@ export async function savePinAdjustment(
   validatorEmail: string,
 ): Promise<void> {
   const { sheets } = await loadSheetsClient();
-  const now = new Date().toISOString();
+  const now = philippineTimestamp();
   // 6 decimal places ~= 11 cm precision. Drop further digits to keep the
   // Sheet readable.
   const lat = Number(newLat.toFixed(6));
