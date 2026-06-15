@@ -9,7 +9,7 @@ import {
   FileText, ClipboardList, Search, Pencil, ChevronLeft,
   ChevronDown, ChevronUp, User, BarChart2, GitBranch,
   FolderOpen, ExternalLink, Clock, Users, Paintbrush, Download,
-  Brain, MonitorPlay, Save
+  Brain, MonitorPlay, Save, MapPin
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useSearchParams } from "next/navigation";
@@ -23,6 +23,7 @@ import ProjectSettingsView from "@/components/projects/ProjectSettingsView";
 import BufferModal from "@/components/timeline/BufferModal";
 import ProjectSettingsModal from "@/components/projects/ProjectSettingsModal";
 import ContactsTab from "@/components/accounts/ContactsTab";
+import { PinValidatorTab } from "@/components/pin-validator/PinValidatorTab";
 import HealthChip from "@/components/accounts/HealthChip";
 import AssessmentQueueBanner from "@/components/accounts/AssessmentQueueBanner";
 import ModulesPicker from "@/components/accounts/ModulesPicker";
@@ -1026,7 +1027,7 @@ function HealthFilterPill({ color, label, count, active, onClick }: {
 
 // ─── Account Hub (5-Tab) ───────────────────────────────────────────────────────
 
-type HubTab = "profile" | "contacts" | "meetings" | "brd" | "flows" | "projects" | "mockups" | "intelligence" | "presentations";
+type HubTab = "profile" | "contacts" | "meetings" | "brd" | "flows" | "projects" | "mockups" | "intelligence" | "presentations" | "pinValidator";
 
 const HUB_TABS: { id: HubTab; label: string; icon: React.ElementType }[] = [
   { id: "profile", label: "Profile", icon: User },
@@ -1038,6 +1039,7 @@ const HUB_TABS: { id: HubTab; label: string; icon: React.ElementType }[] = [
   { id: "flows", label: "Process Flow", icon: GitBranch },
   { id: "projects", label: "Projects & Tasks", icon: FolderOpen },
   { id: "mockups", label: "Mockups", icon: Paintbrush },
+  { id: "pinValidator", label: "Pin Validator", icon: MapPin },
 ];
 
 const MEETING_STATUS_STYLES: Record<string, string> = {
@@ -1116,6 +1118,7 @@ export function AccountHub({ profile, onEdit, onBack }: {
           {activeTab === "flows" && <FlowsTab accountId={profile.id} companyName={profile.companyName} />}
           {activeTab === "projects" && <ProjectsTab accountId={profile.id} companyName={profile.companyName} profile={profile} />}
           {activeTab === "mockups" && <MockupsTab accountId={profile.id} companyName={profile.companyName} />}
+          {activeTab === "pinValidator" && <PinValidatorTab accountId={profile.id} companyName={profile.companyName} />}
         </div>
       </div>
     </div>
