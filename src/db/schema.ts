@@ -1176,7 +1176,9 @@ export const arimaToolInvocations = sqliteTable("ArimaToolInvocation", {
 });
 
 // ClientContact: external people on the client side (e.g. their CEO, project lead, etc.)
-// who can be invited to chat with ARIMA via the magic-link portal.
+// who can be invited to one or more CST OS portal features. Each capability is a
+// separate boolean flag — adding a contact for Pin Validator does NOT
+// automatically grant ARIMA chat access, and vice versa.
 export const clientContacts = sqliteTable("ClientContact", {
   id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   clientProfileId: text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
@@ -1186,14 +1188,24 @@ export const clientContacts = sqliteTable("ClientContact", {
   phone:           text("phone"),
   status:          text("status").default("invited").notNull(), // invited | active | revoked
   invitedAt:       text("invitedAt"),
-  activatedAt:     text("activatedAt"),                 // first time they used the magic link
+  activatedAt:     text("activatedAt"),                 // first time they used a magic link
   lastSeenAt:      text("lastSeenAt"),
+  // Capability flags — each portal feature gates on its own flag.
+  // arimaPortalEnabled defaults to TRUE so existing contacts keep their access
+  // when we ship this change. pinValidatorEnabled defaults to FALSE; only
+  // contacts an internal user explicitly adds as validators gain access.
+  arimaPortalEnabled:   integer("arimaPortalEnabled",   { mode: "boolean" }).default(true ).notNull(),
+  pinValidatorEnabled:  integer("pinValidatorEnabled",  { mode: "boolean" }).default(false).notNull(),
   createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
 
 // SubscriberMagicLink: one-time tokens emailed to client contacts.
 // On first click → activates the contact and starts a SubscriberSession.
+// `purpose` selects which portal feature this link grants access to ("arima"
+// or "pin_validator") — the consumer route enforces the matching capability
+// flag on ClientContact, so a stolen link can't unlock features the contact
+// isn't authorized for.
 export const subscriberMagicLinks = sqliteTable("SubscriberMagicLink", {
   id:         text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   contactId:  text("contactId").notNull().references(() => clientContacts.id, { onDelete: "cascade" }),
@@ -1201,22 +1213,52 @@ export const subscriberMagicLinks = sqliteTable("SubscriberMagicLink", {
   expiresAt:  text("expiresAt").notNull(),               // ISO, 7 days from creation
   usedAt:     text("usedAt"),                            // null until first use; can be re-used during the 30-day session period? No — single-use.
   sentToEmail: text("sentToEmail").notNull(),
+  purpose:    text("purpose").default("arima").notNull(), // "arima" | "pin_validator"
+  // Pin-validator links target a specific project. Null for ARIMA links.
+  pinValidatorProjectId: text("pinValidatorProjectId"),
   createdAt:  text("createdAt").default(sql`(datetime('now'))`).notNull(),
   createdByUserId: text("createdByUserId"),              // which CST OS admin issued this
 });
 
 // SubscriberSession: active portal sessions for external users.
-// One row per (contactId × device). Authentication = sessionId in HTTP-only cookie.
+// One row per (contactId × purpose × device). The same contact can hold
+// independent sessions for ARIMA chat and the Pin Validator at once — each
+// is gated by the matching capability flag on ClientContact.
 export const subscriberSessions = sqliteTable("SubscriberSession", {
   id:         text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   sessionId:  text("sessionId").notNull().unique(),     // 64-char hex; stored in cookie
   contactId:  text("contactId").notNull().references(() => clientContacts.id, { onDelete: "cascade" }),
+  purpose:    text("purpose").default("arima").notNull(), // "arima" | "pin_validator"
+  // For pin_validator sessions, the specific project they're validating.
+  pinValidatorProjectId: text("pinValidatorProjectId"),
   userAgent:  text("userAgent"),
   ipAddress:  text("ipAddress"),
   expiresAt:  text("expiresAt").notNull(),               // ISO, 30 days from creation
   lastUsedAt: text("lastUsedAt"),
   status:     text("status").default("active").notNull(), // active | revoked
   createdAt:  text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// PinValidatorProject: one row per account that has Pin Validator activated.
+// Holds the Google Sheet ID + cached counters + status. Deleting an account
+// cascades; deleting a project does NOT delete the underlying Google Sheet
+// (we leave it in Drive — manual cleanup if the team wants the file gone).
+export const pinValidatorProjects = sqliteTable("PinValidatorProject", {
+  id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  clientProfileId: text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
+  // Google Drive Sheet — created on activation, never changes for the life
+  // of the project. Both ID and URL are cached so the UI doesn't have to
+  // call Drive on every page load.
+  googleSheetId:   text("googleSheetId").notNull(),
+  googleSheetUrl:  text("googleSheetUrl").notNull(),
+  // Display label for the project. Defaults to the account name; editable.
+  name:            text("name").notNull(),
+  // Lifecycle. "active" = visible to internal + assigned validators. "archived"
+  // = read-only, hidden from the AccountHub default view but the Sheet stays.
+  status:          text("status").default("active").notNull(),
+  createdByUserId: text("createdByUserId"),
+  createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
 
 // NotificationLog: every dispatched notification, for analytics + debug + email-digest batching.
