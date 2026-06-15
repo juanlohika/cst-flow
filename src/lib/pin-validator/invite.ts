@@ -237,7 +237,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .eyebrow{font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#2162F9;margin-bottom:10px}
 .heading{font-size:22px;font-weight:700;color:#252B37;margin-bottom:14px;line-height:1.3}
 .text{font-size:14px;color:#535862;line-height:1.6;margin-bottom:10px}
-.cta{display:inline-block;background:#2162F9;color:#fff;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;text-decoration:none;margin:20px 0}
+.cta{display:inline-block;background:#2162F9;color:#ffffff !important;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;text-decoration:none;margin:20px 0;mso-padding-alt:0}
+.cta:link,.cta:visited,.cta:hover,.cta:active{color:#ffffff !important;text-decoration:none}
 .fine{font-size:11px;color:#9ca3af;margin-top:14px}
 .card-footer{padding:18px 28px;background:#FAFAFA;border-top:1px solid #F5F5F5;font-size:11px;color:#717680;line-height:1.6}
 </style></head><body>
@@ -248,7 +249,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <p class="text">Hi ${escape(opts.validatorName)},</p>
     <p class="text"><strong>${escape(opts.inviterName)}</strong> has invited you to review and approve the store pin locations for <strong>${escape(opts.accountName)}</strong>.</p>
     <p class="text">Open the validator below to view the pins on a map. You can approve, flag, or note each one.</p>
-    <a href="${opts.inviteUrl}" class="cta">Open Pin Validator →</a>
+    <a href="${opts.inviteUrl}" class="cta" style="display:inline-block;background:#2162F9;color:#ffffff;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;text-decoration:none;margin:20px 0"><span style="color:#ffffff">Open Pin Validator →</span></a>
     <p class="fine">This link is single-use and expires in 7 days. If you weren't expecting this, you can safely ignore it.</p>
   </div>
   <div class="card-footer">CST OS · Pin Validator</div>
