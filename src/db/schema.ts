@@ -1261,6 +1261,44 @@ export const pinValidatorProjects = sqliteTable("PinValidatorProject", {
   updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),
 });
 
+// PinValidatorGeocodingJob: a long-running geocoding batch for a project.
+//
+// Why this exists: a CST user clicks "Geocode pending" once, and the
+// background worker chews through all unprocessed rows even if it spans
+// many minutes / multiple platform-imposed request lifetimes. Survives
+// tab close, browser crash, even a serverless container being recycled
+// (the watchdog in /resume-if-stale re-triggers the worker if no
+// heartbeat in 2 min).
+//
+// Only ONE active job per project at a time — POST /start refuses if a
+// 'queued' or 'running' job already exists.
+export const pinValidatorGeocodingJobs = sqliteTable("PinValidatorGeocodingJob", {
+  id:               text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  projectId:        text("projectId").notNull().references(() => pinValidatorProjects.id, { onDelete: "cascade" }),
+  // queued → running → (paused | completed | failed | cancelled)
+  status:           text("status").default("queued").notNull(),
+  // Discovered at job start. Used to render the X/N progress bar.
+  totalRows:        integer("totalRows").default(0).notNull(),
+  processedRows:    integer("processedRows").default(0).notNull(),
+  notFoundRows:     integer("notFoundRows").default(0).notNull(),
+  failedRows:       integer("failedRows").default(0).notNull(),
+  // Last row attempted, for the "Currently processing: X" UI line.
+  currentLocation:  text("currentLocation"),
+  // Worker writes resting=1 + restUntilMs while in a self-imposed pause
+  // (politeness or 429 backoff). UI counts down from restUntilMs.
+  resting:          integer("resting", { mode: "boolean" }).default(false).notNull(),
+  restUntilMs:      integer("restUntilMs"),
+  // User clicked Stop. Worker checks the flag between ticks.
+  cancelRequested:  integer("cancelRequested", { mode: "boolean" }).default(false).notNull(),
+  // Watchdog uses lastHeartbeatAt to decide if the job is stale and needs
+  // a re-trigger. Worker writes after every Sheet write.
+  startedAt:        text("startedAt").default(sql`(datetime('now'))`).notNull(),
+  lastHeartbeatAt:  text("lastHeartbeatAt").default(sql`(datetime('now'))`).notNull(),
+  finishedAt:       text("finishedAt"),
+  errorMessage:     text("errorMessage"),
+  startedByUserId:  text("startedByUserId"),
+});
+
 // NotificationLog: every dispatched notification, for analytics + debug + email-digest batching.
 export const notificationLogs = sqliteTable("NotificationLog", {
   id:        text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
