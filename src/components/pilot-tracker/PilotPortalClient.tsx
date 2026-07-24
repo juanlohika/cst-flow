@@ -67,9 +67,16 @@ export function PilotPortalClient({ qrToken, project, branding }: Props) {
   const logoUrl = branding?.logoUrl || "";
   const appName = branding?.appName || "CST OS";
   const storageKey = `pilot-tracker:${qrToken}:participantId`;
+  const successDismissedKey = `pilot-tracker:${qrToken}:successDismissed`;
   const [participantId, setParticipantId] = useState<string | null>(null);
   const [participant, setParticipant] = useState<Participant | null>(null);
   const [loading, setLoading] = useState(true);
+  // Success modal fires once when Screen 5 first gets a submission (either
+  // one-tap confirmed OR screenshot uploaded). We keep it dismissible-and-
+  // sticky per participant + qrToken so a user who reopens the portal
+  // isn't ambushed by the modal again if they're just checking status.
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [closeFallback, setCloseFallback] = useState(false);
 
   // On mount, check localStorage for a previous session.
   useEffect(() => {
@@ -105,6 +112,50 @@ export function PilotPortalClient({ qrToken, project, branding }: Props) {
     loadParticipant();
   }, [loadParticipant]);
 
+  // Show the success modal the first time this participant lands in the
+  // "Screen 5 submitted" state — either the one-tap confirm flipped
+  // versionConfirmedByUser true, or a screenshot was uploaded. Dismissal
+  // is persisted so returning visits don't re-trigger it.
+  useEffect(() => {
+    if (!participant) return;
+    const reachedEnd =
+      Boolean(participant.versionConfirmedByUser) ||
+      Boolean(participant.versionScreenshotUrl);
+    if (!reachedEnd) return;
+    let dismissed = false;
+    try {
+      dismissed = localStorage.getItem(`${successDismissedKey}:${participant.id}`) === "1";
+    } catch {}
+    if (dismissed) return;
+    setShowSuccess(true);
+  }, [participant, successDismissedKey]);
+
+  const dismissSuccess = () => {
+    try {
+      if (participant) {
+        localStorage.setItem(`${successDismissedKey}:${participant.id}`, "1");
+      }
+    } catch {}
+    setShowSuccess(false);
+    setCloseFallback(false);
+  };
+
+  const tryClosePage = () => {
+    try {
+      if (participant) {
+        localStorage.setItem(`${successDismissedKey}:${participant.id}`, "1");
+      }
+    } catch {}
+    // window.close() only works reliably in tabs opened by script (e.g. via
+    // window.open). Most mobile browsers silently ignore it for tabs the
+    // user opened themselves. Fall back to a "you can close this tab now"
+    // screen so the user isn't left wondering if their tap did anything.
+    try { window.close(); } catch {}
+    setTimeout(() => {
+      if (!document.hidden) setCloseFallback(true);
+    }, 150);
+  };
+
   const onIdentified = (id: string) => {
     try { localStorage.setItem(storageKey, id); } catch {}
     setParticipantId(id);
@@ -124,8 +175,42 @@ export function PilotPortalClient({ qrToken, project, branding }: Props) {
     );
   }
 
+  // Fallback for browsers that block programmatic window.close(). Rather
+  // than leaving the user staring at an unchanged portal, replace the body
+  // with a plain "all done" screen so they know the flow terminated. They
+  // can still swipe / close the tab themselves.
+  if (closeFallback) {
+    return (
+      <main className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="max-w-sm w-full text-center bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
+          <CheckCircle2 size={44} className="text-green-600 mx-auto mb-3" />
+          <h2 className="text-lg font-semibold text-gray-900 mb-1">You're all set</h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Thanks — your submission was recorded. You can safely close this
+            browser tab now.
+          </p>
+          <button
+            type="button"
+            onClick={() => setCloseFallback(false)}
+            className="text-xs text-gray-500 hover:text-gray-900"
+          >
+            Back to my submission
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-gray-50 pb-8">
+      {showSuccess && (
+        <SuccessModal
+          onClose={dismissSuccess}
+          onCloseTab={tryClosePage}
+          uploadedScreenshot={Boolean(participant?.versionScreenshotUrl)}
+          versionVerified={participant?.versionVerified === "verified"}
+        />
+      )}
       <header className="bg-white border-b border-gray-200 px-4 py-3">
         <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
@@ -387,6 +472,68 @@ function StagePill({ stage }: { stage: number }) {
 
 // ─── Individual step components ────────────────────────────────────────
 
+/**
+ * Success modal — pops the first time a participant submits Screen 5 (either
+ * via the one-tap confirm or by uploading a screenshot). Two exits:
+ *
+ *   • "Close page"          — attempts window.close(). If the browser
+ *                              blocks it (common on mobile) the caller
+ *                              swaps in a fallback "you're all set" view.
+ *   • "Review my submission" — dismisses the modal in place so the user
+ *                              can scroll back through their checklist.
+ *
+ * The dismissal is persisted per (qrToken, participantId) so a returning
+ * user who just opens the portal to check status isn't re-ambushed by the
+ * modal — the intent is celebration on first completion, not a nag.
+ */
+function SuccessModal({
+  onClose,
+  onCloseTab,
+  uploadedScreenshot,
+  versionVerified,
+}: {
+  onClose: () => void;
+  onCloseTab: () => void;
+  uploadedScreenshot: boolean;
+  versionVerified: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-white rounded-lg shadow-xl overflow-hidden">
+        <div className="p-5 text-center">
+          <CheckCircle2 size={48} className="text-green-600 mx-auto mb-3" />
+          <h2 className="text-lg font-semibold text-gray-900 mb-1">
+            You're all set!
+          </h2>
+          <p className="text-sm text-gray-600 leading-snug">
+            {versionVerified
+              ? "Your submission was verified. Thanks for getting on the beta build — you're done."
+              : uploadedScreenshot
+              ? "Screenshot received. Your CST rep will verify it shortly — no further action needed on your side."
+              : "You've confirmed your app version. Thanks for getting on the beta build — you're done."}
+          </p>
+        </div>
+        <div className="border-t border-gray-100 p-3 flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={onCloseTab}
+            className="w-full px-4 py-2.5 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700"
+          >
+            Close page
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full px-4 py-2 text-sm text-gray-700 hover:text-gray-900"
+          >
+            Review my submission
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Step({
   done,
   title,
@@ -418,29 +565,32 @@ function Step({
 /**
  * Choice-button styling helper for the portal.
  *
- * Every question in the portal is a set of mutually-exclusive choices, and
- * only one of them at a time should look "filled". Previously each button
- * baked its own color into the className unconditionally, so once the user
- * picked something the other buttons still looked chosen in their negative
- * palette. This helper switches every non-active button back to a neutral
- * outlined state so the participant's current answer is unambiguous.
+ * Every question is a set of mutually-exclusive choices. We want:
+ *   • The positive answer to be filled green ONLY when it's the current
+ *     answer (so someone who hasn't answered doesn't see a fake-tick).
+ *   • The negative answers to always look red-ish so their meaning is
+ *     obvious at a glance — but with a stronger fill when they're the
+ *     current answer, and a lighter fill otherwise. A hard "greyed
+ *     out" negative reads as disabled, which confused users.
  *
- *   variant "positive" → green fill when active
- *   variant "negative" → rose fill when active
- *   inactive (either)  → white / gray outlined
+ *   positive + inactive → outlined white/gray
+ *   positive + active   → filled green
+ *   negative + inactive → subtle rose (still red-ish)
+ *   negative + active   → filled rose
  */
 function choiceClass(
   active: boolean,
   variant: "positive" | "negative",
   base: string,
 ): string {
-  if (!active) {
-    return `${base} border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50`;
-  }
   if (variant === "positive") {
-    return `${base} bg-green-100 border-green-300 text-green-800 disabled:opacity-50`;
+    return active
+      ? `${base} bg-green-100 border-green-300 text-green-800 disabled:opacity-50`
+      : `${base} border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50`;
   }
-  return `${base} bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100 disabled:opacity-50`;
+  return active
+    ? `${base} bg-rose-100 border-rose-400 text-rose-800 hover:bg-rose-200 disabled:opacity-50`
+    : `${base} bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100 disabled:opacity-50`;
 }
 
 // Screen B — Email step
@@ -641,7 +791,12 @@ function InvitationStep({
         </span>
         <span className="text-[10px] opacity-70">Tap to open</span>
       </button>
-      <PilotOnboardingGuide open={guideOpen} onClose={() => setGuideOpen(false)} />
+      <PilotOnboardingGuide
+        open={guideOpen}
+        onClose={() => setGuideOpen(false)}
+        invitationUrl={project.betaInviteUrl}
+        playStoreUrl={project.playStoreAppUrl}
+      />
 
       {project.betaInviteUrl ? (
         <a
@@ -841,6 +996,8 @@ function MobileStep({
   const currentMobile = participant.mobileNumberCorrected || participant.mobileNumber;
   const [correction, setCorrection] = useState("");
   const [showFix, setShowFix] = useState(false);
+  const [emailCorrection, setEmailCorrection] = useState("");
+  const [showEmailFix, setShowEmailFix] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -880,6 +1037,20 @@ function MobileStep({
     });
     setShowFix(false);
     setCorrection("");
+  };
+
+  const submitEmailCorrection = async () => {
+    const value = emailCorrection.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+    await patch({
+      workEmail: value,
+      workEmailConfirmed: true,
+    });
+    setShowEmailFix(false);
+    setEmailCorrection("");
   };
 
   return (
@@ -974,32 +1145,68 @@ function MobileStep({
             Admins sign in to the control tower with this address, and OTPs
             for the app go here (not to your mobile). Confirm we have it right.
           </p>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={confirmWorkEmail}
-              disabled={busy || participant.workEmailConfirmed}
-              className={choiceClass(
-                participant.workEmailConfirmed,
-                "positive",
-                "px-3 py-2 rounded text-xs font-medium border",
-              )}
-            >
-              {participant.workEmailConfirmed ? "✓ Confirmed" : "Yes, that's correct"}
-            </button>
-            <button
-              type="button"
-              disabled
-              title="Ping your CST rep on Viber if this email is wrong — they'll correct it on the admin side."
-              className={choiceClass(
-                false,
-                "negative",
-                "px-3 py-2 rounded text-xs font-medium border cursor-default",
-              )}
-            >
-              No / Wrong email
-            </button>
-          </div>
+          {!showEmailFix ? (
+            // Same "Yes, that's correct / No, fix it" pattern as mobile —
+            // "No" opens an inline input so the participant can type the
+            // correct email, which we persist to workEmail directly.
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={confirmWorkEmail}
+                disabled={busy || participant.workEmailConfirmed}
+                className={choiceClass(
+                  participant.workEmailConfirmed,
+                  "positive",
+                  "px-3 py-2 rounded text-xs font-medium border",
+                )}
+              >
+                {participant.workEmailConfirmed ? "✓ Confirmed" : "Yes, that's correct"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEmailCorrection(participant.workEmail || "");
+                  setShowEmailFix(true);
+                  setError(null);
+                }}
+                disabled={busy}
+                className={choiceClass(
+                  false,
+                  "negative",
+                  "px-3 py-2 rounded text-xs font-medium border",
+                )}
+              >
+                No, fix it
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <input
+                type="email"
+                value={emailCorrection}
+                onChange={(e) => setEmailCorrection(e.target.value)}
+                placeholder="you@company.com"
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={submitEmailCorrection}
+                  disabled={busy}
+                  className="px-3 py-2 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {busy ? "Saving…" : "Save correction"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowEmailFix(false); setError(null); }}
+                  className="px-3 py-2 text-xs text-gray-600 hover:text-gray-900"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </Step>

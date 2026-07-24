@@ -40,8 +40,12 @@ const PORTAL_WRITABLE_FIELDS = new Set<keyof ParticipantUpdate>([
   // One-tap Screen F confirmation. updateParticipant() auto-verifies when
   // this flips to true and stamps reportedVersion from project.targetAppVersion.
   "versionConfirmedByUser",
-  // Work-email confirmation (only rendered when workEmail is on file).
-  // Participant can NOT edit workEmail from the portal — that's admin-side.
+  // Work-email confirmation + correction. Portal offers a "No, fix it"
+  // path that lets the participant type the right email — same pattern as
+  // the mobile-number correction. workEmailConfirmed flips true when the
+  // participant either confirms the shipped value or supplies a corrected
+  // one; the updated value is persisted verbatim into workEmail.
+  "workEmail",
   "workEmailConfirmed",
 ]);
 

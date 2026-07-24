@@ -15,7 +15,7 @@
  */
 import { useEffect, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { X, ChevronLeft, ChevronRight, AlertTriangle, Lightbulb } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, AlertTriangle, Lightbulb, Mail, ExternalLink } from "lucide-react";
 
 interface Pin {
   n: number;
@@ -187,9 +187,24 @@ interface Props {
   // default the guide to that scenario. When the pilot goes public, callers
   // can pass "regular" to open on that tab instead.
   initialScenario?: "beta" | "regular";
+  // Optional URL for the "Accept invite" flow. When present, the "Next"
+  // button on the final step of the Internal Beta scenario becomes an
+  // "Open invitation" call-to-action that opens the invite in a new tab
+  // and dismisses the guide — the user lands directly on the action the
+  // guide just walked them through, no dead-end.
+  invitationUrl?: string | null;
+  // Same idea for the Regular Download scenario — the Play Store link,
+  // used on the final step when the beta doesn't apply.
+  playStoreUrl?: string | null;
 }
 
-export function PilotOnboardingGuide({ open, onClose, initialScenario = "beta" }: Props) {
+export function PilotOnboardingGuide({
+  open,
+  onClose,
+  initialScenario = "beta",
+  invitationUrl,
+  playStoreUrl,
+}: Props) {
   const [scenIdx, setScenIdx] = useState(() =>
     GUIDE_DATA.scenarios.findIndex((s) => s.key === initialScenario) >= 0
       ? GUIDE_DATA.scenarios.findIndex((s) => s.key === initialScenario)
@@ -224,6 +239,18 @@ export function PilotOnboardingGuide({ open, onClose, initialScenario = "beta" }
   }, [scen, step, stepIdx, screenIdx]);
 
   const isFirst = stepIdx === 0 && screenIdx === 0;
+
+  // On the final screen, replace the disabled "Next" with a call-to-action
+  // that opens the URL the guide was preparing the user to tap. Which URL
+  // depends on which scenario they're viewing.
+  const ctaUrl =
+    isLast && scen?.key === "beta"
+      ? invitationUrl || null
+      : isLast && scen?.key === "regular"
+      ? playStoreUrl || null
+      : null;
+  const ctaLabel =
+    scen?.key === "beta" ? "Open invitation" : "Open Play Store";
 
   if (!open || typeof document === "undefined") return null;
 
@@ -349,6 +376,11 @@ export function PilotOnboardingGuide({ open, onClose, initialScenario = "beta" }
                     className="absolute inset-0 w-full h-full object-cover object-top"
                     loading="lazy"
                   />
+                  {/* Pin badge shows the CURRENT STEP number, not a per-screen
+                      counter — the original data was authored with n:1 on every
+                      pin, which was misleading when the step was "2. Accept
+                      invite". Anchoring to stepIdx keeps the label honest even
+                      when we later add multi-pin screens. */}
                   {(screen.pins || []).map((p) => (
                     <div
                       key={p.n}
@@ -356,7 +388,7 @@ export function PilotOnboardingGuide({ open, onClose, initialScenario = "beta" }
                       style={{ left: `${p.x}%`, top: `${p.y}%`, transform: "translate(-50%,-50%)" }}
                       title={p.label}
                     >
-                      {p.n}
+                      {stepIdx + 1}
                     </div>
                   ))}
                 </div>
@@ -425,15 +457,31 @@ export function PilotOnboardingGuide({ open, onClose, initialScenario = "beta" }
         >
           Back to portal
         </button>
-        <button
-          type="button"
-          onClick={goNext}
-          disabled={isLast}
-          className="inline-flex items-center gap-1 px-3 py-2 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          Next
-          <ChevronRight size={16} />
-        </button>
+        {isLast && ctaUrl ? (
+          // Seamless hand-off — the guide's last screen shows the user WHERE
+          // to tap; the CTA takes them straight to that URL and dismisses the
+          // guide so they land back in the portal underneath afterwards.
+          <a
+            href={ctaUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onClose}
+            className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+          >
+            {scen?.key === "beta" ? <Mail size={14} /> : <ExternalLink size={14} />}
+            {ctaLabel}
+          </a>
+        ) : (
+          <button
+            type="button"
+            onClick={goNext}
+            disabled={isLast}
+            className="inline-flex items-center gap-1 px-3 py-2 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Next
+            <ChevronRight size={16} />
+          </button>
+        )}
       </div>
     </div>,
     document.body,
