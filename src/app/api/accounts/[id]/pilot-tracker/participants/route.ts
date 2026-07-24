@@ -18,8 +18,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/db";
-import { pilotProjects, pilotParticipants } from "@/db/schema";
-import { and, asc, desc, eq, like, or, sql } from "drizzle-orm";
+import { pilotProjects, pilotParticipants, pilotChangeLog } from "@/db/schema";
+import { and, asc, desc, eq, gt, inArray, like, lt, or, sql } from "drizzle-orm";
 import { canAccessClient, ensureAccessSchema } from "@/lib/access/accounts";
 import { updateParticipant, type ParticipantUpdate } from "@/lib/pilot/participant-mutations";
 
@@ -74,7 +74,56 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       }
     }
     if (flag) {
-      filters.push(eq(pilotParticipants.issueFlag, flag));
+      // Synthetic "blocked-per-stage" filters derived from the change log
+      // or activity timestamps rather than the participant.issueFlag
+      // column. Handled here as an early-return path so the main list
+      // query can restrict to the resolved participant IDs.
+      if (flag === "EMAIL_CORRECTED_BY_USER") {
+        const rows = await db
+          .select({ pid: pilotChangeLog.participantId })
+          .from(pilotChangeLog)
+          .leftJoin(pilotParticipants, eq(pilotParticipants.id, pilotChangeLog.participantId))
+          .where(
+            and(
+              eq(pilotParticipants.projectId, a.projectId),
+              eq(pilotChangeLog.actor, "participant"),
+              eq(pilotChangeLog.field, "playstoreEmail"),
+            ),
+          );
+        const idset = Array.from(new Set(rows.map((r) => r.pid)));
+        if (idset.length === 0) {
+          filters.push(eq(pilotParticipants.id, "__never_match__"));
+        } else {
+          filters.push(inArray(pilotParticipants.id, idset));
+        }
+      } else if (flag === "CONTACT_CORRECTED_BY_USER") {
+        const rows = await db
+          .select({ pid: pilotChangeLog.participantId })
+          .from(pilotChangeLog)
+          .leftJoin(pilotParticipants, eq(pilotParticipants.id, pilotChangeLog.participantId))
+          .where(
+            and(
+              eq(pilotParticipants.projectId, a.projectId),
+              eq(pilotChangeLog.actor, "participant"),
+              or(
+                eq(pilotChangeLog.field, "mobileNumberCorrected"),
+                eq(pilotChangeLog.field, "workEmail"),
+              )!,
+            ),
+          );
+        const idset = Array.from(new Set(rows.map((r) => r.pid)));
+        if (idset.length === 0) {
+          filters.push(eq(pilotParticipants.id, "__never_match__"));
+        } else {
+          filters.push(inArray(pilotParticipants.id, idset));
+        }
+      } else if (flag === "STUCK_STAGE3") {
+        const cutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+        filters.push(eq(pilotParticipants.currentStage, 3));
+        filters.push(lt(pilotParticipants.lastActivityAt, cutoff));
+      } else {
+        filters.push(eq(pilotParticipants.issueFlag, flag));
+      }
     }
     if (search) {
       const like_ = `%${search}%`;
@@ -118,11 +167,98 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       total += Number(r.count);
     }
 
+    // ─── Blocked-per-stage counts ─────────────────────────────────────
+    // Small computed layer that surfaces "someone needs to act" signals
+    // per stage. Each entry maps to a specific filter the CST admin can
+    // tap to isolate the affected participants:
+    //   stage 1 → participants who edited their playstoreEmail via the
+    //             portal (roster email was wrong)
+    //   stage 2 → CLICKED_NOT_REGISTERED + INVITE_NOT_RECEIVED
+    //   stage 3 → participants stuck at stage 3 for 3+ days
+    //             (invitation accepted but app not updated)
+    //   stage 4 → mobile number OR work email corrected on the portal
+    //             (needs a Users-module update on our side)
+    //   stage 5 → VERSION_MISMATCH
+    // Each of these is an SQL count, cheap at pilot scale.
+    const blockedByStage = {
+      s1: 0,     // email corrections
+      s2: (flagCounts["CLICKED_NOT_REGISTERED"] || 0) + (flagCounts["INVITE_NOT_RECEIVED"] || 0),
+      s3: 0,     // stuck at stage 3
+      s4: 0,     // mobile/work email corrections
+      s5: flagCounts["VERSION_MISMATCH"] || 0,
+    };
+
+    try {
+      // Participant IDs in this project (for scoping change-log queries).
+      const idsInProject = await db
+        .select({ id: pilotParticipants.id })
+        .from(pilotParticipants)
+        .where(eq(pilotParticipants.projectId, a.projectId));
+      const pidList = idsInProject.map((r) => r.id);
+
+      if (pidList.length > 0) {
+        // Distinct participants who have a portal-driven playstoreEmail
+        // correction on record. Using count(distinct participantId) so a
+        // participant who edited twice only counts once.
+        const s1Rows = await db
+          .select({
+            c: sql<number>`count(distinct ${pilotChangeLog.participantId})`.as("c"),
+          })
+          .from(pilotChangeLog)
+          .where(
+            and(
+              inArray(pilotChangeLog.participantId, pidList),
+              eq(pilotChangeLog.actor, "participant"),
+              eq(pilotChangeLog.field, "playstoreEmail"),
+            ),
+          );
+        blockedByStage.s1 = Number(s1Rows[0]?.c || 0);
+
+        // Distinct participants with a mobileNumberCorrected OR workEmail
+        // change by the participant. Either one is CST-actionable.
+        const s4Rows = await db
+          .select({
+            c: sql<number>`count(distinct ${pilotChangeLog.participantId})`.as("c"),
+          })
+          .from(pilotChangeLog)
+          .where(
+            and(
+              inArray(pilotChangeLog.participantId, pidList),
+              eq(pilotChangeLog.actor, "participant"),
+              or(
+                eq(pilotChangeLog.field, "mobileNumberCorrected"),
+                eq(pilotChangeLog.field, "workEmail"),
+              )!,
+            ),
+          );
+        blockedByStage.s4 = Number(s4Rows[0]?.c || 0);
+      }
+
+      // Stuck at stage 3 for 3+ days.
+      const cutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+      const s3Rows = await db
+        .select({ c: sql<number>`count(*)`.as("c") })
+        .from(pilotParticipants)
+        .where(
+          and(
+            eq(pilotParticipants.projectId, a.projectId),
+            eq(pilotParticipants.currentStage, 3),
+            lt(pilotParticipants.lastActivityAt, cutoff),
+          ),
+        );
+      blockedByStage.s3 = Number(s3Rows[0]?.c || 0);
+    } catch (e) {
+      // Best-effort. If the computed layer fails we still return
+      // stageCounts / flagCounts so the UI degrades gracefully.
+      console.warn("[pilot-tracker/participants] blockedByStage failed:", e);
+    }
+
     return NextResponse.json({
       participants: rows,
       total,
       stageCounts,
       flagCounts,
+      blockedByStage,
     });
   } catch (e: any) {
     return NextResponse.json(

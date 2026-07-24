@@ -54,7 +54,26 @@ interface Payload {
   total: number;
   stageCounts: number[];
   flagCounts: Record<string, number>;
+  blockedByStage?: {
+    s1: number;    // email corrected by user
+    s2: number;    // CLICKED_NOT_REGISTERED + INVITE_NOT_RECEIVED
+    s3: number;    // stuck at stage 3 (no activity 3+ days)
+    s4: number;    // mobile/work email corrected by user
+    s5: number;    // VERSION_MISMATCH
+  };
 }
+
+// Which synthetic flag each stage's red pill maps to when tapped. Keep in
+// sync with the API's flag parameter handling.
+const STAGE_BLOCK_FILTER: Record<number, string | null> = {
+  0: null,
+  1: "EMAIL_CORRECTED_BY_USER",
+  2: "CLICKED_NOT_REGISTERED",  // covers the larger of the two Step-2 flags
+  3: "STUCK_STAGE3",
+  4: "CONTACT_CORRECTED_BY_USER",
+  5: "VERSION_MISMATCH",
+  6: null,
+};
 
 const STAGE_LABELS = [
   "Imported",
@@ -74,6 +93,12 @@ const FLAG_LABELS: Record<string, string> = {
   AWAITING_REGISTRATION: "Waiting on dev",
   STALE: "No activity",
   NONE: "On track",
+  // Synthetic filters exposed by the "X blocked" pills on the stage cards.
+  // These aren't stored on participant.issueFlag; the API resolves them
+  // via change-log / activity-timestamp queries.
+  EMAIL_CORRECTED_BY_USER: "Play Store email corrected",
+  CONTACT_CORRECTED_BY_USER: "Mobile / work email corrected",
+  STUCK_STAGE3: "Stuck at App update (3+ days)",
 };
 
 const FLAG_COLORS: Record<string, string> = {
@@ -84,6 +109,9 @@ const FLAG_COLORS: Record<string, string> = {
   AWAITING_REGISTRATION: "bg-blue-100 text-blue-800 border-blue-200",
   STALE: "bg-gray-100 text-gray-700 border-gray-200",
   NONE: "bg-green-100 text-green-800 border-green-200",
+  EMAIL_CORRECTED_BY_USER: "bg-rose-100 text-rose-800 border-rose-200",
+  CONTACT_CORRECTED_BY_USER: "bg-rose-100 text-rose-800 border-rose-200",
+  STUCK_STAGE3: "bg-red-100 text-red-800 border-red-200",
 };
 
 interface Props {
@@ -236,25 +264,72 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
           Funnel · {data.total} participants
         </h4>
         <div className="grid grid-cols-7 gap-2 mb-3">
-          {STAGE_LABELS.map((label, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() => setStageFilter(stageFilter === String(i) ? "" : String(i))}
-              className={`text-left rounded-md border p-2 hover:bg-gray-50 transition ${
-                stageFilter === String(i)
-                  ? "border-blue-500 bg-blue-50 ring-1 ring-blue-300"
-                  : "border-gray-200"
-              }`}
-            >
-              <div className="text-lg font-semibold text-gray-900">
-                {data.stageCounts[i] || 0}
-              </div>
-              <div className="text-xs text-gray-500 leading-tight mt-0.5">
-                {i}. {label}
-              </div>
-            </button>
-          ))}
+          {STAGE_LABELS.map((label, i) => {
+            // Card is stage-filter primary. The bottom row is a secondary
+            // click target that jumps to the matching flag filter — we
+            // rely on stopPropagation so the outer stage-filter isn't
+            // toggled at the same time. Stage cards without a mapped
+            // block filter (0, 6) still render the "0 blocked" line for
+            // visual consistency, but the row isn't clickable.
+            const blocked =
+              i === 1 ? data.blockedByStage?.s1 ?? 0
+              : i === 2 ? data.blockedByStage?.s2 ?? 0
+              : i === 3 ? data.blockedByStage?.s3 ?? 0
+              : i === 4 ? data.blockedByStage?.s4 ?? 0
+              : i === 5 ? data.blockedByStage?.s5 ?? 0
+              : 0;
+            const blockFilter = STAGE_BLOCK_FILTER[i];
+            const blockedActive = blockFilter != null && flagFilter === blockFilter;
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setStageFilter(stageFilter === String(i) ? "" : String(i))}
+                className={`text-left rounded-md border p-2 hover:bg-gray-50 transition ${
+                  stageFilter === String(i)
+                    ? "border-blue-500 bg-blue-50 ring-1 ring-blue-300"
+                    : "border-gray-200"
+                }`}
+              >
+                <div className="text-lg font-semibold text-gray-900">
+                  {data.stageCounts[i] || 0}
+                </div>
+                <div className="text-xs text-gray-500 leading-tight mt-0.5">
+                  {i}. {label}
+                </div>
+                {blockFilter ? (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (blocked === 0) return;
+                      setFlagFilter(blockedActive ? "" : blockFilter);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter" && e.key !== " ") return;
+                      e.stopPropagation();
+                      if (blocked === 0) return;
+                      setFlagFilter(blockedActive ? "" : blockFilter);
+                    }}
+                    className={`inline-block mt-1.5 text-[10px] leading-none rounded-full px-1.5 py-0.5 border ${
+                      blocked > 0
+                        ? blockedActive
+                          ? "bg-red-600 border-red-600 text-white cursor-pointer"
+                          : "bg-red-50 border-red-200 text-red-700 hover:bg-red-100 cursor-pointer"
+                        : "bg-gray-50 border-gray-200 text-gray-400 cursor-default"
+                    }`}
+                  >
+                    {blocked} blocked
+                  </span>
+                ) : (
+                  <span className="inline-block mt-1.5 text-[10px] leading-none rounded-full px-1.5 py-0.5 border bg-gray-50 border-gray-200 text-gray-400">
+                    0 blocked
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
         {/* Flag chips */}
         <div className="flex flex-wrap gap-1.5">
