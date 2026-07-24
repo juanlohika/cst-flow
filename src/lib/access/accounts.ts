@@ -183,6 +183,9 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE ClientBindKey ADD COLUMN scopeRef TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN scopeType TEXT NOT NULL DEFAULT 'client'`); } catch {}
     try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN scopeRef TEXT`); } catch {}
+    // Assignee to @tag on every broadcast from this GC. Nullable; set via
+    // in-chat `/tagbroadcast @user` (internal channels only).
+    try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN broadcastAssignee TEXT`); } catch {}
     // Backfill scopeRef for the existing client rows so the column is queryable
     // uniformly going forward.
     try {

@@ -545,6 +545,62 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true });
       }
 
+      if (cmd === "tagbroadcast") {
+        // Set (or clear) the @handle Arima tags on every broadcast from
+        // this GC. Currently used only by internal-scope channels
+        // (pilot beta-registration broadcasts). Anyone in the GC can run
+        // it — no admin gate, because the assignee is chosen by the team
+        // living in the room, not by CST OS.
+        if (!isGroup) {
+          await safeReply(config.botToken, chat.id, "Run `/tagbroadcast` inside a bound group.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const current = await getActiveBindingForChat(chat.id);
+        if (!current) {
+          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound yet.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        if (current.scopeType !== "internal") {
+          await safeReply(config.botToken, chat.id, "ℹ️ `/tagbroadcast` only applies to internal channels (broadcast-only rooms).", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        const raw = (argText || "").trim();
+        const { db } = await import("@/db");
+        const { arimaChannelBindings } = await import("@/db/schema");
+        const { eq } = await import("drizzle-orm");
+        if (!raw) {
+          const currentTag = (current as any).broadcastAssignee || null;
+          const line = currentTag
+            ? `📌 Currently tagging *${currentTag}* on every broadcast.\n\nChange it with \`/tagbroadcast @newuser\` or clear it with \`/tagbroadcast off\`.`
+            : `ℹ️ No assignee set. Broadcasts land here un-tagged.\n\nAssign one with \`/tagbroadcast @username\`.`;
+          await safeReply(config.botToken, chat.id, line, message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        if (raw.toLowerCase() === "off" || raw.toLowerCase() === "clear" || raw.toLowerCase() === "none") {
+          await db.update(arimaChannelBindings)
+            .set({ broadcastAssignee: null } as any)
+            .where(eq(arimaChannelBindings.id, current.id));
+          await safeReply(config.botToken, chat.id, `✅ Cleared broadcast assignee. Future messages won't tag anyone.`, message.message_id);
+          return NextResponse.json({ ok: true });
+        }
+        // Accept @handle or plain name. Normalize to include the @ prefix
+        // when it looks like a Telegram username (letters+digits+underscore).
+        let value = raw.split(/\s+/)[0]; // first token only
+        if (!value.startsWith("@") && /^[A-Za-z0-9_]{3,}$/.test(value)) {
+          value = "@" + value;
+        }
+        await db.update(arimaChannelBindings)
+          .set({ broadcastAssignee: value } as any)
+          .where(eq(arimaChannelBindings.id, current.id));
+        await safeReply(
+          config.botToken,
+          chat.id,
+          `✅ Every future broadcast in this channel will tag *${value}*.\n\nClear with \`/tagbroadcast off\`.`,
+          message.message_id,
+        );
+        return NextResponse.json({ ok: true });
+      }
+
       if (cmd === "mode") {
         if (!isGroup) {
           await safeReply(config.botToken, chat.id, "Run `/mode` in a bound group.", message.message_id);

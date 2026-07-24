@@ -21,6 +21,9 @@ export interface BindingInfo {
   scopeType: "client" | "rm-team" | "internal";
   /** clientProfileId for "client" rooms; userId for "rm-team" rooms. */
   scopeRef: string | null;
+  /** Optional Telegram @handle to tag on every broadcast from this GC.
+      Set via /tagbroadcast; nullable. */
+  broadcastAssignee: string | null;
 }
 
 export async function getActiveBindingForChat(chatId: number | string): Promise<BindingInfo | null> {
@@ -35,6 +38,7 @@ export async function getActiveBindingForChat(chatId: number | string): Promise<
       agentMode: arimaChannelBindings.agentMode,
       scopeType: arimaChannelBindings.scopeType,
       scopeRef: arimaChannelBindings.scopeRef,
+      broadcastAssignee: arimaChannelBindings.broadcastAssignee,
       clientName: clientProfilesTable.companyName,
       clientCode: clientProfilesTable.clientCode,
     })
@@ -63,6 +67,7 @@ export async function getActiveBindingForChat(chatId: number | string): Promise<
     agentMode: ((r as any).agentMode === "eliana" ? "eliana" : "arima"),
     scopeType: ((r as any).scopeType === "rm-team" ? "rm-team" : (r as any).scopeType === "internal" ? "internal" : "client"),
     scopeRef: (r as any).scopeRef ?? r.clientProfileId ?? null,
+    broadcastAssignee: (r as any).broadcastAssignee ?? null,
   };
 }
 
@@ -149,6 +154,7 @@ export async function listActiveBindings(): Promise<BindingInfo[]> {
       agentMode: arimaChannelBindings.agentMode,
       scopeType: arimaChannelBindings.scopeType,
       scopeRef: arimaChannelBindings.scopeRef,
+      broadcastAssignee: arimaChannelBindings.broadcastAssignee,
       clientName: clientProfilesTable.companyName,
       clientCode: clientProfilesTable.clientCode,
     })
@@ -173,5 +179,6 @@ export async function listActiveBindings(): Promise<BindingInfo[]> {
     agentMode: ((r as any).agentMode === "eliana" ? "eliana" : "arima"),
     scopeType: ((r as any).scopeType === "rm-team" ? "rm-team" : (r as any).scopeType === "internal" ? "internal" : "client"),
     scopeRef: (r as any).scopeRef ?? r.clientProfileId ?? null,
+    broadcastAssignee: (r as any).broadcastAssignee ?? null,
   }));
 }

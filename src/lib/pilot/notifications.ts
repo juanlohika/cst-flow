@@ -26,6 +26,90 @@ interface PilotNotifyArgs {
 }
 
 /**
+ * Broadcast a beta-registration DIGEST (one message per channel) covering
+ * multiple participants at once. Used by the roster import path — a 75-row
+ * XLSX would otherwise fire 75 individual messages. Falls through to
+ * broadcastPilotRegistrationRequest() when the list has exactly one entry.
+ *
+ * Best-effort per channel; a bad chat doesn't block the rest. Never throws.
+ */
+export async function broadcastPilotRegistrationDigest(args: {
+  entries: Array<{
+    participantId: string;
+    fullName: string;
+    employeeId: string;
+    playstoreEmail: string;
+  }>;
+  clientCompanyName?: string | null;
+  source: "roster-import" | "portal";
+}): Promise<void> {
+  try {
+    if (args.entries.length === 0) return;
+    if (args.entries.length === 1) {
+      const e = args.entries[0];
+      return broadcastPilotRegistrationRequest({
+        participantId: e.participantId,
+        fullName: e.fullName,
+        employeeId: e.employeeId,
+        playstoreEmail: e.playstoreEmail,
+        clientCompanyName: args.clientCompanyName,
+      });
+    }
+    const { listInternalActiveChatIds } = await import("@/lib/telegram/bind-keys");
+    const targets = await listInternalActiveChatIds();
+    if (targets.length === 0) return;
+
+    const { getTelegramConfig } = await import("@/lib/telegram/config");
+    const cfg = await getTelegramConfig();
+    if (!cfg.botToken) {
+      console.warn("[pilot/notifications] digest broadcast skipped — no bot token");
+      return;
+    }
+
+    const { tgSendMessage, truncateForTelegram } = await import("@/lib/telegram/api");
+    const clientLine = args.clientCompanyName ? ` · ${args.clientCompanyName}` : "";
+    const header =
+      args.source === "roster-import"
+        ? `📋 *${args.entries.length} beta testers imported${clientLine}*`
+        : `📋 *${args.entries.length} pending registrations${clientLine}*`;
+    // Body is a list of `email — Full Name (Emp ID)` lines. Emails wrapped
+    // in backticks so they're one-tap copyable on Telegram.
+    const body = args.entries
+      .map((e) => `• \`${e.playstoreEmail}\`  —  ${e.fullName} (${e.employeeId})`)
+      .join("\n");
+
+    await Promise.all(
+      targets.map((t) => {
+        const mentionLine = t.broadcastAssignee
+          ? `${t.broadcastAssignee} 👋\n\n`
+          : "";
+        const text = truncateForTelegram(
+          mentionLine +
+            [
+              header,
+              ``,
+              `Add each of these emails to the Play Store tester list:`,
+              ``,
+              body,
+            ].join("\n"),
+        );
+        return tgSendMessage(cfg.botToken, t.chatId, text, {
+          parseMode: "Markdown",
+          disablePreview: true,
+        }).catch((e: any) => {
+          console.warn(
+            `[pilot/notifications] digest broadcast failed for chatId=${t.chatId}:`,
+            e?.message || e,
+          );
+        });
+      }),
+    );
+  } catch (e) {
+    console.warn("[pilot/notifications] digest broadcast crashed:", e);
+  }
+}
+
+/**
  * Broadcast a beta-registration request to every currently-bound internal
  * Telegram channel. One-way: no reply parsing, no threading, no read
  * receipts. Simply posts the participant's Play Store email and a short
@@ -56,19 +140,25 @@ export async function broadcastPilotRegistrationRequest(args: {
 
     const { tgSendMessage, truncateForTelegram } = await import("@/lib/telegram/api");
     const clientLine = args.clientCompanyName ? ` · ${args.clientCompanyName}` : "";
-    const text = truncateForTelegram(
-      [
-        `🆕 *Add to Play Store tester list*`,
-        ``,
-        `\`${args.playstoreEmail}\``,
-        ``,
-        `_${args.fullName} · ${args.employeeId}${clientLine}_`,
-      ].join("\n"),
-    );
-    // Fan out in parallel — one bad chat shouldn't hold up the rest.
+    // Per-channel message — the assignee mention is prepended so it fires
+    // a push notification on that user's phone. Telegram markdown escapes
+    // are needed on the email (underscores) but not on the @handle itself.
     await Promise.all(
-      targets.map((t) =>
-        tgSendMessage(cfg.botToken, t.chatId, text, {
+      targets.map((t) => {
+        const mentionLine = t.broadcastAssignee
+          ? `${t.broadcastAssignee} 👋\n\n`
+          : "";
+        const text = truncateForTelegram(
+          mentionLine +
+            [
+              `🆕 *Add to Play Store tester list*`,
+              ``,
+              `\`${args.playstoreEmail}\``,
+              ``,
+              `_${args.fullName} · ${args.employeeId}${clientLine}_`,
+            ].join("\n"),
+        );
+        return tgSendMessage(cfg.botToken, t.chatId, text, {
           parseMode: "Markdown",
           disablePreview: true,
         }).catch((e: any) => {
@@ -76,8 +166,8 @@ export async function broadcastPilotRegistrationRequest(args: {
             `[pilot/notifications] broadcast failed for chatId=${t.chatId}:`,
             e?.message || e,
           );
-        }),
-      ),
+        });
+      }),
     );
   } catch (e) {
     console.warn("[pilot/notifications] internal broadcast crashed:", e);

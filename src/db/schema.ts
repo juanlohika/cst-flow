@@ -870,6 +870,11 @@ export const arimaChannelBindings = sqliteTable("ArimaChannelBinding", {
   boundByUserId:   text("boundByUserId"),                   // CST OS user who ran /bind
   status:          text("status").default("active").notNull(), // active | revoked
   agentMode:       text("agentMode").default("arima").notNull(), // arima (RM) | eliana (BA) — which agent leads this room
+  // Optional Telegram @handle (or plain name) that Arima prepends to every
+  // broadcast from this GC. Set inside the chat with `/tagbroadcast @user`
+  // and cleared with `/tagbroadcast off`. Currently used only by
+  // scopeType="internal" channels (pilot beta-registration broadcasts).
+  broadcastAssignee: text("broadcastAssignee"),
   boundAt:         text("boundAt").default(sql`(datetime('now'))`).notNull(),
   revokedAt:       text("revokedAt"),
 }, (table) => ({

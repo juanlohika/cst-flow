@@ -18,6 +18,7 @@
  * derivation happens automatically via updateParticipant().
  */
 import * as XLSX from "xlsx";
+import crypto from "crypto";
 import { db } from "@/db";
 import { pilotParticipants, pilotUploadBatches } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
@@ -254,6 +255,15 @@ export async function applyValidated(args: {
 
   let inserted = 0;
   let updated = 0;
+  // Accumulate participants that transition INTO the AWAITING_REGISTRATION
+  // state during this import so we can fire a single digest broadcast at
+  // the end (avoids 75 individual Telegram messages for a 75-row XLSX).
+  const digestEntries: Array<{
+    participantId: string;
+    fullName: string;
+    employeeId: string;
+    playstoreEmail: string;
+  }> = [];
 
   for (const row of applicable) {
     if (!row.employeeId || !row.fullName || !row.mobileNumber) continue;
@@ -276,17 +286,116 @@ export async function applyValidated(args: {
         .set(patch)
         .where(eq(pilotParticipants.id, existingId));
       updated++;
+      // Re-import with a Play Store email: if the participant had no
+      // confirmed email yet, treat the shipped value as pre-confirmed and
+      // flip the state-machine flag. Per-participant broadcasts are
+      // suppressed here — the digest fires once at the end.
+      if (row.playstoreEmail) {
+        try {
+          const result = await updateParticipant(
+            existingId,
+            {
+              playstoreEmail: row.playstoreEmail,
+              emailConfirmedIsPlaystore: true,
+            },
+            {
+              actor: "cst",
+              actorUserId: uploadedBy,
+              note: `Roster re-import (batch ${filename || "unnamed"}) — pre-confirmed Play Store email`,
+              suppressInternalBroadcast: true,
+            },
+          );
+          // Only include in the digest if this participant actually
+          // transitioned into AWAITING_REGISTRATION on this call.
+          if (result.newFlag === "AWAITING_REGISTRATION" && result.flagChanged) {
+            digestEntries.push({
+              participantId: existingId,
+              fullName: row.fullName,
+              employeeId: row.employeeId,
+              playstoreEmail: row.playstoreEmail,
+            });
+          }
+        } catch (e) {
+          console.warn("[pilot/import] re-confirm on re-import failed:", e);
+        }
+      }
     } else {
+      // Insert first so we have an id, then route the "email captured"
+      // state through updateParticipant() so the state machine re-derives
+      // AWAITING_REGISTRATION and the internal-channel broadcast fires.
+      const newId = crypto.randomUUID();
       await db.insert(pilotParticipants).values({
+        id: newId,
         projectId,
         employeeId: row.employeeId,
         fullName: row.fullName,
         mobileNumber: row.mobileNumber,
         workEmail: row.workEmail || null,
-        playstoreEmail: row.playstoreEmail || null,
+        // playstoreEmail is set through updateParticipant() below so it
+        // routes through the state-machine + broadcast path uniformly.
+        playstoreEmail: null,
         lastActivityBy: "cst",
       });
       inserted++;
+      if (row.playstoreEmail) {
+        try {
+          const result = await updateParticipant(
+            newId,
+            {
+              playstoreEmail: row.playstoreEmail,
+              // Roster-supplied email is CST-verified — Step 1 is
+              // considered already captured, and the participant lands
+              // directly on Step 2 in the portal.
+              emailConfirmedIsPlaystore: true,
+            },
+            {
+              actor: "cst",
+              actorUserId: uploadedBy,
+              note: `Roster import (batch ${filename || "unnamed"}) — pre-confirmed Play Store email`,
+              suppressInternalBroadcast: true,
+            },
+          );
+          if (result.newFlag === "AWAITING_REGISTRATION" && result.flagChanged) {
+            digestEntries.push({
+              participantId: newId,
+              fullName: row.fullName,
+              employeeId: row.employeeId,
+              playstoreEmail: row.playstoreEmail,
+            });
+          }
+        } catch (e) {
+          console.warn("[pilot/import] pre-confirm on insert failed:", e);
+        }
+      }
+    }
+  }
+
+  // Emit one digest broadcast for the entire batch. Fire-and-forget —
+  // never blocks the API response.
+  if (digestEntries.length > 0) {
+    try {
+      // Resolve client company name for the digest header. Optional.
+      let clientCompanyName: string | null = null;
+      try {
+        const { pilotProjects, clientProfiles } = await import("@/db/schema");
+        const rows = await db
+          .select({ companyName: clientProfiles.companyName })
+          .from(pilotProjects)
+          .leftJoin(clientProfiles, eq(clientProfiles.id, pilotProjects.clientProfileId))
+          .where(eq(pilotProjects.id, projectId))
+          .limit(1);
+        clientCompanyName = rows[0]?.companyName || null;
+      } catch {}
+      const { broadcastPilotRegistrationDigest } = await import("./notifications");
+      broadcastPilotRegistrationDigest({
+        entries: digestEntries,
+        clientCompanyName,
+        source: "roster-import",
+      }).catch((e) =>
+        console.warn("[pilot/import] digest broadcast failed:", e),
+      );
+    } catch (e) {
+      console.warn("[pilot/import] digest broadcast setup failed:", e);
     }
   }
 

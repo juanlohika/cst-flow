@@ -327,11 +327,12 @@ export async function listInternalKeys(): Promise<BindKeyWithBinding[]> {
  * channel. This is what the pilot notifier iterates over when it needs to
  * broadcast an AWAITING_REGISTRATION event.
  */
-export async function listInternalActiveChatIds(): Promise<Array<{ chatId: string; chatTitle: string | null }>> {
+export async function listInternalActiveChatIds(): Promise<Array<{ chatId: string; chatTitle: string | null; broadcastAssignee: string | null }>> {
   const rows = await db
     .select({
       chatId: arimaChannelBindings.chatId,
       chatTitle: arimaChannelBindings.chatTitle,
+      broadcastAssignee: arimaChannelBindings.broadcastAssignee,
     })
     .from(arimaChannelBindings)
     .where(and(
@@ -339,7 +340,11 @@ export async function listInternalActiveChatIds(): Promise<Array<{ chatId: strin
       eq(arimaChannelBindings.status, "active"),
       eq(arimaChannelBindings.scopeType, "internal"),
     ));
-  return rows;
+  return rows.map(r => ({
+    chatId: r.chatId,
+    chatTitle: r.chatTitle,
+    broadcastAssignee: (r as any).broadcastAssignee ?? null,
+  }));
 }
 
 export async function revokeBindKey(keyId: string): Promise<void> {

@@ -653,6 +653,9 @@ function EmailStep({
       .filter(Boolean)
       .some((d) => email.toLowerCase().endsWith("@" + d));
 
+  const prefilledFromRoster =
+    done && participant.playstoreEmail && !error && !busy;
+
   return (
     <Step done={done} title="1. Your Play Store email">
       <p className="mb-3">
@@ -660,6 +663,12 @@ function EmailStep({
         Store on this phone (your Google account).</strong> Not your company
         email.
       </p>
+      {prefilledFromRoster && (
+        <p className="mb-3 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded p-2">
+          ✓ Your CST rep already recorded this email. If it's wrong, edit it
+          below and tap <b>Update</b> — we'll re-send it to the dev.
+        </p>
+      )}
       <details className="mb-3 text-xs">
         <summary className="cursor-pointer text-blue-600 hover:underline">
           How to find your Play Store email

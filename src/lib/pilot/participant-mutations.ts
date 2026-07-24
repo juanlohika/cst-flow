@@ -59,6 +59,12 @@ export interface UpdateOptions {
   actorUserId?: string | null;
   // Optional context appended to every ChangeLog row written from this call.
   note?: string;
+  // Callers doing a bulk operation (e.g. roster XLSX import) set this true
+  // so per-participant broadcasts are suppressed. The bulk caller is
+  // expected to collect events and emit a single digest broadcast at the
+  // end. All non-broadcast side effects (audit log, stage derivation,
+  // web-push / email dispatch) still run.
+  suppressInternalBroadcast?: boolean;
 }
 
 export interface UpdateResult {
@@ -263,7 +269,9 @@ export async function updateParticipant(
 
   // Fire pilot notifications for the specific events CST cares about.
   // Fire-and-forget — never blocks the mutation response.
-  fireEventNotifications(participantId, current, finalUpdates, derived).catch(
+  fireEventNotifications(participantId, current, finalUpdates, derived, {
+    suppressInternalBroadcast: options.suppressInternalBroadcast === true,
+  }).catch(
     (e) => console.warn("[pilot/mutations] notify failed:", e),
   );
 
@@ -287,19 +295,31 @@ async function fireEventNotifications(
   before: any,
   updates: ParticipantUpdate,
   derived: { stage: number; issueFlag: string },
+  opts: { suppressInternalBroadcast: boolean } = { suppressInternalBroadcast: false },
 ): Promise<void> {
   const { notifyPilotEvent, broadcastPilotRegistrationRequest } = await import("./notifications");
 
-  // Beta registration request — the participant is now AWAITING_REGISTRATION
-  // (their Play Store email is captured but the dev hasn't added them to
-  // the tester list yet). Broadcast the email into every internal Telegram
-  // channel so devs can pick it up without touching CST OS. Fires ONCE per
-  // transition into the flag — subsequent updates that keep the flag stable
-  // don't re-broadcast.
-  if (
+  // Beta registration request — broadcast into every internal Telegram
+  // channel so devs can add the email to the Play Console tester list.
+  //
+  // Fires in two cases:
+  //   (a) transition INTO AWAITING_REGISTRATION (first time the participant
+  //       captures a Play Store email + ticks confirm),
+  //   (b) participant is ALREADY AWAITING_REGISTRATION and taps Update
+  //       again with a DIFFERENT email — treat that as a fresh event so
+  //       devs see the corrected value.
+  //
+  // Same email + Update = no-op (nothing changed in changedFields).
+  const transitionedIntoAwaiting =
     derived.issueFlag === "AWAITING_REGISTRATION" &&
-    before.issueFlag !== "AWAITING_REGISTRATION"
-  ) {
+    before.issueFlag !== "AWAITING_REGISTRATION";
+  const emailChangedWhileAwaiting =
+    derived.issueFlag === "AWAITING_REGISTRATION" &&
+    before.issueFlag === "AWAITING_REGISTRATION" &&
+    updates.playstoreEmail !== undefined &&
+    updates.playstoreEmail !== before.playstoreEmail &&
+    !!updates.playstoreEmail;
+  if (transitionedIntoAwaiting || emailChangedWhileAwaiting) {
     // Load the client company name for the message context. Optional — if
     // the join fails, we still send the message with just employeeId/name.
     let clientCompanyName: string | null = null;
@@ -320,7 +340,7 @@ async function fireEventNotifications(
       updates.playstoreEmail !== undefined
         ? updates.playstoreEmail
         : before.playstoreEmail;
-    if (email) {
+    if (email && !opts.suppressInternalBroadcast) {
       broadcastPilotRegistrationRequest({
         participantId,
         fullName: before.fullName,
