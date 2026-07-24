@@ -64,6 +64,20 @@ const HELP_TEXT = (
   "• `/link LK-XXXX-YYYY` — link your Telegram account to CST OS (generate the code from CST OS → Admin → Channels → Telegram → My Account)."
 );
 
+// Dedicated help text for internal-scope channels. These rooms are
+// broadcast-only — the intelligence loop is disabled, so most of the
+// per-account commands don't apply here.
+const INTERNAL_HELP_TEXT = (
+  "**Internal channel commands**\n\n" +
+  "This is a system channel — I post pilot-tracker events here, but I don't answer questions in this room. Only these commands work:\n\n" +
+  "• `/tagbroadcast @username` — pick someone to be @tagged on every future broadcast in this GC. Their phone gets pinged when a new registration request lands.\n" +
+  "• `/tagbroadcast` — show who is currently being tagged.\n" +
+  "• `/tagbroadcast off` — clear the tag (future broadcasts land un-tagged).\n" +
+  "• `/status` — show what this group is bound to.\n" +
+  "• `/unbind` — remove the binding (group admins only; stops future broadcasts here).\n\n" +
+  "*Setting the assignee*: Type `/tagbroadcast @` and pick the person from Telegram's mention autocomplete. Their Telegram username is what goes on the tag."
+);
+
 /** Helper to send a reply. Tries Markdown first; if that fails (e.g. malformed
  *  Markdown in the AI output), retries as plain text so the user gets *something*. */
 async function safeReply(token: string, chatId: number, text: string, replyToMessageId?: number) {
@@ -282,10 +296,13 @@ export async function POST(req: Request) {
           }
           // Not a valid consent token → fall through to generic help
         }
+        const bindingForHelp = isGroup ? await getActiveBindingForChat(chat.id) : null;
         const replyText = isGroup
-          ? ((await getActiveBindingForChat(chat.id))
-              ? "Hi! I'm ARIMA. This group is bound and ready. Just chat with me normally."
-              : "Hi! I'm ARIMA. This group isn't bound yet. " + HELP_TEXT)
+          ? bindingForHelp?.scopeType === "internal"
+            ? INTERNAL_HELP_TEXT
+            : bindingForHelp
+              ? "Hi! I'm ARIMA. This group is bound and ready. Just chat with me normally.\n\n" + HELP_TEXT
+              : "Hi! I'm ARIMA. This group isn't bound yet. " + HELP_TEXT
           : HELP_TEXT;
         await safeReply(config.botToken, chat.id, String(replyText), message.message_id);
         return NextResponse.json({ ok: true });
