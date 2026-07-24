@@ -565,32 +565,43 @@ function Step({
 /**
  * Choice-button styling helper for the portal.
  *
- * Every question is a set of mutually-exclusive choices. We want:
- *   • The positive answer to be filled green ONLY when it's the current
- *     answer (so someone who hasn't answered doesn't see a fake-tick).
- *   • The negative answers to always look red-ish so their meaning is
- *     obvious at a glance — but with a stronger fill when they're the
- *     current answer, and a lighter fill otherwise. A hard "greyed
- *     out" negative reads as disabled, which confused users.
+ * Rules — thought of as a small state machine per question:
  *
- *   positive + inactive → outlined white/gray
- *   positive + active   → filled green
- *   negative + inactive → subtle rose (still red-ish)
- *   negative + active   → filled rose
+ *   State                                Positive          Negative
+ *   ─────────────────────────────────────────────────────────────────
+ *   No answer yet                        outlined          rose (visible)
+ *   Positive answer is the current one   filled green      muted (settled)
+ *   Negative answer is the current one   outlined          filled rose
+ *
+ * The important edge is the third row's negative: once the participant
+ * has confirmed, the "No" button should NOT keep looking like a live rose
+ * choice — that reads as "both are selected". We mute it so the confirmed
+ * state is unambiguous. Pass `settled` when the question already has a
+ * committed answer (typically = the positive is active).
  */
 function choiceClass(
   active: boolean,
   variant: "positive" | "negative",
   base: string,
+  settled: boolean = false,
 ): string {
   if (variant === "positive") {
     return active
       ? `${base} bg-green-100 border-green-300 text-green-800 disabled:opacity-50`
       : `${base} border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50`;
   }
-  return active
-    ? `${base} bg-rose-100 border-rose-400 text-rose-800 hover:bg-rose-200 disabled:opacity-50`
-    : `${base} bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100 disabled:opacity-50`;
+  if (active) {
+    // Negative IS the current answer — filled rose.
+    return `${base} bg-rose-100 border-rose-400 text-rose-800 hover:bg-rose-200 disabled:opacity-50`;
+  }
+  if (settled) {
+    // Positive is the current answer — the negative recedes to neutral so
+    // the confirmed state is visually unambiguous.
+    return `${base} border-gray-200 bg-white text-gray-400 hover:bg-gray-50 disabled:opacity-50`;
+  }
+  // No answer yet — negative is a visible rose so the "no" option isn't
+  // mistaken for a disabled control.
+  return `${base} bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100 disabled:opacity-50`;
 }
 
 // Screen B — Email step
@@ -817,10 +828,8 @@ function InvitationStep({
         <strong> "Become a tester"</strong>.
       </p>
       {error && <div className="text-sm text-red-600 mb-2">{error}</div>}
-      {/* Three mutually-exclusive choices. Only the currently-selected one
-          shows in its "filled" state — the others fall back to a neutral
-          outlined look. This keeps the participant's active answer visually
-          obvious even after they switch. */}
+      {/* Three mutually-exclusive choices. Only one is "active"; the other
+          two revert according to whether the question is settled or not. */}
       <div className="grid grid-cols-3 gap-2">
         <button
           type="button"
@@ -839,9 +848,10 @@ function InvitationStep({
           onClick={() => submit(false, false)}
           disabled={busy}
           className={choiceClass(
-            !participant.invitationAcceptedDeclared && !participant.invitationLinkFailed && participant.emailConfirmedIsPlaystore && participant.betaRegistered,
+            false, // "Not yet" is never persisted as an explicit state
             "negative",
             "px-3 py-2 rounded text-xs font-medium border",
+            done || participant.invitationLinkFailed,
           )}
         >
           Not yet
@@ -854,6 +864,7 @@ function InvitationStep({
             participant.invitationLinkFailed,
             "negative",
             "px-3 py-2 rounded text-xs font-medium border",
+            done,
           )}
         >
           Link didn't work
@@ -939,8 +950,8 @@ function AppUpdateStep({
         the invitation.
       </p>
       {error && <div className="text-sm text-red-600 mb-2">{error}</div>}
-      {/* Same rule as Screen C — only the active choice takes its filled
-          color; the other reverts to neutral. */}
+      {/* Once "Yes, updated" is picked the negative recedes to neutral so
+          the confirmed state doesn't look like both are selected. */}
       <div className="grid grid-cols-2 gap-2">
         <button
           type="button"
@@ -962,6 +973,7 @@ function AppUpdateStep({
             false,
             "negative",
             "px-3 py-2 rounded text-xs font-medium border",
+            participant.appUpdatedDeclared,
           )}
         >
           Not yet
@@ -1070,8 +1082,9 @@ function MobileStep({
       </div>
       {error && <div className="text-sm text-red-600 mb-2">{error}</div>}
       {!showFix ? (
-        // Active choice highlights; the "No, fix it" trigger stays neutral
-        // until it's clicked — showFix reveals the correction form below.
+        // "No, fix it" opens an inline correction form. Once mobile is
+        // confirmed, "No, fix it" mutes so the confirmed state is
+        // visually unambiguous.
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
@@ -1093,6 +1106,7 @@ function MobileStep({
               false,
               "negative",
               "px-3 py-2 rounded text-xs font-medium border",
+              participant.mobileConfirmed,
             )}
           >
             No, fix it
@@ -1146,9 +1160,8 @@ function MobileStep({
             for the app go here (not to your mobile). Confirm we have it right.
           </p>
           {!showEmailFix ? (
-            // Same "Yes, that's correct / No, fix it" pattern as mobile —
-            // "No" opens an inline input so the participant can type the
-            // correct email, which we persist to workEmail directly.
+            // Once confirmed, "No, fix it" mutes so both buttons don't look
+            // like they're in a filled/active state at the same time.
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -1174,6 +1187,7 @@ function MobileStep({
                   false,
                   "negative",
                   "px-3 py-2 rounded text-xs font-medium border",
+                  participant.workEmailConfirmed,
                 )}
               >
                 No, fix it
@@ -1366,6 +1380,7 @@ function ScreenshotStep({
                 false,
                 "negative",
                 "px-3 py-2 rounded text-sm font-medium border cursor-default",
+                confirmed,
               )}
             >
               No / Not sure
