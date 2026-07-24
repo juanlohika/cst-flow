@@ -37,6 +37,9 @@ const PORTAL_WRITABLE_FIELDS = new Set<keyof ParticipantUpdate>([
   "mobileNumberCorrected",
   "mobileConfirmed",
   "reportedVersion",
+  // One-tap Screen F confirmation. updateParticipant() auto-verifies when
+  // this flips to true and stamps reportedVersion from project.targetAppVersion.
+  "versionConfirmedByUser",
 ]);
 
 async function resolveParticipant(qrToken: string, participantId: string) {
@@ -83,6 +86,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ qrToken: s
       appUpdatedDeclared: Boolean(p.appUpdatedDeclared),
       reportedVersion: p.reportedVersion,
       versionScreenshotUrl: p.versionScreenshotUrl,
+      versionConfirmedByUser: Boolean(p.versionConfirmedByUser),
       versionVerified: p.versionVerified,
       currentStage: p.currentStage,
       issueFlag: p.issueFlag,

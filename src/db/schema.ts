@@ -1379,6 +1379,13 @@ export const pilotParticipants = sqliteTable("PilotParticipant", {
   versionScreenshotDriveId:      text("versionScreenshotDriveId"),
   versionScreenshotUrl:          text("versionScreenshotUrl"),
   versionScreenshotUploadedAt:   text("versionScreenshotUploadedAt"),
+  // One-tap confirmation path: participant taps "Yes, I'm on {target}" on
+  // Screen F instead of (or before) uploading a screenshot. Setting this
+  // true is enough to reach Stage 5 — the screenshot becomes optional. If
+  // the participant later turns out to have lied, CST reverts versionVerified
+  // to 'pending' from the roster drawer, which invalidates this claim.
+  versionConfirmedByUser:        integer("versionConfirmedByUser", { mode: "boolean" }).default(false).notNull(),
+  versionConfirmedByUserAt:      text("versionConfirmedByUserAt"),
   // Stage 6 — verified side (the objective trump)
   // pending  → uploaded, awaiting AI/CST review
   // verified → matches targetAppVersion (record is Complete)

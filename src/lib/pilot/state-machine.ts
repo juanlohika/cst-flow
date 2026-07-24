@@ -58,9 +58,13 @@ export interface ParticipantState {
   invitationLinkFailed: boolean;
   // Stage 4 input
   appUpdatedDeclared: boolean;
-  // Stage 5 inputs
+  // Stage 5 inputs — screenshot OR one-tap confirmation is enough. Both are
+  // "declared" signals; the screenshot only becomes stronger evidence once
+  // CST/AI review it. The one-tap is intentionally trust-based: if the user
+  // lies, CST reverts versionVerified to 'pending' from the roster drawer.
   mobileConfirmed: boolean;
   versionScreenshotDriveId: string | null | undefined;
+  versionConfirmedByUser?: boolean;
   // Stage 6 input (CST/AI-controlled)
   versionVerified: "pending" | "verified" | "mismatch" | string;
   // For STALE detection. ISO-8601 datetime string. Optional — if omitted,
@@ -126,11 +130,13 @@ function computeStageOnly(p: ParticipantState): Stage {
   // downstream matters after this; it's the terminal Complete state.
   if (p.versionVerified === "verified") return 6;
 
-  // Stage 5 — screenshot uploaded, awaiting review. Mobile confirmation is
-  // also required because Screen E is a mandatory pre-step to Screen F in
-  // the portal flow. If someone skipped mobile confirm (shouldn't happen
-  // via the portal, but the API allows it), they don't count as Stage 5.
-  if (p.versionScreenshotDriveId && p.mobileConfirmed) return 5;
+  // Stage 5 — the participant has declared they're on the target build.
+  // Two acceptable signals, either is enough:
+  //   (a) screenshot uploaded (stronger evidence — CST/AI can eyeball it),
+  //   (b) one-tap "Yes, I'm on {target}" confirmation (trust-based).
+  // Mobile confirmation stays a pre-req because Screen E gates Screen F in
+  // the portal flow.
+  if (p.mobileConfirmed && (p.versionScreenshotDriveId || p.versionConfirmedByUser)) return 5;
 
   // Stage 4 — participant claims app updated.
   if (p.appUpdatedDeclared) return 4;

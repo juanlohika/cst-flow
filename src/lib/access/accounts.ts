@@ -931,6 +931,10 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS PilotParticipant_projectId_idx ON PilotParticipant(projectId)`); } catch {}
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS PilotParticipant_currentStage_idx ON PilotParticipant(currentStage)`); } catch {}
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS PilotParticipant_issueFlag_idx ON PilotParticipant(issueFlag)`); } catch {}
+    // Additive migration — Stage 5 reachable via one-tap confirmation, not
+    // only by uploading a screenshot. Existing rows default to 0 (false).
+    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN versionConfirmedByUser INTEGER DEFAULT 0 NOT NULL`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN versionConfirmedByUserAt TEXT`); } catch {}
 
     await db.run(sql`CREATE TABLE IF NOT EXISTS PilotChangeLog (
       id TEXT PRIMARY KEY,

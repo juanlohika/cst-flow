@@ -13,7 +13,8 @@
  * identity step. Clearing (or moving phones) drops back to identity.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, Circle, Mail, ExternalLink, Smartphone, Camera, LogOut, AlertTriangle, Info } from "lucide-react";
+import { CheckCircle2, Circle, Mail, ExternalLink, Smartphone, Camera, LogOut, AlertTriangle, Info, HelpCircle } from "lucide-react";
+import { PilotOnboardingGuide } from "./PilotOnboardingGuide";
 
 interface Project {
   name: string;
@@ -41,6 +42,7 @@ interface Participant {
   appUpdatedDeclared: boolean;
   reportedVersion: string | null;
   versionScreenshotUrl: string | null;
+  versionConfirmedByUser: boolean;
   versionVerified: "pending" | "verified" | "mismatch";
   currentStage: number;
   issueFlag: string;
@@ -542,6 +544,7 @@ function InvitationStep({
   const done = participant.invitationAcceptedDeclared && participant.betaRegistered;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   const submit = async (
     accepted: boolean,
@@ -597,6 +600,19 @@ function InvitationStep({
 
   return (
     <Step done={done} title="2. Accept the beta invitation">
+      <button
+        type="button"
+        onClick={() => setGuideOpen(true)}
+        className="w-full flex items-center gap-2 mb-3 px-3 py-2 rounded border border-blue-200 bg-blue-50 text-blue-800 text-xs font-medium hover:bg-blue-100"
+      >
+        <HelpCircle size={14} className="shrink-0" />
+        <span className="flex-1 text-left">
+          How to accept the invite — illustrated guide
+        </span>
+        <span className="text-[10px] opacity-70">Tap to open</span>
+      </button>
+      <PilotOnboardingGuide open={guideOpen} onClose={() => setGuideOpen(false)} />
+
       {project.betaInviteUrl ? (
         <a
           href={project.betaInviteUrl}
@@ -891,7 +907,16 @@ function MobileStep({
   );
 }
 
-// Screen F — Screenshot upload step
+// Screen F — Confirm you're on the target build.
+//
+// One-tap confirm is the primary path — users type "1.1.2" when the target
+// is "5.1.7-beta", so freeform typing was a footgun. Screenshot upload stays
+// as a secondary path for anyone who wants to prove it visually (and the
+// screenshot is still the strongest signal we have for AI review).
+//
+// Confirming trips versionVerified='verified' server-side; CST can revert
+// that to 'pending' from the roster drawer if the user turns out to have
+// lied — see PilotRosterGrid.
 function ScreenshotStep({
   qrToken,
   participant,
@@ -903,11 +928,37 @@ function ScreenshotStep({
   project: Project;
   onDone: () => void;
 }) {
-  const done = Boolean(participant.versionScreenshotUrl);
+  const uploaded = Boolean(participant.versionScreenshotUrl);
+  const confirmed = Boolean(participant.versionConfirmedByUser);
+  const done = uploaded || confirmed;
   const verified = participant.versionVerified === "verified";
   const mismatch = participant.versionVerified === "mismatch";
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const confirm = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/pilot/${qrToken}/participant/${participant.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            updates: { versionConfirmedByUser: true },
+          }),
+        },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Save failed");
+      onDone();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const upload = async (file: File) => {
     setBusy(true);
@@ -931,36 +982,31 @@ function ScreenshotStep({
 
   if (!participant.appUpdatedDeclared) {
     return (
-      <Step done={false} title="5. Prove the app is on the new version">
+      <Step done={false} title="5. Confirm your app version">
         <p className="text-gray-500 text-xs">Complete step 3 first.</p>
       </Step>
     );
   }
 
+  const target = project.targetAppVersion || "";
+
   return (
-    <Step done={done} title="5. Prove the app is on the new version">
-      <div className="text-xs text-gray-600 mb-3 space-y-2">
+    <Step done={done} title="5. Confirm your app version">
+      <div className="text-xs text-gray-600 mb-3 space-y-1">
         <p>
-          Open the Tarkie app → tap <strong>More</strong> → scroll to the
-          bottom → screenshot the version number.
+          Open Tarkie → tap <strong>More</strong> → scroll to the bottom to
+          see the version number.
         </p>
-        {project.referenceScreenshotUrl && (
-          <a
-            href={project.referenceScreenshotUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-600 hover:underline inline-flex items-center gap-1"
-          >
-            See what it should look like <ExternalLink size={10} />
-          </a>
-        )}
       </div>
 
+      {/* Status card when already confirmed / uploaded */}
       {done && (
         <div className="mb-3 border border-gray-200 rounded p-3 text-sm">
-          <div className="flex items-center gap-2 mb-1">
-            <Camera size={14} className="text-gray-500" />
-            <span className="font-medium text-gray-900">Uploaded</span>
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <CheckCircle2 size={14} className="text-green-600" />
+            <span className="font-medium text-gray-900">
+              {confirmed && !uploaded ? "You confirmed the version" : "Screenshot uploaded"}
+            </span>
             {verified && (
               <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
                 ✓ Verified
@@ -968,7 +1014,7 @@ function ScreenshotStep({
             )}
             {mismatch && (
               <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full">
-                Version doesn't match — please re-upload
+                Version doesn't match — please re-check
               </span>
             )}
             {!verified && !mismatch && (
@@ -977,28 +1023,84 @@ function ScreenshotStep({
               </span>
             )}
           </div>
-          {project.targetAppVersion && (
+          {target && (
             <p className="text-xs text-gray-500">
-              Target: <span className="font-mono">{project.targetAppVersion}</span>
+              Target: <span className="font-mono">{target}</span>
             </p>
           )}
         </div>
       )}
 
-      <label className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 cursor-pointer">
-        <Camera size={14} />
-        {busy ? "Uploading…" : done ? "Re-upload" : "Upload screenshot"}
-        <input
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          disabled={busy}
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) upload(f);
-          }}
-          className="hidden"
-        />
-      </label>
+      {/* Primary — one-tap confirm */}
+      {target ? (
+        <div className="border border-gray-200 rounded p-3 mb-3">
+          <p className="text-xs text-gray-700 mb-2">
+            Is your Tarkie app on version{" "}
+            <span className="font-mono font-semibold">{target}</span>?
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={confirm}
+              disabled={busy || confirmed}
+              className={
+                "px-3 py-2 rounded text-sm font-medium border " +
+                (confirmed
+                  ? "bg-green-100 border-green-300 text-green-800"
+                  : "bg-blue-600 border-blue-600 text-white hover:bg-blue-700 disabled:opacity-50")
+              }
+            >
+              {confirmed ? "✓ Confirmed" : `Yes, I'm on ${target}`}
+            </button>
+            <button
+              type="button"
+              disabled
+              className="px-3 py-2 rounded text-sm border border-gray-300 bg-white text-gray-500 cursor-default"
+              title="If you're not on the target, don't tap Yes — upload a screenshot instead so we can help."
+            >
+              No / Not sure
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-amber-700 mb-3">
+          Your CST rep hasn't set a target version yet — please check back later.
+        </p>
+      )}
+
+      {/* Secondary — optional screenshot */}
+      <details className="text-xs text-gray-700">
+        <summary className="cursor-pointer text-blue-700 hover:underline inline-flex items-center gap-1">
+          <Camera size={12} /> Or attach a screenshot (optional)
+        </summary>
+        <div className="mt-2 space-y-2">
+          {project.referenceScreenshotUrl && (
+            <a
+              href={project.referenceScreenshotUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline inline-flex items-center gap-1"
+            >
+              See what it should look like <ExternalLink size={10} />
+            </a>
+          )}
+          <label className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-800 rounded text-sm font-medium hover:bg-gray-50 cursor-pointer">
+            <Camera size={14} />
+            {busy ? "Uploading…" : uploaded ? "Re-upload" : "Upload screenshot"}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              disabled={busy}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) upload(f);
+              }}
+              className="hidden"
+            />
+          </label>
+        </div>
+      </details>
+
       {error && <div className="text-sm text-red-600 mt-2">{error}</div>}
     </Step>
   );

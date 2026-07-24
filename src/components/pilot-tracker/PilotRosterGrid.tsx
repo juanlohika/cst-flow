@@ -37,6 +37,7 @@ interface Participant {
   reportedVersion: string | null;
   versionScreenshotDriveId: string | null;
   versionScreenshotUrl: string | null;
+  versionConfirmedByUser: boolean;
   versionVerified: "pending" | "verified" | "mismatch";
   versionVerifiedByAi: boolean;
   versionAiExtractedText: string | null;
@@ -615,6 +616,13 @@ function ParticipantDrawer({
           <ReadField label="Flag">
             <FlagBadge flag={participant.issueFlag} />
           </ReadField>
+
+          <CstStageOverride
+            accountId={accountId}
+            participant={participant}
+            onSaved={onSaved}
+          />
+
           <ReadField label="Mobile">
             {participant.mobileNumberCorrected ? (
               <span>
@@ -814,6 +822,179 @@ function ReadField({
     <div>
       <div className="text-xs font-medium text-gray-700 mb-0.5">{label}</div>
       <div className="text-sm text-gray-900">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * CST manual-override panel.
+ *
+ * Every pilot has a subset of participants who won't do the self-serve flow
+ * — CST confirms with them over Viber that they're actually installed and
+ * on the target build, then marks them done from here. That's what these
+ * buttons are for: bypass the portal, jump the participant to any stage.
+ *
+ * The buttons flip the underlying booleans (not currentStage directly),
+ * because updateParticipant() re-derives currentStage from those booleans.
+ * Flipping betaRegistered=true also sets invitationAcceptedDeclared=true so
+ * we don't stay stuck on the CLICKED_NOT_REGISTERED contradiction.
+ *
+ * Revert path: if a user turns out to have lied on Screen F (auto-verified
+ * via versionConfirmedByUser), CST taps "Revert to pending" and the
+ * participant is nudged back to re-confirm. reportedVersion is intentionally
+ * left untouched so the audit shows what was originally claimed.
+ */
+function CstStageOverride({
+  accountId,
+  participant,
+  onSaved,
+}: {
+  accountId: string;
+  participant: Participant;
+  onSaved: () => void;
+}) {
+  const { showToast } = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const apply = async (
+    updates: Record<string, any>,
+    label: string,
+  ) => {
+    if (busy) return;
+    if (!window.confirm(`${label}?\n\nThis writes to ${participant.fullName}'s record and is auditable in the change log.`)) return;
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/accounts/${accountId}/pilot-tracker/participants`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ participantId: participant.id, updates }),
+        },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || res.statusText);
+      showToast(
+        json.stageChanged ? `Stage advanced to ${json.newStage}.` : "Saved.",
+        "success",
+      );
+      onSaved();
+    } catch (e: any) {
+      showToast(`Override failed: ${e.message}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revertVerification = () =>
+    apply(
+      {
+        // Undo auto-verification. Keep reportedVersion for audit; if the
+        // user had also uploaded a screenshot, they can re-verify manually.
+        versionConfirmedByUser: false,
+        versionVerified: "pending",
+      },
+      "Revert version verification to pending",
+    );
+
+  const buttons: Array<{
+    label: string;
+    show: boolean;
+    updates: Record<string, any>;
+    dangerous?: boolean;
+  }> = [
+    {
+      label: "1. Mark email captured",
+      show: !participant.emailConfirmedIsPlaystore || !participant.playstoreEmail,
+      updates: { emailConfirmedIsPlaystore: true },
+    },
+    {
+      label: "2. Mark beta registered",
+      show: !participant.betaRegistered,
+      updates: { betaRegistered: true },
+    },
+    {
+      label: "3. Mark invitation accepted",
+      show: participant.betaRegistered && !participant.invitationAcceptedDeclared,
+      updates: { invitationAcceptedDeclared: true, invitationLinkFailed: false },
+    },
+    {
+      label: "4. Mark app updated",
+      show: !participant.appUpdatedDeclared,
+      updates: { appUpdatedDeclared: true },
+    },
+    {
+      label: "5. Confirm on target version (auto-verify)",
+      show: participant.appUpdatedDeclared && participant.versionVerified !== "verified",
+      updates: {
+        mobileConfirmed: true,
+        versionConfirmedByUser: true,
+      },
+    },
+    {
+      label: "Mark complete (all stages)",
+      show: participant.versionVerified !== "verified",
+      updates: {
+        emailConfirmedIsPlaystore: true,
+        betaRegistered: true,
+        invitationAcceptedDeclared: true,
+        invitationLinkFailed: false,
+        appUpdatedDeclared: true,
+        mobileConfirmed: true,
+        versionConfirmedByUser: true,
+      },
+    },
+  ];
+  const visible = buttons.filter((b) => b.show);
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+      <div className="flex items-start gap-2 mb-2">
+        <div className="text-xs font-semibold text-amber-900">CST override</div>
+        <div className="text-[10px] text-amber-700 leading-tight">
+          Skip the portal — advance this participant manually when you've
+          already confirmed with them (Viber/call).
+        </div>
+      </div>
+
+      {visible.length === 0 ? (
+        <div className="text-xs text-amber-800">
+          This participant is fully complete. Nothing to advance.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-1.5">
+          {visible.map((b) => (
+            <button
+              key={b.label}
+              type="button"
+              disabled={busy}
+              onClick={() => apply(b.updates, b.label)}
+              className="w-full text-left text-xs px-2.5 py-1.5 rounded border border-amber-300 bg-white text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+            >
+              {b.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {participant.versionVerified === "verified" && (
+        <div className="mt-2 pt-2 border-t border-amber-200">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={revertVerification}
+            className="w-full text-left text-xs px-2.5 py-1.5 rounded border border-red-300 bg-white text-red-800 hover:bg-red-50 disabled:opacity-50"
+          >
+            Revert version verification (user lied / needs re-check)
+          </button>
+          {participant.versionConfirmedByUser && !participant.versionScreenshotDriveId && (
+            <p className="mt-1 text-[10px] text-amber-700 leading-tight">
+              Verified via one-tap confirmation (no screenshot). Use revert if
+              you find out they're not actually on the target build.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

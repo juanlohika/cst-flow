@@ -38,6 +38,8 @@ export interface ParticipantUpdate {
   versionScreenshotDriveId?: string | null;
   versionScreenshotUrl?: string | null;
   versionScreenshotUploadedAt?: string | null;
+  versionConfirmedByUser?: boolean;
+  versionConfirmedByUserAt?: string | null;
   versionVerified?: "pending" | "verified" | "mismatch";
   versionVerifiedByUserId?: string | null;
   versionVerifiedByAi?: boolean;
@@ -99,6 +101,7 @@ export async function updateParticipant(
       blockedEmailDomains: pilotProjects.blockedEmailDomains,
       staleThresholdDays: pilotProjects.staleThresholdDays,
       internalBetaRequired: pilotProjects.internalBetaRequired,
+      targetAppVersion: pilotProjects.targetAppVersion,
     })
     .from(pilotProjects)
     .where(eq(pilotProjects.id, current.projectId))
@@ -114,6 +117,25 @@ export async function updateParticipant(
   autoStamp(finalUpdates, current, "mobileConfirmed", "mobileConfirmedAt", now);
   autoStamp(finalUpdates, current, "betaRegistered", "betaRegisteredAt", now);
   autoStamp(finalUpdates, current, "emailConfirmedIsPlaystore", "emailCapturedAt", now);
+  autoStamp(finalUpdates, current, "versionConfirmedByUser", "versionConfirmedByUserAt", now);
+  // Auto-verify on user confirmation. If the participant taps "Yes, I'm on
+  // {target}" on Screen F and the target version is set on the project,
+  // stamp reportedVersion + flip versionVerified to 'verified' in one go.
+  // CST can revert this from the roster drawer if the user turns out to
+  // have lied — see updateParticipant options for the revert path.
+  if (
+    finalUpdates.versionConfirmedByUser === true &&
+    !current.versionConfirmedByUser &&
+    finalUpdates.versionVerified === undefined
+  ) {
+    finalUpdates.versionVerified = "verified";
+    if (finalUpdates.reportedVersion === undefined) {
+      // Target version comes from the project — capture it here so audit
+      // history shows exactly what the participant confirmed.
+      const target = (project as any)?.targetAppVersion;
+      if (target) finalUpdates.reportedVersion = target;
+    }
+  }
   // versionScreenshotDriveId is a value-not-bool but same logic: setting it
   // from empty to a value → stamp the uploaded-at field.
   if (
@@ -168,6 +190,7 @@ export async function updateParticipant(
       appUpdatedDeclared: Boolean(next.appUpdatedDeclared),
       mobileConfirmed: Boolean(next.mobileConfirmed),
       versionScreenshotDriveId: next.versionScreenshotDriveId,
+      versionConfirmedByUser: Boolean(next.versionConfirmedByUser),
       versionVerified: next.versionVerified,
       lastActivityAt: now,  // treat "now" as the activity timestamp for STALE
     },
