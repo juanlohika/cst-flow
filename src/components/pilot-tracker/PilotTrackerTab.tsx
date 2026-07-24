@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Rocket, Upload, Download, QrCode, Settings, ImageIcon, Copy, ExternalLink,
 } from "lucide-react";
+import QRCode from "qrcode";
 import { useToast } from "@/components/ui/ToastContext";
 import { PilotRosterGrid } from "./PilotRosterGrid";
 
@@ -74,6 +75,7 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
   const [rosterRefresh, setRosterRefresh] = useState(0);
   const [importReport, setImportReport] = useState<ImportReport | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const refFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -96,6 +98,20 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Regenerate the QR whenever we have a project (qrToken can theoretically
+  // rotate if we ever add a "regenerate token" action). window.location.origin
+  // is only available client-side, hence the check.
+  useEffect(() => {
+    if (!project || typeof window === "undefined") {
+      setQrDataUrl(null);
+      return;
+    }
+    const url = `${window.location.origin}/pilot/${project.qrToken}`;
+    QRCode.toDataURL(url, { width: 240, margin: 1 })
+      .then(setQrDataUrl)
+      .catch(() => setQrDataUrl(null));
+  }, [project]);
 
   const activate = async () => {
     setBusy("activate");
@@ -260,13 +276,26 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
     showToast("Portal URL copied.", "success");
   };
 
+  const downloadQr = () => {
+    if (!qrDataUrl) return;
+    const a = document.createElement("a");
+    a.href = qrDataUrl;
+    // Filename uses project name (sanitized) so admins downloading multiple
+    // projects' QRs don't overwrite each other.
+    const safe = project.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    a.download = `pilot-qr-${safe}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   return (
     <div className="p-6 space-y-6">
       {/* ── Header — project title + primary actions ──────────────────── */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
           <h3 className="text-lg font-semibold text-gray-900">{project.name}</h3>
-          <p className="text-xs text-gray-500 mt-0.5">
+          <p className="text-xs text-gray-500 mt-0.5 break-all">
             Portal:{" "}
             <a
               href={portalUrl}
@@ -285,27 +314,52 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
               Copy
             </button>
           </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowSettings((s) => !s)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50"
-          >
-            <Settings size={14} />
-            {showSettings ? "Hide" : "Show"} settings
-          </button>
-          {project.driveFolderId && (
-            <a
-              href={`https://drive.google.com/drive/folders/${project.driveFolderId}`}
-              target="_blank"
-              rel="noopener noreferrer"
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowSettings((s) => !s)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50"
             >
-              <ExternalLink size={14} />
-              Drive folder
-            </a>
-          )}
+              <Settings size={14} />
+              {showSettings ? "Hide" : "Show"} settings
+            </button>
+            {project.driveFolderId && (
+              <a
+                href={`https://drive.google.com/drive/folders/${project.driveFolderId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50"
+              >
+                <ExternalLink size={14} />
+                Drive folder
+              </a>
+            )}
+          </div>
+        </div>
+
+        {/* QR code panel — participants scan this to reach the portal. */}
+        <div className="shrink-0 flex flex-col items-center gap-1.5 bg-white border border-gray-200 rounded-lg p-3">
+          <div className="w-[144px] h-[144px] flex items-center justify-center">
+            {qrDataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={qrDataUrl}
+                alt="Portal QR code"
+                className="w-[144px] h-[144px]"
+              />
+            ) : (
+              <QrCode size={40} className="text-gray-300" />
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={downloadQr}
+            disabled={!qrDataUrl}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+          >
+            <Download size={12} />
+            Download QR
+          </button>
         </div>
       </div>
 

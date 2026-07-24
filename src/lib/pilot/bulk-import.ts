@@ -74,6 +74,34 @@ export function validateWorkbook(buffer: Buffer): ValidationReport {
     const fullName = readField(r, ["Full Name", "fullName", "Name", "name"]);
     const mobileNumber = readField(r, ["Mobile Number", "mobileNumber", "Mobile", "mobile"]);
 
+    // Silently skip completely empty rows. Excel commonly saves sheets with
+    // a used-range that extends thousands of rows past the last real cell,
+    // and sheet_to_json walks the full range. Without this filter a user
+    // uploads 5 real rows and sees 12,000 "Employee ID is required" errors.
+    if (!employeeId && !fullName && !mobileNumber) return;
+
+    // Silently skip the template's notes/guide row (row 3). The generated
+    // template has row 2 = example + row 3 = "(required; ...)" notes. When
+    // an admin re-uploads the untouched template we don't want either of
+    // those to land in the roster. Detected by the "(required" marker in
+    // any field.
+    const looksLikeNotesRow = [employeeId, fullName, mobileNumber].some(
+      (v) => v.trim().toLowerCase().startsWith("(required"),
+    );
+    if (looksLikeNotesRow) return;
+
+    // Silently skip the template's example row ("EMP-001 / Juan Dela Cruz /
+    // 09171234567"). Detected by exact match on all three fields — an
+    // extremely narrow filter so we don't accidentally drop a real
+    // participant named Juan Dela Cruz with EMP-001.
+    if (
+      employeeId === "EMP-001" &&
+      fullName === "Juan Dela Cruz" &&
+      normalizeMobile(mobileNumber) === "09171234567"
+    ) {
+      return;
+    }
+
     // Required-field checks
     if (!employeeId) {
       rows.push({ rowNumber, status: "error", message: "Employee ID is required" });

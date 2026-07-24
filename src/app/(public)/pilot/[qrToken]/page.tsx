@@ -32,13 +32,21 @@ export default async function PilotPortalPage({ params }: Params) {
 
   let project: any = null;
   let error: string | null = null;
+  let branding: { appName: string; logoUrl: string } = { appName: "CST OS", logoUrl: "" };
   try {
-    const res = await fetch(`${origin}/api/pilot/${qrToken}`, { cache: "no-store" });
-    const json = await res.json();
-    if (!res.ok) {
-      error = json.error || `Pilot not found (${res.status})`;
+    const [projectRes, brandingRes] = await Promise.all([
+      fetch(`${origin}/api/pilot/${qrToken}`, { cache: "no-store" }),
+      fetch(`${origin}/api/branding`, { cache: "no-store" }),
+    ]);
+    const projectJson = await projectRes.json();
+    if (!projectRes.ok) {
+      error = projectJson.error || `Pilot not found (${projectRes.status})`;
     } else {
-      project = json.project;
+      project = projectJson.project;
+    }
+    if (brandingRes.ok) {
+      const b = await brandingRes.json();
+      branding = { appName: b.appName || "CST OS", logoUrl: b.logoUrl || "" };
     }
   } catch (e: any) {
     error = e?.message || "Failed to load pilot";
@@ -61,5 +69,5 @@ export default async function PilotPortalPage({ params }: Params) {
     );
   }
 
-  return <PilotPortalClient qrToken={qrToken} project={project} />;
+  return <PilotPortalClient qrToken={qrToken} project={project} branding={branding} />;
 }

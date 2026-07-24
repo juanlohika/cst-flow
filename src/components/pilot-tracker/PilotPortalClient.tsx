@@ -55,9 +55,12 @@ interface Match {
 interface Props {
   qrToken: string;
   project: Project;
+  branding?: { appName: string; logoUrl: string };
 }
 
-export function PilotPortalClient({ qrToken, project }: Props) {
+export function PilotPortalClient({ qrToken, project, branding }: Props) {
+  const logoUrl = branding?.logoUrl || "";
+  const appName = branding?.appName || "CST OS";
   const storageKey = `pilot-tracker:${qrToken}:participantId`;
   const [participantId, setParticipantId] = useState<string | null>(null);
   const [participant, setParticipant] = useState<Participant | null>(null);
@@ -119,11 +122,21 @@ export function PilotPortalClient({ qrToken, project }: Props) {
   return (
     <main className="min-h-screen bg-gray-50 pb-8">
       <header className="bg-white border-b border-gray-200 px-4 py-3">
-        <div className="max-w-2xl mx-auto flex items-center justify-between">
-          <div>
-            <div className="text-xs text-gray-500">{project.name}</div>
-            <div className="text-sm font-semibold text-gray-900">
-              Tarkie V5 Pilot
+        <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            {logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={logoUrl}
+                alt={appName}
+                className="h-9 w-auto object-contain shrink-0"
+              />
+            ) : null}
+            <div className="min-w-0">
+              <div className="text-xs text-gray-500 truncate">{project.name}</div>
+              <div className="text-sm font-semibold text-gray-900">
+                Tarkie V5 Pilot
+              </div>
             </div>
           </div>
           {participantId && (
