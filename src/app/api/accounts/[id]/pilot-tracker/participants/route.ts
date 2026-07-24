@@ -125,6 +125,52 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         filters.push(eq(pilotParticipants.mobileConfirmed, true));
         filters.push(eq(pilotParticipants.workEmailConfirmed, false));
         filters.push(sql`${pilotParticipants.workEmail} IS NOT NULL AND ${pilotParticipants.workEmail} != ''`);
+      } else if (flag === "NOT_YET_ACCEPTED") {
+        // Participants who explicitly tapped "Not yet" on Screen C.
+        // Resolved from the change log — see the Promise.all query
+        // above for the definition of the signal.
+        const rows = await db
+          .select({ pid: pilotChangeLog.participantId })
+          .from(pilotChangeLog)
+          .leftJoin(pilotParticipants, eq(pilotParticipants.id, pilotChangeLog.participantId))
+          .where(
+            and(
+              eq(pilotParticipants.projectId, a.projectId),
+              eq(pilotChangeLog.actor, "participant"),
+              eq(pilotChangeLog.field, "invitationAcceptedDeclared"),
+              eq(pilotChangeLog.newValue, "false"),
+            ),
+          );
+        const idset = Array.from(new Set(rows.map((r) => r.pid).filter((x): x is string => !!x)));
+        if (idset.length === 0) {
+          filters.push(eq(pilotParticipants.id, "__never_match__"));
+        } else {
+          filters.push(inArray(pilotParticipants.id, idset));
+        }
+      } else if (flag === "STAGE2_BLOCKED") {
+        // Union of the three Step-2 blocker signals: CLICKED_NOT_REGISTERED,
+        // INVITE_NOT_RECEIVED, and explicit "Not yet". This is what the
+        // Step-2 red pill on the funnel taps to.
+        const notYetPidRows = await db
+          .select({ pid: pilotChangeLog.participantId })
+          .from(pilotChangeLog)
+          .leftJoin(pilotParticipants, eq(pilotParticipants.id, pilotChangeLog.participantId))
+          .where(
+            and(
+              eq(pilotParticipants.projectId, a.projectId),
+              eq(pilotChangeLog.actor, "participant"),
+              eq(pilotChangeLog.field, "invitationAcceptedDeclared"),
+              eq(pilotChangeLog.newValue, "false"),
+            ),
+          );
+        const notYetPids = Array.from(new Set(notYetPidRows.map((r) => r.pid).filter((x): x is string => !!x)));
+        filters.push(
+          or(
+            eq(pilotParticipants.issueFlag, "CLICKED_NOT_REGISTERED"),
+            eq(pilotParticipants.issueFlag, "INVITE_NOT_RECEIVED"),
+            notYetPids.length > 0 ? inArray(pilotParticipants.id, notYetPids) : sql`0 = 1`,
+          )!,
+        );
       } else {
         filters.push(eq(pilotParticipants.issueFlag, flag));
       }
@@ -143,24 +189,115 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       );
     }
 
-    const rows = await db
-      .select()
-      .from(pilotParticipants)
-      .where(and(...filters))
-      .orderBy(asc(pilotParticipants.fullName))
-      .limit(limit);
+    // All read queries run in parallel — this endpoint is polled every
+    // few seconds by the roster grid, so we want it to come back fast.
+    // Turso round-trip is ~50-150ms per query; serial 6 = ~500ms-1s,
+    // parallel = ~150-200ms. Every query is independent (project-scoped),
+    // so there's no ordering constraint.
+    const cutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const [rows, funnelRows, s1Rows, s4Rows, s3Rows, s5Rows, notYetRows] = await Promise.all([
+      db
+        .select()
+        .from(pilotParticipants)
+        .where(and(...filters))
+        .orderBy(asc(pilotParticipants.fullName))
+        .limit(limit),
 
-    // Stage-funnel + flag-tally for the dashboard header. Cheap query at
-    // pilot scale (a few hundred rows) so we always return it.
-    const funnelRows = await db
-      .select({
-        currentStage: pilotParticipants.currentStage,
-        issueFlag: pilotParticipants.issueFlag,
-        count: sql<number>`count(*)`.as("count"),
-      })
-      .from(pilotParticipants)
-      .where(eq(pilotParticipants.projectId, a.projectId))
-      .groupBy(pilotParticipants.currentStage, pilotParticipants.issueFlag);
+      // Stage-funnel + flag-tally for the dashboard header. Cheap query at
+      // pilot scale (a few hundred rows) so we always return it.
+      db
+        .select({
+          currentStage: pilotParticipants.currentStage,
+          issueFlag: pilotParticipants.issueFlag,
+          count: sql<number>`count(*)`.as("count"),
+        })
+        .from(pilotParticipants)
+        .where(eq(pilotParticipants.projectId, a.projectId))
+        .groupBy(pilotParticipants.currentStage, pilotParticipants.issueFlag),
+
+      // Distinct participants with a portal-driven playstoreEmail
+      // correction. Project scoped via a join so we can drop the
+      // separate idsInProject round-trip.
+      db
+        .select({
+          c: sql<number>`count(distinct ${pilotChangeLog.participantId})`.as("c"),
+        })
+        .from(pilotChangeLog)
+        .leftJoin(pilotParticipants, eq(pilotParticipants.id, pilotChangeLog.participantId))
+        .where(
+          and(
+            eq(pilotParticipants.projectId, a.projectId),
+            eq(pilotChangeLog.actor, "participant"),
+            eq(pilotChangeLog.field, "playstoreEmail"),
+          ),
+        ),
+
+      // Distinct participants with a mobileNumberCorrected OR workEmail
+      // change by the participant.
+      db
+        .select({
+          c: sql<number>`count(distinct ${pilotChangeLog.participantId})`.as("c"),
+        })
+        .from(pilotChangeLog)
+        .leftJoin(pilotParticipants, eq(pilotParticipants.id, pilotChangeLog.participantId))
+        .where(
+          and(
+            eq(pilotParticipants.projectId, a.projectId),
+            eq(pilotChangeLog.actor, "participant"),
+            or(
+              eq(pilotChangeLog.field, "mobileNumberCorrected"),
+              eq(pilotChangeLog.field, "workEmail"),
+            )!,
+          ),
+        ),
+
+      // Stuck at stage 3 for 3+ days.
+      db
+        .select({ c: sql<number>`count(*)`.as("c") })
+        .from(pilotParticipants)
+        .where(
+          and(
+            eq(pilotParticipants.projectId, a.projectId),
+            eq(pilotParticipants.currentStage, 3),
+            lt(pilotParticipants.lastActivityAt, cutoff),
+          ),
+        ),
+
+      // Work-email confirmation pending. Meaningful only when workEmail
+      // is set — mobile-only users can't be in this bucket.
+      db
+        .select({ c: sql<number>`count(*)`.as("c") })
+        .from(pilotParticipants)
+        .where(
+          and(
+            eq(pilotParticipants.projectId, a.projectId),
+            eq(pilotParticipants.mobileConfirmed, true),
+            eq(pilotParticipants.workEmailConfirmed, false),
+            sql`${pilotParticipants.workEmail} IS NOT NULL AND ${pilotParticipants.workEmail} != ''`,
+          ),
+        ),
+
+      // Participants who explicitly tapped "Not yet" on Screen C. The
+      // default participant state is also invitationAcceptedDeclared=false,
+      // so the ONLY signal that distinguishes "user tapped Not yet" from
+      // "user hasn't answered" is a change-log row written by the
+      // participant with newValue='false' on invitationAcceptedDeclared.
+      // We return participant IDs (not just a count) so the client can
+      // render a "Not yet accepted" chip in the Flag column alongside
+      // the real issueFlag chip.
+      db
+        .select({ pid: pilotChangeLog.participantId })
+        .from(pilotChangeLog)
+        .leftJoin(pilotParticipants, eq(pilotParticipants.id, pilotChangeLog.participantId))
+        .where(
+          and(
+            eq(pilotParticipants.projectId, a.projectId),
+            eq(pilotChangeLog.actor, "participant"),
+            eq(pilotChangeLog.field, "invitationAcceptedDeclared"),
+            eq(pilotChangeLog.newValue, "false"),
+          ),
+        ),
+    ]);
 
     const stageCounts = new Array(7).fill(0);
     const flagCounts: Record<string, number> = {};
@@ -171,111 +308,30 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       total += Number(r.count);
     }
 
+    // De-duplicate the "Not yet" participant list (a participant who
+    // tapped "Not yet" more than once will have multiple change-log rows).
+    const notYetIds = Array.from(new Set(notYetRows.map((r) => r.pid).filter((x): x is string => !!x)));
+
     // ─── Blocked-per-stage counts ─────────────────────────────────────
     // Small computed layer that surfaces "someone needs to act" signals
-    // per stage. Each entry maps to a specific filter the CST admin can
-    // tap to isolate the affected participants:
-    //   stage 1 → participants who edited their playstoreEmail via the
-    //             portal (roster email was wrong)
-    //   stage 2 → CLICKED_NOT_REGISTERED + INVITE_NOT_RECEIVED
-    //   stage 3 → participants stuck at stage 3 for 3+ days
-    //             (invitation accepted but app not updated)
-    //   stage 4 → mobile number OR work email corrected on the portal
-    //             (needs a Users-module update on our side)
-    //   stage 5 → participants who confirmed mobile but still need to
-    //             confirm their work email (only counts those with a
-    //             workEmail on file)
-    //   stage 6 → VERSION_MISMATCH
-    // Each of these is an SQL count, cheap at pilot scale.
+    // per stage. See stage-to-signal mapping in the roster grid.
+    // Step 2 sums three signals: CLICKED_NOT_REGISTERED, INVITE_NOT_RECEIVED,
+    // and participants who explicitly tapped "Not yet". These aren't
+    // strictly mutually exclusive (someone could hit "Not yet" and later
+    // report "Link didn't work") but at pilot scale the overlap is
+    // negligible — we accept the mild over-count in exchange for a
+    // simpler query.
     const blockedByStage = {
-      s1: 0,     // email corrections
-      s2: (flagCounts["CLICKED_NOT_REGISTERED"] || 0) + (flagCounts["INVITE_NOT_RECEIVED"] || 0),
-      s3: 0,     // stuck at stage 3
-      s4: 0,     // mobile/work email corrections
-      s5: 0,     // mobile confirmed but work email pending
+      s1: Number(s1Rows[0]?.c || 0),
+      s2:
+        (flagCounts["CLICKED_NOT_REGISTERED"] || 0) +
+        (flagCounts["INVITE_NOT_RECEIVED"] || 0) +
+        notYetIds.length,
+      s3: Number(s3Rows[0]?.c || 0),
+      s4: Number(s4Rows[0]?.c || 0),
+      s5: Number(s5Rows[0]?.c || 0),
       s6: flagCounts["VERSION_MISMATCH"] || 0,
     };
-
-    try {
-      // Participant IDs in this project (for scoping change-log queries).
-      const idsInProject = await db
-        .select({ id: pilotParticipants.id })
-        .from(pilotParticipants)
-        .where(eq(pilotParticipants.projectId, a.projectId));
-      const pidList = idsInProject.map((r) => r.id);
-
-      if (pidList.length > 0) {
-        // Distinct participants who have a portal-driven playstoreEmail
-        // correction on record. Using count(distinct participantId) so a
-        // participant who edited twice only counts once.
-        const s1Rows = await db
-          .select({
-            c: sql<number>`count(distinct ${pilotChangeLog.participantId})`.as("c"),
-          })
-          .from(pilotChangeLog)
-          .where(
-            and(
-              inArray(pilotChangeLog.participantId, pidList),
-              eq(pilotChangeLog.actor, "participant"),
-              eq(pilotChangeLog.field, "playstoreEmail"),
-            ),
-          );
-        blockedByStage.s1 = Number(s1Rows[0]?.c || 0);
-
-        // Distinct participants with a mobileNumberCorrected OR workEmail
-        // change by the participant. Either one is CST-actionable.
-        const s4Rows = await db
-          .select({
-            c: sql<number>`count(distinct ${pilotChangeLog.participantId})`.as("c"),
-          })
-          .from(pilotChangeLog)
-          .where(
-            and(
-              inArray(pilotChangeLog.participantId, pidList),
-              eq(pilotChangeLog.actor, "participant"),
-              or(
-                eq(pilotChangeLog.field, "mobileNumberCorrected"),
-                eq(pilotChangeLog.field, "workEmail"),
-              )!,
-            ),
-          );
-        blockedByStage.s4 = Number(s4Rows[0]?.c || 0);
-      }
-
-      // Stuck at stage 3 for 3+ days.
-      const cutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
-      const s3Rows = await db
-        .select({ c: sql<number>`count(*)`.as("c") })
-        .from(pilotParticipants)
-        .where(
-          and(
-            eq(pilotParticipants.projectId, a.projectId),
-            eq(pilotParticipants.currentStage, 3),
-            lt(pilotParticipants.lastActivityAt, cutoff),
-          ),
-        );
-      blockedByStage.s3 = Number(s3Rows[0]?.c || 0);
-
-      // Participants whose work email confirmation is still pending. Only
-      // meaningful when they have a workEmail on file — mobile-only users
-      // are never in this bucket.
-      const s5Rows = await db
-        .select({ c: sql<number>`count(*)`.as("c") })
-        .from(pilotParticipants)
-        .where(
-          and(
-            eq(pilotParticipants.projectId, a.projectId),
-            eq(pilotParticipants.mobileConfirmed, true),
-            eq(pilotParticipants.workEmailConfirmed, false),
-            sql`${pilotParticipants.workEmail} IS NOT NULL AND ${pilotParticipants.workEmail} != ''`,
-          ),
-        );
-      blockedByStage.s5 = Number(s5Rows[0]?.c || 0);
-    } catch (e) {
-      // Best-effort. If the computed layer fails we still return
-      // stageCounts / flagCounts so the UI degrades gracefully.
-      console.warn("[pilot-tracker/participants] blockedByStage failed:", e);
-    }
 
     return NextResponse.json({
       participants: rows,
@@ -283,6 +339,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       stageCounts,
       flagCounts,
       blockedByStage,
+      // Participant IDs the client should decorate with an extra
+      // "Not yet accepted" chip in the Flag column. Also drives the
+      // NOT_YET_ACCEPTED synthetic filter for tap-through.
+      notYetIds,
     });
   } catch (e: any) {
     return NextResponse.json(

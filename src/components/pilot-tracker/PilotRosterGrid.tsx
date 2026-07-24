@@ -16,7 +16,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, X, AlertTriangle, CheckCircle2, Clock, Download, UserCheck, Trash2 } from "lucide-react";
+import { Search, X, AlertTriangle, CheckCircle2, Clock, Download, UserCheck, Trash2, RefreshCw } from "lucide-react";
 import { useToast } from "@/components/ui/ToastContext";
 
 interface Participant {
@@ -56,12 +56,16 @@ interface Payload {
   flagCounts: Record<string, number>;
   blockedByStage?: {
     s1: number;    // email corrected by user
-    s2: number;    // CLICKED_NOT_REGISTERED + INVITE_NOT_RECEIVED
+    s2: number;    // CLICKED_NOT_REGISTERED + INVITE_NOT_RECEIVED + NOT_YET
     s3: number;    // stuck at stage 3 (no activity 3+ days)
     s4: number;    // mobile/work email corrected by user
     s5: number;    // mobile confirmed but work email still pending
     s6: number;    // VERSION_MISMATCH
   };
+  // Participants who explicitly tapped "Not yet" on Screen C — decorated
+  // with a secondary "Not yet accepted" chip in the Flag column and
+  // included in the Step-2 blocker union filter.
+  notYetIds?: string[];
 }
 
 // Which synthetic flag each stage's red pill maps to when tapped. Keep in
@@ -69,7 +73,7 @@ interface Payload {
 const STAGE_BLOCK_FILTER: Record<number, string | null> = {
   0: null,
   1: "EMAIL_CORRECTED_BY_USER",
-  2: "CLICKED_NOT_REGISTERED",  // covers the larger of the two Step-2 flags
+  2: "STAGE2_BLOCKED",  // union of CLICKED_NOT_REGISTERED + INVITE_NOT_RECEIVED + NOT_YET_ACCEPTED
   3: "STUCK_STAGE3",
   4: "CONTACT_CORRECTED_BY_USER",
   5: "WORK_EMAIL_PENDING",
@@ -101,6 +105,8 @@ const FLAG_LABELS: Record<string, string> = {
   CONTACT_CORRECTED_BY_USER: "Mobile / work email corrected",
   STUCK_STAGE3: "Stuck at App update (3+ days)",
   WORK_EMAIL_PENDING: "Work email confirmation pending",
+  NOT_YET_ACCEPTED: "Not yet accepted",
+  STAGE2_BLOCKED: "Blocked at beta invitation",
 };
 
 const FLAG_COLORS: Record<string, string> = {
@@ -115,6 +121,8 @@ const FLAG_COLORS: Record<string, string> = {
   CONTACT_CORRECTED_BY_USER: "bg-rose-100 text-rose-800 border-rose-200",
   STUCK_STAGE3: "bg-red-100 text-red-800 border-red-200",
   WORK_EMAIL_PENDING: "bg-rose-100 text-rose-800 border-rose-200",
+  NOT_YET_ACCEPTED: "bg-rose-100 text-rose-800 border-rose-200",
+  STAGE2_BLOCKED: "bg-red-100 text-red-800 border-red-200",
 };
 
 interface Props {
@@ -138,8 +146,13 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const refresh = useCallback(async (opts: { silent?: boolean } = {}) => {
+    // Silent refreshes (polling / focus) don't flip the loading state, so
+    // the "Loading roster…" placeholder doesn't flicker every 15s. Only
+    // user-initiated loads (initial mount, filter change, refreshTrigger)
+    // show the loading UI. Errors on silent refreshes are logged and
+    // dropped — no toast — so a transient blip doesn't spam the CST.
+    if (!opts.silent) setLoading(true);
     try {
       const params = new URLSearchParams();
       if (stageFilter) params.set("stage", stageFilter);
@@ -151,15 +164,57 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
       if (!res.ok) throw new Error(json.error || res.statusText);
       setData(json);
     } catch (e: any) {
-      showToast(`Load failed: ${e.message}`, "error");
+      if (!opts.silent) {
+        showToast(`Load failed: ${e.message}`, "error");
+      } else {
+        console.warn("[pilot-tracker] silent refresh failed:", e?.message || e);
+      }
     } finally {
-      setLoading(false);
+      if (!opts.silent) setLoading(false);
     }
   }, [accountId, stageFilter, flagFilter, search, showToast]);
 
   useEffect(() => {
     refresh();
   }, [refresh, refreshTrigger]);
+
+  // Realtime-ish refresh so participant portal updates land in the roster
+  // without the CST admin having to manually reload. Two triggers:
+  //   1. A short interval poll (15s) — enough for stage-transition drift
+  //      like a participant confirming Screen 5 to appear promptly.
+  //   2. window "focus" — returning to the tab after a while (e.g. after
+  //      going to Telegram to ping the dev) shows the newest state
+  //      immediately, before the next tick.
+  //
+  // We pause polling while the tab isn't visible (document.hidden) to
+  // avoid pointless traffic. The dependency array only reacts to `refresh`
+  // (which itself changes when filters / accountId do), so the interval
+  // re-arms cleanly when the closure is rebuilt.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      if (typeof document !== "undefined" && document.hidden) return;
+      refresh({ silent: true });
+    };
+    const intervalId = window.setInterval(tick, 15_000);
+    const onFocus = () => {
+      if (!cancelled) refresh({ silent: true });
+    };
+    const onVisibility = () => {
+      if (!cancelled && typeof document !== "undefined" && !document.hidden) {
+        refresh({ silent: true });
+      }
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [refresh]);
 
   const clearFilters = () => {
     setStageFilter("");
@@ -253,6 +308,13 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
       setBulkBusy(false);
     }
   };
+
+  // Fast-lookup set of participant IDs that tapped "Not yet" on Screen C.
+  // Used to decorate the Flag column with a secondary rose chip.
+  const notYetIdSet = useMemo(
+    () => new Set<string>(data?.notYetIds || []),
+    [data?.notYetIds],
+  );
 
   if (loading && !data) {
     return <div className="p-4 text-gray-500 text-sm">Loading roster…</div>;
@@ -391,6 +453,15 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
           </button>
         )}
         <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => refresh({ silent: true })}
+          className="inline-flex items-center gap-1 text-xs text-gray-700 hover:text-gray-900 px-2 py-1 border border-gray-300 rounded disabled:opacity-50"
+          disabled={loading}
+          title="Refresh now (also auto-refreshes every 15s while this tab is visible)"
+        >
+          <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> Refresh
+        </button>
         <a
           href={`/api/accounts/${accountId}/pilot-tracker/export?mode=devEmails`}
           className="inline-flex items-center gap-1 text-xs text-gray-700 hover:text-gray-900 px-2 py-1 border border-gray-300 rounded"
@@ -494,7 +565,12 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
                   <StageBadge stage={p.currentStage} />
                 </Td>
                 <Td>
-                  <FlagBadge flag={p.issueFlag} />
+                  <div className="flex flex-wrap gap-1">
+                    <FlagBadge flag={p.issueFlag} />
+                    {notYetIdSet.has(p.id) && p.currentStage < 3 && (
+                      <FlagBadge flag="NOT_YET_ACCEPTED" />
+                    )}
+                  </div>
                 </Td>
                 <Td className="text-xs text-gray-600 max-w-[220px]">
                   <div className="truncate" title={p.workEmail || ""}>
