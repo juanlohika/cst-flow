@@ -658,7 +658,7 @@ function EmailStep({
       <p className="mb-3">
         <strong>This is the email you use to sign in to the Google Play
         Store on this phone (your Google account).</strong> Not your company
-        email. Not your Employee ID.
+        email.
       </p>
       <details className="mb-3 text-xs">
         <summary className="cursor-pointer text-blue-600 hover:underline">
