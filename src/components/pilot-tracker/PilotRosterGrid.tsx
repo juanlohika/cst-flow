@@ -314,7 +314,20 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
                   <button
                     type="button"
                     disabled={blocked === 0}
-                    onClick={() => setFlagFilter(blockedActive ? "" : blockFilter)}
+                    onClick={() => {
+                      // Tapping the pill shows ALL blocked participants
+                      // for this signal, regardless of current stage.
+                      // Someone who corrected their playstoreEmail
+                      // yesterday may have moved past Stage 1 today —
+                      // ANDing with the stage filter would hide them.
+                      // Clear the stage filter when we activate the pill.
+                      if (blockedActive) {
+                        setFlagFilter("");
+                      } else {
+                        setStageFilter("");
+                        setFlagFilter(blockFilter);
+                      }
+                    }}
                     className={`self-start inline-block mt-1.5 text-[10px] leading-none rounded-full px-1.5 py-0.5 border ${
                       blocked > 0
                         ? blockedActive
