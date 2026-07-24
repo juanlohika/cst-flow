@@ -284,39 +284,38 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
               : 0;
             const blockFilter = STAGE_BLOCK_FILTER[i];
             const blockedActive = blockFilter != null && flagFilter === blockFilter;
+            const stageActive = stageFilter === String(i);
+            // Two separate <button>s side by side in the card. Nesting a
+            // click target inside another <button> triggers both handlers
+            // on tap in mobile browsers even with stopPropagation, which
+            // was making the pill and the card fight each other.
             return (
-              <button
+              <div
                 key={i}
-                type="button"
-                onClick={() => setStageFilter(stageFilter === String(i) ? "" : String(i))}
-                className={`text-left rounded-md border p-2 hover:bg-gray-50 transition ${
-                  stageFilter === String(i)
+                className={`text-left rounded-md border p-2 transition flex flex-col ${
+                  stageActive
                     ? "border-blue-500 bg-blue-50 ring-1 ring-blue-300"
-                    : "border-gray-200"
+                    : "border-gray-200 bg-white"
                 }`}
               >
-                <div className="text-lg font-semibold text-gray-900">
-                  {data.stageCounts[i] || 0}
-                </div>
-                <div className="text-xs text-gray-500 leading-tight mt-0.5">
-                  {i}. {label}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setStageFilter(stageActive ? "" : String(i))}
+                  className="text-left hover:bg-black/[0.02] rounded -mx-0.5 -mt-0.5 px-0.5 pt-0.5"
+                >
+                  <div className="text-lg font-semibold text-gray-900">
+                    {data.stageCounts[i] || 0}
+                  </div>
+                  <div className="text-xs text-gray-500 leading-tight mt-0.5">
+                    {i}. {label}
+                  </div>
+                </button>
                 {blockFilter ? (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (blocked === 0) return;
-                      setFlagFilter(blockedActive ? "" : blockFilter);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key !== "Enter" && e.key !== " ") return;
-                      e.stopPropagation();
-                      if (blocked === 0) return;
-                      setFlagFilter(blockedActive ? "" : blockFilter);
-                    }}
-                    className={`inline-block mt-1.5 text-[10px] leading-none rounded-full px-1.5 py-0.5 border ${
+                  <button
+                    type="button"
+                    disabled={blocked === 0}
+                    onClick={() => setFlagFilter(blockedActive ? "" : blockFilter)}
+                    className={`self-start inline-block mt-1.5 text-[10px] leading-none rounded-full px-1.5 py-0.5 border ${
                       blocked > 0
                         ? blockedActive
                           ? "bg-red-600 border-red-600 text-white cursor-pointer"
@@ -325,13 +324,13 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
                     }`}
                   >
                     {blocked} blocked
-                  </span>
+                  </button>
                 ) : (
-                  <span className="inline-block mt-1.5 text-[10px] leading-none rounded-full px-1.5 py-0.5 border bg-gray-50 border-gray-200 text-gray-400">
+                  <span className="self-start inline-block mt-1.5 text-[10px] leading-none rounded-full px-1.5 py-0.5 border bg-gray-50 border-gray-200 text-gray-400">
                     0 blocked
                   </span>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>
