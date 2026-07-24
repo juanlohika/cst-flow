@@ -67,34 +67,41 @@ export async function broadcastPilotRegistrationDigest(args: {
     }
 
     const { tgSendMessage, truncateForTelegram } = await import("@/lib/telegram/api");
-    const clientLine = args.clientCompanyName ? ` · ${args.clientCompanyName}` : "";
-    const header =
-      args.source === "roster-import"
-        ? `📋 *${args.entries.length} beta testers imported${clientLine}*`
-        : `📋 *${args.entries.length} pending registrations${clientLine}*`;
-    // Body is a list of `email — Full Name (Emp ID)` lines. Emails wrapped
-    // in backticks so they're one-tap copyable on Telegram.
-    const body = args.entries
-      .map((e) => `• \`${e.playstoreEmail}\`  —  ${e.fullName} (${e.employeeId})`)
-      .join("\n");
+    // Plain-text conversational format — no Markdown, no monospace, no
+    // italics. Reads like a note a person would send. Company name goes
+    // in the ask line so the ceremonial "for the X company" flows.
+    const company = (args.clientCompanyName || "").trim();
+    const forCompany = company ? ` for the ${company} company` : "";
+    const bullets = args.entries.map((e) => `- ${e.playstoreEmail}`).join("\n");
 
     await Promise.all(
       targets.map((t) => {
-        const mentionLine = t.broadcastAssignee
-          ? `${t.broadcastAssignee} 👋\n\n`
-          : "";
+        const greetingName = t.broadcastAssignee
+          ? // Strip a leading "@" when composing the greeting so we get
+            // "Hi Lester," not "Hi @Lester,". The mention still fires a
+            // push because Telegram parses @handles when parseMode is
+            // absent, as long as the token appears anywhere in the text.
+            (t.broadcastAssignee.startsWith("@")
+              ? t.broadcastAssignee.slice(1)
+              : t.broadcastAssignee)
+          : "team";
+        // Include the raw @handle on its own line so Telegram still
+        // pings the assignee. Bare "Hi Name," without the handle would
+        // not trigger a notification.
+        const pingLine = t.broadcastAssignee ? `${t.broadcastAssignee}\n\n` : "";
         const text = truncateForTelegram(
-          mentionLine +
+          pingLine +
             [
-              header,
+              `Hi ${greetingName},`,
               ``,
-              `Add each of these emails to the Play Store tester list:`,
+              `Please add the following to the Tarkie V5 Internal Beta Tester list${forCompany}:`,
               ``,
-              body,
+              bullets,
+              ``,
+              `Thanks.`,
             ].join("\n"),
         );
         return tgSendMessage(cfg.botToken, t.chatId, text, {
-          parseMode: "Markdown",
           disablePreview: true,
         }).catch((e: any) => {
           console.warn(
@@ -139,27 +146,29 @@ export async function broadcastPilotRegistrationRequest(args: {
     }
 
     const { tgSendMessage, truncateForTelegram } = await import("@/lib/telegram/api");
-    const clientLine = args.clientCompanyName ? ` · ${args.clientCompanyName}` : "";
-    // Per-channel message — the assignee mention is prepended so it fires
-    // a push notification on that user's phone. Telegram markdown escapes
-    // are needed on the email (underscores) but not on the @handle itself.
+    const company = (args.clientCompanyName || "").trim();
+    const forCompany = company ? ` for the ${company} company` : "";
     await Promise.all(
       targets.map((t) => {
-        const mentionLine = t.broadcastAssignee
-          ? `${t.broadcastAssignee} 👋\n\n`
-          : "";
+        const greetingName = t.broadcastAssignee
+          ? t.broadcastAssignee.startsWith("@")
+            ? t.broadcastAssignee.slice(1)
+            : t.broadcastAssignee
+          : "team";
+        const pingLine = t.broadcastAssignee ? `${t.broadcastAssignee}\n\n` : "";
         const text = truncateForTelegram(
-          mentionLine +
+          pingLine +
             [
-              `🆕 *Add to Play Store tester list*`,
+              `Hi ${greetingName},`,
               ``,
-              `\`${args.playstoreEmail}\``,
+              `Please add the following to the Tarkie V5 Internal Beta Tester list${forCompany}:`,
               ``,
-              `_${args.fullName} · ${args.employeeId}${clientLine}_`,
+              `- ${args.playstoreEmail}`,
+              ``,
+              `Thanks.`,
             ].join("\n"),
         );
         return tgSendMessage(cfg.botToken, t.chatId, text, {
-          parseMode: "Markdown",
           disablePreview: true,
         }).catch((e: any) => {
           console.warn(
