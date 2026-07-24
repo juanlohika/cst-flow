@@ -565,43 +565,35 @@ function Step({
 /**
  * Choice-button styling helper for the portal.
  *
- * Rules — thought of as a small state machine per question:
+ * Fill colors are strictly reserved for the CURRENT answer. Every non-active
+ * button — positive or negative — renders as a neutral outlined control.
+ * This is what live users kept flagging: an unanswered question was
+ * showing filled rose on "Not yet" / "Link didn't work" side-by-side, and
+ * every version of "muted when settled" still read as pre-selected next
+ * to the outlined positive.
  *
- *   State                                Positive          Negative
- *   ─────────────────────────────────────────────────────────────────
- *   No answer yet                        outlined          rose (visible)
- *   Positive answer is the current one   filled green      muted (settled)
- *   Negative answer is the current one   outlined          filled rose
+ *   Positive + active   → filled green
+ *   Negative + active   → filled rose
+ *   Either + inactive   → outlined white (subtle rose tint on hover for
+ *                          negatives so users can tell them apart)
  *
- * The important edge is the third row's negative: once the participant
- * has confirmed, the "No" button should NOT keep looking like a live rose
- * choice — that reads as "both are selected". We mute it so the confirmed
- * state is unambiguous. Pass `settled` when the question already has a
- * committed answer (typically = the positive is active).
+ * The `settled` argument is kept for callers so we don't have to update
+ * every call site, but the two inactive states now render identically.
  */
 function choiceClass(
   active: boolean,
   variant: "positive" | "negative",
   base: string,
-  settled: boolean = false,
+  _settled: boolean = false,
 ): string {
   if (variant === "positive") {
     return active
       ? `${base} bg-green-100 border-green-300 text-green-800 disabled:opacity-50`
       : `${base} border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50`;
   }
-  if (active) {
-    // Negative IS the current answer — filled rose.
-    return `${base} bg-rose-100 border-rose-400 text-rose-800 hover:bg-rose-200 disabled:opacity-50`;
-  }
-  if (settled) {
-    // Positive is the current answer — the negative recedes to neutral so
-    // the confirmed state is visually unambiguous.
-    return `${base} border-gray-200 bg-white text-gray-400 hover:bg-gray-50 disabled:opacity-50`;
-  }
-  // No answer yet — negative is a visible rose so the "no" option isn't
-  // mistaken for a disabled control.
-  return `${base} bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100 disabled:opacity-50`;
+  return active
+    ? `${base} bg-rose-100 border-rose-400 text-rose-800 hover:bg-rose-200 disabled:opacity-50`
+    : `${base} border-gray-300 bg-white text-gray-700 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300 disabled:opacity-50`;
 }
 
 // Screen B — Email step
