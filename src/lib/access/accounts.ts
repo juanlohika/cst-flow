@@ -856,6 +856,105 @@ export async function ensureAccessSchema(): Promise<void> {
       expiresAt TEXT
     )`);
 
+    // Pilot Tracker (Tarkie V5 beta onboarding). Three tables:
+    //   PilotProject       — one per client account that enrolls in the pilot
+    //   PilotParticipant   — one per person on the roster
+    //   PilotChangeLog     — append-only audit trail
+    //   PilotUploadBatch   — audit + report for XLSX roster imports
+    // See src/db/schema.ts:1264 for full column docs.
+    await db.run(sql`CREATE TABLE IF NOT EXISTS PilotProject (
+      id TEXT PRIMARY KEY,
+      clientProfileId TEXT NOT NULL,
+      name TEXT NOT NULL,
+      qrToken TEXT NOT NULL UNIQUE,
+      targetAppVersion TEXT,
+      betaInviteUrl TEXT,
+      playStoreAppUrl TEXT,
+      referenceScreenshotDriveId TEXT,
+      referenceScreenshotUrl TEXT,
+      driveFolderId TEXT,
+      blockedEmailDomains TEXT,
+      staleThresholdDays INTEGER DEFAULT 3 NOT NULL,
+      status TEXT DEFAULT 'active' NOT NULL,
+      pilotStart TEXT,
+      pilotEnd TEXT,
+      createdByUserId TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      updatedAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      FOREIGN KEY (clientProfileId) REFERENCES ClientProfile(id) ON DELETE CASCADE
+    )`);
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS PilotProject_clientProfile_idx ON PilotProject(clientProfileId)`); } catch {}
+
+    await db.run(sql`CREATE TABLE IF NOT EXISTS PilotParticipant (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      employeeId TEXT NOT NULL,
+      fullName TEXT NOT NULL,
+      mobileNumber TEXT NOT NULL,
+      mobileNumberCorrected TEXT,
+      mobileConfirmed INTEGER DEFAULT 0 NOT NULL,
+      mobileConfirmedAt TEXT,
+      playstoreEmail TEXT,
+      emailConfirmedIsPlaystore INTEGER DEFAULT 0 NOT NULL,
+      emailCapturedAt TEXT,
+      betaRegistered INTEGER DEFAULT 0 NOT NULL,
+      betaRegisteredAt TEXT,
+      betaRegisteredByUserId TEXT,
+      invitationAcceptedDeclared INTEGER DEFAULT 0 NOT NULL,
+      invitationAcceptedAt TEXT,
+      invitationLinkFailed INTEGER DEFAULT 0 NOT NULL,
+      appUpdatedDeclared INTEGER DEFAULT 0 NOT NULL,
+      appUpdatedAt TEXT,
+      reportedVersion TEXT,
+      versionScreenshotDriveId TEXT,
+      versionScreenshotUrl TEXT,
+      versionScreenshotUploadedAt TEXT,
+      versionVerified TEXT DEFAULT 'pending' NOT NULL,
+      versionVerifiedByUserId TEXT,
+      versionVerifiedByAi INTEGER DEFAULT 0 NOT NULL,
+      versionAiExtractedText TEXT,
+      versionVerifiedAt TEXT,
+      currentStage INTEGER DEFAULT 0 NOT NULL,
+      issueFlag TEXT DEFAULT 'NONE' NOT NULL,
+      lastActivityAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      lastActivityBy TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      updatedAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      FOREIGN KEY (projectId) REFERENCES PilotProject(id) ON DELETE CASCADE
+    )`);
+    try { await db.run(sql`CREATE UNIQUE INDEX IF NOT EXISTS PilotParticipant_projectId_employeeId_key ON PilotParticipant(projectId, employeeId)`); } catch {}
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS PilotParticipant_projectId_idx ON PilotParticipant(projectId)`); } catch {}
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS PilotParticipant_currentStage_idx ON PilotParticipant(currentStage)`); } catch {}
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS PilotParticipant_issueFlag_idx ON PilotParticipant(issueFlag)`); } catch {}
+
+    await db.run(sql`CREATE TABLE IF NOT EXISTS PilotChangeLog (
+      id TEXT PRIMARY KEY,
+      participantId TEXT NOT NULL,
+      field TEXT NOT NULL,
+      oldValue TEXT,
+      newValue TEXT,
+      actor TEXT NOT NULL,
+      actorUserId TEXT,
+      note TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      FOREIGN KEY (participantId) REFERENCES PilotParticipant(id) ON DELETE CASCADE
+    )`);
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS PilotChangeLog_participantId_idx ON PilotChangeLog(participantId)`); } catch {}
+
+    await db.run(sql`CREATE TABLE IF NOT EXISTS PilotUploadBatch (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      uploadedBy TEXT NOT NULL,
+      uploadedAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      filename TEXT,
+      totalRows INTEGER DEFAULT 0 NOT NULL,
+      appliedRows INTEGER DEFAULT 0 NOT NULL,
+      rejectedRows INTEGER DEFAULT 0 NOT NULL,
+      validationReport TEXT,
+      status TEXT DEFAULT 'validated' NOT NULL,
+      FOREIGN KEY (projectId) REFERENCES PilotProject(id) ON DELETE CASCADE
+    )`);
+
     _schemaEnsuredAt = Date.now();
   } catch (e) {
     console.warn("[access] ensureAccessSchema warning:", e);

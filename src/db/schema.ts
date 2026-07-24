@@ -6,7 +6,7 @@
  * This ensures zero-migration compatibility with the existing Turso database.
  */
 
-import { sqliteTable, text, integer, real, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, uniqueIndex, index } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 // ─── Helper: default cuid-like ID ────────────────────────────────
@@ -1259,6 +1259,182 @@ export const pinValidatorProjects = sqliteTable("PinValidatorProject", {
   createdByUserId: text("createdByUserId"),
   createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:       text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// PilotProject: one per client account that enrolls in the Tarkie V5 pilot.
+//
+// The pilot tracker exists because Google Play internal-testing has four
+// distinct failure modes ("wrong email", "not yet on tester list", "invite
+// not accepted", "app not updated") that look identical to a participant
+// but require different responses. Each project scopes its own roster,
+// QR portal, target build version, and Drive folder for screenshots.
+export const pilotProjects = sqliteTable("PilotProject", {
+  id:                          text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  clientProfileId:             text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
+  // Human display label. Defaults to the account name at creation but the
+  // admin can override (e.g. "Sepco CE — V5 Pilot Wave 1").
+  name:                        text("name").notNull(),
+  // Random 32-hex opaque token used in the public portal URL:
+  //   /pilot/{qrToken}
+  // Unique across the whole app so the same QR can never open the wrong
+  // project. Rotated only if the admin re-issues the QR (rare).
+  qrToken:                     text("qrToken").notNull().unique(),
+  // The app-version string admin expects participants to be running once
+  // the internal build reaches them (e.g. "5.1.7-beta"). Compared against
+  // the version extracted from the participant's screenshot to decide
+  // Verified vs Mismatch.
+  targetAppVersion:            text("targetAppVersion"),
+  // Two separate Play Store links, both stored here because they change on
+  // different cadences:
+  //   betaInviteUrl — Google's internal-testing opt-in URL for THIS track.
+  //                   Refreshes when dev creates a new tester group. Admin
+  //                   pastes the current one.
+  //   playStoreAppUrl — the public Tarkie listing URL. Static; used to
+  //                     drive the "update the app" step on Screen D.
+  betaInviteUrl:               text("betaInviteUrl"),
+  playStoreAppUrl:             text("playStoreAppUrl"),
+  // Reference screenshot the admin uploads showing what the correct
+  // version screen looks like. Double duty: (a) shown to participants on
+  // Screen F as a "your screen should look like this" guide, (b) shown
+  // side-by-side with the participant's upload during manual review.
+  referenceScreenshotDriveId:  text("referenceScreenshotDriveId"),
+  referenceScreenshotUrl:      text("referenceScreenshotUrl"),
+  // Drive folder ID where every participant's version screenshot lands.
+  // Auto-created under the parent pilot folder (env: GOOGLE_DRIVE_PILOT_FOLDER_ID)
+  // on activation. One folder per project keeps files browsable outside
+  // the app.
+  driveFolderId:               text("driveFolderId"),
+  // Comma-separated list of email domains that should be flagged WRONG_EMAIL
+  // if entered as the Play Store email (e.g. "sepco.com.ph,mopt.com"). Soft
+  // warning on Screen B, does NOT hard-block submission — participants
+  // occasionally really do use company emails on their Google accounts.
+  blockedEmailDomains:         text("blockedEmailDomains"),
+  // How many days of participant inactivity before the STALE flag trips.
+  // Default 3 per spec §12.4.
+  staleThresholdDays:          integer("staleThresholdDays").default(3).notNull(),
+  // Lifecycle. active = live. paused = QR still valid but flagged as on hold.
+  // closed = QR returns "pilot ended" page.
+  status:                      text("status").default("active").notNull(),
+  pilotStart:                  text("pilotStart"),
+  pilotEnd:                    text("pilotEnd"),
+  createdByUserId:             text("createdByUserId"),
+  createdAt:                   text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:                   text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// PilotParticipant: one row per person on the pilot roster.
+//
+// Every field falls into one of three categories, and the taxonomy matters
+// for the state machine: (a) *imported* — set once from XLSX and never
+// changes; (b) *declared by participant* — set via the public portal, is
+// what the participant SAYS is true; (c) *verified by CST or AI* — the
+// objective trump card. The state machine only closes to "Complete" on a
+// verified value (versionVerified === 'verified'), because declared alone
+// is not enough to distinguish "app truly updated" from "user thinks they
+// updated but is on the old build."
+export const pilotParticipants = sqliteTable("PilotParticipant", {
+  id:                            text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  projectId:                     text("projectId").notNull().references(() => pilotProjects.id, { onDelete: "cascade" }),
+  // Imported (never mutated after creation)
+  employeeId:                    text("employeeId").notNull(),
+  fullName:                      text("fullName").notNull(),
+  mobileNumber:                  text("mobileNumber").notNull(),
+  // Mobile-correction gets a dedicated field so CST can see "original vs
+  // corrected" without diffing history. Notified to CST on write.
+  mobileNumberCorrected:         text("mobileNumberCorrected"),
+  mobileConfirmed:               integer("mobileConfirmed", { mode: "boolean" }).default(false).notNull(),
+  mobileConfirmedAt:             text("mobileConfirmedAt"),
+  // Stage 1 — the Google account email participant uses on Play Store.
+  playstoreEmail:                text("playstoreEmail"),
+  // Required acknowledgment on Screen B. Submit is blocked without this.
+  emailConfirmedIsPlaystore:     integer("emailConfirmedIsPlaystore", { mode: "boolean" }).default(false).notNull(),
+  emailCapturedAt:               text("emailCapturedAt"),
+  // Stage 2 — the hard gate. Set by dev/CST after adding the email to the
+  // Play internal-testing tester list. Everything downstream depends on
+  // this being true, and the CLICKED_NOT_REGISTERED contradiction fires
+  // exactly when a participant reports "invitation accepted" while this
+  // is still false.
+  betaRegistered:                integer("betaRegistered", { mode: "boolean" }).default(false).notNull(),
+  betaRegisteredAt:              text("betaRegisteredAt"),
+  betaRegisteredByUserId:        text("betaRegisteredByUserId"),
+  // Stage 3 — participant claim
+  invitationAcceptedDeclared:    integer("invitationAcceptedDeclared", { mode: "boolean" }).default(false).notNull(),
+  invitationAcceptedAt:          text("invitationAcceptedAt"),
+  // Screen C third option "Link didn't work". Meaningful only if
+  // betaRegistered=true; before that it's expected and CST handles via
+  // the AWAITING_REGISTRATION queue.
+  invitationLinkFailed:          integer("invitationLinkFailed", { mode: "boolean" }).default(false).notNull(),
+  // Stage 4 — participant claim
+  appUpdatedDeclared:            integer("appUpdatedDeclared", { mode: "boolean" }).default(false).notNull(),
+  appUpdatedAt:                  text("appUpdatedAt"),
+  // Stage 5 — version proof (declared side)
+  reportedVersion:               text("reportedVersion"),
+  versionScreenshotDriveId:      text("versionScreenshotDriveId"),
+  versionScreenshotUrl:          text("versionScreenshotUrl"),
+  versionScreenshotUploadedAt:   text("versionScreenshotUploadedAt"),
+  // Stage 6 — verified side (the objective trump)
+  // pending  → uploaded, awaiting AI/CST review
+  // verified → matches targetAppVersion (record is Complete)
+  // mismatch → does not match; VERSION_MISMATCH flag; participant nudged
+  versionVerified:               text("versionVerified").default("pending").notNull(),
+  // Null if AI-verified (versionVerifiedByAi=true), userId if human.
+  versionVerifiedByUserId:       text("versionVerifiedByUserId"),
+  versionVerifiedByAi:           integer("versionVerifiedByAi", { mode: "boolean" }).default(false).notNull(),
+  // What Gemini extracted from the screenshot. Kept for audit/debug even
+  // after CST manual override.
+  versionAiExtractedText:        text("versionAiExtractedText"),
+  versionVerifiedAt:             text("versionVerifiedAt"),
+  // Derived + cached from the fields above via computeStage(). Re-computed
+  // on every mutation so queries can filter on stage/flag directly.
+  currentStage:                  integer("currentStage").default(0).notNull(),
+  issueFlag:                     text("issueFlag").default("NONE").notNull(),
+  // Any mutation bumps these. STALE flag uses lastActivityAt.
+  lastActivityAt:                text("lastActivityAt").default(sql`(datetime('now'))`).notNull(),
+  lastActivityBy:                text("lastActivityBy"),  // participant | cst | dev | ai | system
+  createdAt:                     text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:                     text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+}, (table) => ({
+  // Employee IDs are the primary match key on the portal. Enforce
+  // uniqueness within a project so identity match doesn't disambiguate
+  // duplicates.
+  uniqueParticipantEmpId: uniqueIndex("PilotParticipant_projectId_employeeId_key").on(table.projectId, table.employeeId),
+  projectIdx:             index("PilotParticipant_projectId_idx").on(table.projectId),
+  stageIdx:               index("PilotParticipant_currentStage_idx").on(table.currentStage),
+  flagIdx:                index("PilotParticipant_issueFlag_idx").on(table.issueFlag),
+}));
+
+// PilotChangeLog: append-only audit trail for every mutation on a
+// participant record. Every stage transition, mobile correction, and
+// verification event lands here. The CST dashboard and the notification
+// pipeline both read from this.
+export const pilotChangeLog = sqliteTable("PilotChangeLog", {
+  id:              text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  participantId:   text("participantId").notNull().references(() => pilotParticipants.id, { onDelete: "cascade" }),
+  field:           text("field").notNull(),          // column name that changed
+  oldValue:        text("oldValue"),
+  newValue:        text("newValue"),
+  actor:           text("actor").notNull(),           // participant | cst | dev | ai | system
+  actorUserId:     text("actorUserId"),               // set for cst/dev
+  note:            text("note"),                       // optional context (e.g. "AI extracted: 5.1.7-beta")
+  createdAt:       text("createdAt").default(sql`(datetime('now'))`).notNull(),
+}, (table) => ({
+  participantIdx: index("PilotChangeLog_participantId_idx").on(table.participantId),
+}));
+
+// PilotUploadBatch: audit + report for XLSX roster imports. Same shape as
+// AccountUploadBatch — one row per import attempt, with the per-row
+// validation report stored as JSON.
+export const pilotUploadBatches = sqliteTable("PilotUploadBatch", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  projectId:         text("projectId").notNull().references(() => pilotProjects.id, { onDelete: "cascade" }),
+  uploadedBy:        text("uploadedBy").notNull(),
+  uploadedAt:        text("uploadedAt").default(sql`(datetime('now'))`).notNull(),
+  filename:          text("filename"),
+  totalRows:         integer("totalRows").default(0).notNull(),
+  appliedRows:       integer("appliedRows").default(0).notNull(),
+  rejectedRows:      integer("rejectedRows").default(0).notNull(),
+  validationReport:  text("validationReport"),
+  status:            text("status").default("validated").notNull(), // validated | applied | cancelled | failed
 });
 
 // PinValidatorGeocodingJob: a long-running geocoding batch for a project.

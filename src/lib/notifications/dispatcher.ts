@@ -10,7 +10,7 @@ import {
 import { and, eq, inArray } from "drizzle-orm";
 import { configureWebPush } from "./vapid";
 
-export type NotificationType = "request_captured" | "telegram_message" | "mention";
+export type NotificationType = "request_captured" | "telegram_message" | "mention" | "pilot_issue";
 export type NotificationChannel = "web_push" | "email" | "telegram";
 
 export interface NotifyArgs {
@@ -77,6 +77,9 @@ function shouldNotifyForType(prefs: PreferenceRow, type: NotificationType): bool
   if (type === "request_captured") return prefs.notifyOnRequest;
   if (type === "telegram_message") return prefs.notifyOnTelegram;
   if (type === "mention") return prefs.notifyOnMention;
+  // Pilot-issue notifications are opt-out — no dedicated preference flag,
+  // fires for all subscribed users on the account.
+  if (type === "pilot_issue") return true;
   return false;
 }
 

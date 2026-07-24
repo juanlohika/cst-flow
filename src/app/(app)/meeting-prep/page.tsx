@@ -9,7 +9,7 @@ import {
   FileText, ClipboardList, Search, Pencil, ChevronLeft,
   ChevronDown, ChevronUp, User, BarChart2, GitBranch,
   FolderOpen, ExternalLink, Clock, Users, Paintbrush, Download,
-  Brain, MonitorPlay, Save, MapPin
+  Brain, MonitorPlay, Save, MapPin, Rocket
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useSearchParams } from "next/navigation";
@@ -24,6 +24,7 @@ import BufferModal from "@/components/timeline/BufferModal";
 import ProjectSettingsModal from "@/components/projects/ProjectSettingsModal";
 import ContactsTab from "@/components/accounts/ContactsTab";
 import { PinValidatorTab } from "@/components/pin-validator/PinValidatorTab";
+import { PilotTrackerTab } from "@/components/pilot-tracker/PilotTrackerTab";
 import HealthChip from "@/components/accounts/HealthChip";
 import AssessmentQueueBanner from "@/components/accounts/AssessmentQueueBanner";
 import ModulesPicker from "@/components/accounts/ModulesPicker";
@@ -1027,7 +1028,7 @@ function HealthFilterPill({ color, label, count, active, onClick }: {
 
 // ─── Account Hub (5-Tab) ───────────────────────────────────────────────────────
 
-type HubTab = "profile" | "contacts" | "meetings" | "brd" | "flows" | "projects" | "mockups" | "intelligence" | "presentations" | "pinValidator";
+type HubTab = "profile" | "contacts" | "meetings" | "brd" | "flows" | "projects" | "mockups" | "intelligence" | "presentations" | "pinValidator" | "pilotTracker";
 
 const HUB_TABS: { id: HubTab; label: string; icon: React.ElementType }[] = [
   { id: "profile", label: "Profile", icon: User },
@@ -1040,6 +1041,7 @@ const HUB_TABS: { id: HubTab; label: string; icon: React.ElementType }[] = [
   { id: "projects", label: "Projects & Tasks", icon: FolderOpen },
   { id: "mockups", label: "Mockups", icon: Paintbrush },
   { id: "pinValidator", label: "Pin Validator", icon: MapPin },
+  { id: "pilotTracker", label: "Pilot Tracker", icon: Rocket },
 ];
 
 const MEETING_STATUS_STYLES: Record<string, string> = {
@@ -1119,6 +1121,7 @@ export function AccountHub({ profile, onEdit, onBack }: {
           {activeTab === "projects" && <ProjectsTab accountId={profile.id} companyName={profile.companyName} profile={profile} />}
           {activeTab === "mockups" && <MockupsTab accountId={profile.id} companyName={profile.companyName} />}
           {activeTab === "pinValidator" && <PinValidatorTab accountId={profile.id} companyName={profile.companyName} />}
+          {activeTab === "pilotTracker" && <PilotTrackerTab accountId={profile.id} companyName={profile.companyName} />}
         </div>
       </div>
     </div>

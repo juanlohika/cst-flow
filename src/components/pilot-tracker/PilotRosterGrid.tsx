@@ -1,0 +1,813 @@
+"use client";
+
+/**
+ * PilotTrackerTab → Roster grid.
+ *
+ * Shows participants with:
+ *   - Funnel counts at the top (Stage 0 → 6 buckets)
+ *   - Filter chips (stage, flag, search)
+ *   - Table with employee, current stage, issue flag, mobile (original vs
+ *     corrected), version status, last activity
+ *   - Row click → detail drawer with editable fields (email, invite
+ *     accepted, app updated, beta registered toggle, version verify)
+ *
+ * All row edits go through PATCH /api/accounts/[id]/pilot-tracker/participants
+ * which calls updateParticipant() → re-derives stage + flag automatically.
+ */
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Search, X, AlertTriangle, CheckCircle2, Clock, Download, UserCheck } from "lucide-react";
+import { useToast } from "@/components/ui/ToastContext";
+
+interface Participant {
+  id: string;
+  projectId: string;
+  employeeId: string;
+  fullName: string;
+  mobileNumber: string;
+  mobileNumberCorrected: string | null;
+  mobileConfirmed: boolean;
+  playstoreEmail: string | null;
+  emailConfirmedIsPlaystore: boolean;
+  betaRegistered: boolean;
+  betaRegisteredAt: string | null;
+  invitationAcceptedDeclared: boolean;
+  invitationLinkFailed: boolean;
+  appUpdatedDeclared: boolean;
+  reportedVersion: string | null;
+  versionScreenshotDriveId: string | null;
+  versionScreenshotUrl: string | null;
+  versionVerified: "pending" | "verified" | "mismatch";
+  versionVerifiedByAi: boolean;
+  versionAiExtractedText: string | null;
+  currentStage: number;
+  issueFlag: string;
+  lastActivityAt: string;
+  lastActivityBy: string | null;
+}
+
+interface Payload {
+  participants: Participant[];
+  total: number;
+  stageCounts: number[];
+  flagCounts: Record<string, number>;
+}
+
+const STAGE_LABELS = [
+  "Imported",
+  "Email captured",
+  "Beta registered",
+  "Invitation accepted",
+  "App updated",
+  "Screenshot uploaded",
+  "Version verified",
+];
+
+const FLAG_LABELS: Record<string, string> = {
+  CLICKED_NOT_REGISTERED: "Accepted but not registered",
+  VERSION_MISMATCH: "Wrong app version",
+  INVITE_NOT_RECEIVED: "Invite link didn't work",
+  WRONG_EMAIL: "Email looks wrong",
+  AWAITING_REGISTRATION: "Waiting on dev",
+  STALE: "No activity",
+  NONE: "On track",
+};
+
+const FLAG_COLORS: Record<string, string> = {
+  CLICKED_NOT_REGISTERED: "bg-red-100 text-red-800 border-red-200",
+  VERSION_MISMATCH: "bg-red-100 text-red-800 border-red-200",
+  INVITE_NOT_RECEIVED: "bg-orange-100 text-orange-800 border-orange-200",
+  WRONG_EMAIL: "bg-amber-100 text-amber-800 border-amber-200",
+  AWAITING_REGISTRATION: "bg-blue-100 text-blue-800 border-blue-200",
+  STALE: "bg-gray-100 text-gray-700 border-gray-200",
+  NONE: "bg-green-100 text-green-800 border-green-200",
+};
+
+interface Props {
+  accountId: string;
+  projectId: string;
+  refreshTrigger: number;
+  // Reference screenshot URL shown side-by-side with participant uploads
+  // during manual verification review.
+  referenceScreenshotUrl?: string | null;
+}
+
+export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshotUrl }: Props) {
+  const { showToast } = useToast();
+  const [data, setData] = useState<Payload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [stageFilter, setStageFilter] = useState<string>("");
+  const [flagFilter, setFlagFilter] = useState<string>("");
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Participant | null>(null);
+  // Multi-select for bulk operations.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (stageFilter) params.set("stage", stageFilter);
+      if (flagFilter) params.set("flag", flagFilter);
+      if (search.trim()) params.set("search", search.trim());
+      const url = `/api/accounts/${accountId}/pilot-tracker/participants?${params.toString()}`;
+      const res = await fetch(url, { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || res.statusText);
+      setData(json);
+    } catch (e: any) {
+      showToast(`Load failed: ${e.message}`, "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [accountId, stageFilter, flagFilter, search, showToast]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh, refreshTrigger]);
+
+  const clearFilters = () => {
+    setStageFilter("");
+    setFlagFilter("");
+    setSearch("");
+  };
+
+  const anyFilter = stageFilter !== "" || flagFilter !== "" || search.trim() !== "";
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllVisible = () => {
+    if (!data) return;
+    const visibleIds = data.participants.map((p) => p.id);
+    const allSelected = visibleIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        visibleIds.forEach((id) => next.delete(id));
+      } else {
+        visibleIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const markSelectedRegistered = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Mark ${selectedIds.size} participant(s) as beta-registered on Play?`)) return;
+    setBulkBusy(true);
+    try {
+      const res = await fetch(
+        `/api/accounts/${accountId}/pilot-tracker/bulk`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "markRegistered",
+            participantIds: Array.from(selectedIds),
+          }),
+        },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || res.statusText);
+      showToast(`Marked ${json.advanced} as registered.`, "success");
+      setSelectedIds(new Set());
+      refresh();
+    } catch (e: any) {
+      showToast(`Failed: ${e.message}`, "error");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  if (loading && !data) {
+    return <div className="p-4 text-gray-500 text-sm">Loading roster…</div>;
+  }
+  if (!data) return null;
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200">
+      {/* ── Funnel ─────────────────────────────────────────────────── */}
+      <div className="p-4 border-b border-gray-200">
+        <h4 className="text-sm font-semibold text-gray-900 mb-3">
+          Funnel · {data.total} participants
+        </h4>
+        <div className="grid grid-cols-7 gap-2 mb-3">
+          {STAGE_LABELS.map((label, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => setStageFilter(stageFilter === String(i) ? "" : String(i))}
+              className={`text-left rounded-md border p-2 hover:bg-gray-50 transition ${
+                stageFilter === String(i)
+                  ? "border-blue-500 bg-blue-50 ring-1 ring-blue-300"
+                  : "border-gray-200"
+              }`}
+            >
+              <div className="text-lg font-semibold text-gray-900">
+                {data.stageCounts[i] || 0}
+              </div>
+              <div className="text-xs text-gray-500 leading-tight mt-0.5">
+                {i}. {label}
+              </div>
+            </button>
+          ))}
+        </div>
+        {/* Flag chips */}
+        <div className="flex flex-wrap gap-1.5">
+          {Object.keys(FLAG_LABELS).map((f) => {
+            const count = data.flagCounts[f] || 0;
+            if (count === 0 && f !== "NONE") return null;
+            const active = flagFilter === f;
+            return (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFlagFilter(active ? "" : f)}
+                className={`text-xs px-2 py-1 rounded-full border ${
+                  FLAG_COLORS[f]
+                } ${active ? "ring-2 ring-offset-1 ring-blue-400" : ""}`}
+              >
+                {FLAG_LABELS[f]} · {count}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Filters ─────────────────────────────────────────────────── */}
+      <div className="px-4 py-2 border-b border-gray-200 flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 max-w-sm min-w-[200px]">
+          <Search size={14} className="absolute left-2 top-2.5 text-gray-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search employee ID, name, mobile, email…"
+            className="w-full pl-7 pr-2 py-1.5 border border-gray-300 rounded-md text-sm"
+          />
+        </div>
+        {anyFilter && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900"
+          >
+            <X size={12} /> Clear filters
+          </button>
+        )}
+        <div className="flex-1" />
+        <a
+          href={`/api/accounts/${accountId}/pilot-tracker/export?mode=devEmails`}
+          className="inline-flex items-center gap-1 text-xs text-gray-700 hover:text-gray-900 px-2 py-1 border border-gray-300 rounded"
+          title="Emails at AWAITING_REGISTRATION + CLICKED_NOT_REGISTERED for dev to add"
+        >
+          <Download size={12} /> Dev emails CSV
+        </a>
+        <a
+          href={`/api/accounts/${accountId}/pilot-tracker/export?mode=roster`}
+          className="inline-flex items-center gap-1 text-xs text-gray-700 hover:text-gray-900 px-2 py-1 border border-gray-300 rounded"
+        >
+          <Download size={12} /> Full roster CSV
+        </a>
+      </div>
+
+      {/* ── Bulk actions bar ────────────────────────────────────────── */}
+      {selectedIds.size > 0 && (
+        <div className="px-4 py-2 border-b border-blue-200 bg-blue-50 flex items-center gap-3 text-sm">
+          <span className="text-blue-900 font-medium">
+            {selectedIds.size} selected
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedIds(new Set())}
+            className="text-xs text-blue-800 hover:text-blue-900"
+          >
+            Clear
+          </button>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={markSelectedRegistered}
+            disabled={bulkBusy}
+            className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50"
+          >
+            <UserCheck size={12} />
+            {bulkBusy ? "Working…" : "Mark as beta-registered on Play"}
+          </button>
+        </div>
+      )}
+
+      {/* ── Table ───────────────────────────────────────────────────── */}
+      <div className="overflow-auto max-h-[500px]">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50 sticky top-0">
+            <tr>
+              <Th>
+                <input
+                  type="checkbox"
+                  checked={
+                    data.participants.length > 0 &&
+                    data.participants.every((p) => selectedIds.has(p.id))
+                  }
+                  onChange={toggleAllVisible}
+                />
+              </Th>
+              <Th>Emp ID</Th>
+              <Th>Name</Th>
+              <Th>Stage</Th>
+              <Th>Flag</Th>
+              <Th>Play Store email</Th>
+              <Th>Mobile</Th>
+              <Th>Version</Th>
+              <Th>Last activity</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.participants.length === 0 && (
+              <tr>
+                <td colSpan={9} className="py-8 text-center text-gray-500 text-sm">
+                  No participants match these filters.
+                </td>
+              </tr>
+            )}
+            {data.participants.map((p) => (
+              <tr
+                key={p.id}
+                onClick={() => setSelected(p)}
+                className="border-t border-gray-100 hover:bg-blue-50 cursor-pointer"
+              >
+                <Td>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(p.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => toggleSelected(p.id)}
+                  />
+                </Td>
+                <Td className="font-mono text-xs">{p.employeeId}</Td>
+                <Td>{p.fullName}</Td>
+                <Td>
+                  <StageBadge stage={p.currentStage} />
+                </Td>
+                <Td>
+                  <FlagBadge flag={p.issueFlag} />
+                </Td>
+                <Td className="text-xs text-gray-600">
+                  {p.playstoreEmail || "—"}
+                </Td>
+                <Td className="text-xs">
+                  {p.mobileNumberCorrected ? (
+                    <span title={`Original: ${p.mobileNumber}`}>
+                      <span className="text-amber-700 font-medium">
+                        {p.mobileNumberCorrected}
+                      </span>
+                      <span className="text-gray-400 ml-1">*</span>
+                    </span>
+                  ) : (
+                    p.mobileNumber
+                  )}
+                </Td>
+                <Td>
+                  <VersionBadge participant={p} />
+                </Td>
+                <Td className="text-xs text-gray-500">
+                  {formatRelativeTime(p.lastActivityAt)}
+                  {p.lastActivityBy && (
+                    <span className="text-gray-400 block text-[10px]">
+                      by {p.lastActivityBy}
+                    </span>
+                  )}
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── Detail drawer ────────────────────────────────────────────── */}
+      {selected && (
+        <ParticipantDrawer
+          accountId={accountId}
+          participant={selected}
+          referenceScreenshotUrl={referenceScreenshotUrl}
+          onClose={() => setSelected(null)}
+          onSaved={() => {
+            setSelected(null);
+            refresh();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Cell components ─────────────────────────────────────────────────
+
+function Th({ children }: { children: React.ReactNode }) {
+  return (
+    <th className="text-left px-3 py-2 text-xs font-medium text-gray-600 whitespace-nowrap">
+      {children}
+    </th>
+  );
+}
+function Td({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <td className={`px-3 py-2 whitespace-nowrap ${className || ""}`}>
+      {children}
+    </td>
+  );
+}
+
+function StageBadge({ stage }: { stage: number }) {
+  const label = STAGE_LABELS[stage] || "Unknown";
+  const isComplete = stage === 6;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded ${
+        isComplete
+          ? "bg-green-100 text-green-800"
+          : stage >= 3
+          ? "bg-blue-100 text-blue-800"
+          : "bg-gray-100 text-gray-700"
+      }`}
+    >
+      {isComplete && <CheckCircle2 size={12} />}
+      {stage}. {label}
+    </span>
+  );
+}
+
+function FlagBadge({ flag }: { flag: string }) {
+  if (flag === "NONE") return null;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${
+        FLAG_COLORS[flag] || FLAG_COLORS.NONE
+      }`}
+    >
+      {(flag === "CLICKED_NOT_REGISTERED" || flag === "VERSION_MISMATCH") && (
+        <AlertTriangle size={11} />
+      )}
+      {FLAG_LABELS[flag] || flag}
+    </span>
+  );
+}
+
+function VersionBadge({ participant }: { participant: Participant }) {
+  if (!participant.versionScreenshotDriveId) {
+    return <span className="text-xs text-gray-400">—</span>;
+  }
+  if (participant.versionVerified === "verified") {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-green-700 font-medium">
+        <CheckCircle2 size={12} /> verified
+        {participant.versionVerifiedByAi && (
+          <span className="text-gray-400 text-[10px]">(ai)</span>
+        )}
+      </span>
+    );
+  }
+  if (participant.versionVerified === "mismatch") {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-red-700 font-medium">
+        <AlertTriangle size={12} /> mismatch
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-blue-700 font-medium">
+      <Clock size={12} /> pending
+    </span>
+  );
+}
+
+function formatRelativeTime(ts: string): string {
+  const now = Date.now();
+  const then = new Date(ts).getTime();
+  if (Number.isNaN(then)) return ts;
+  const diffMs = now - then;
+  const min = Math.floor(diffMs / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const d = Math.floor(hr / 24);
+  return `${d}d ago`;
+}
+
+// ─── Detail drawer ──────────────────────────────────────────────────
+
+function ParticipantDrawer({
+  accountId,
+  participant,
+  referenceScreenshotUrl,
+  onClose,
+  onSaved,
+}: {
+  accountId: string;
+  participant: Participant;
+  referenceScreenshotUrl?: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { showToast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    betaRegistered: participant.betaRegistered,
+    versionVerified: participant.versionVerified as "pending" | "verified" | "mismatch",
+    playstoreEmail: participant.playstoreEmail || "",
+    reportedVersion: participant.reportedVersion || "",
+  });
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const patch: any = {};
+      if (form.betaRegistered !== participant.betaRegistered) {
+        patch.betaRegistered = form.betaRegistered;
+      }
+      if (form.versionVerified !== participant.versionVerified) {
+        patch.versionVerified = form.versionVerified;
+      }
+      if (form.playstoreEmail !== (participant.playstoreEmail || "")) {
+        patch.playstoreEmail = form.playstoreEmail || null;
+      }
+      if (form.reportedVersion !== (participant.reportedVersion || "")) {
+        patch.reportedVersion = form.reportedVersion || null;
+      }
+      if (Object.keys(patch).length === 0) {
+        showToast("No changes to save.", "info");
+        setBusy(false);
+        return;
+      }
+      const res = await fetch(
+        `/api/accounts/${accountId}/pilot-tracker/participants`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ participantId: participant.id, updates: patch }),
+        },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || res.statusText);
+      showToast(
+        json.stageChanged
+          ? `Saved. Stage advanced to ${json.newStage}.`
+          : "Saved.",
+        "success",
+      );
+      onSaved();
+    } catch (e: any) {
+      showToast(`Save failed: ${e.message}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/30 z-50 flex justify-end"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md h-full bg-white shadow-xl overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+          <div>
+            <div className="text-xs text-gray-500 font-mono">
+              {participant.employeeId}
+            </div>
+            <div className="text-lg font-semibold text-gray-900">
+              {participant.fullName}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-900 p-1"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="p-4 space-y-4">
+          <ReadField label="Stage">
+            <StageBadge stage={participant.currentStage} />
+          </ReadField>
+          <ReadField label="Flag">
+            <FlagBadge flag={participant.issueFlag} />
+          </ReadField>
+          <ReadField label="Mobile">
+            {participant.mobileNumberCorrected ? (
+              <span>
+                <span className="text-amber-700 font-medium">
+                  {participant.mobileNumberCorrected}
+                </span>
+                <span className="text-gray-400 text-xs ml-2">
+                  (original: {participant.mobileNumber})
+                </span>
+              </span>
+            ) : (
+              participant.mobileNumber
+            )}
+          </ReadField>
+
+          <hr className="border-gray-100" />
+
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Play Store email
+            </label>
+            <input
+              type="email"
+              value={form.playstoreEmail}
+              onChange={(e) => setForm({ ...form, playstoreEmail: e.target.value })}
+              className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+              placeholder="user@gmail.com"
+            />
+            {participant.emailConfirmedIsPlaystore && (
+              <span className="text-xs text-green-600 mt-0.5 inline-block">
+                ✓ Participant acknowledged this is their Play Store email
+              </span>
+            )}
+          </div>
+
+          <div>
+            <label className="inline-flex items-center gap-2 text-sm text-gray-800">
+              <input
+                type="checkbox"
+                checked={form.betaRegistered}
+                onChange={(e) => setForm({ ...form, betaRegistered: e.target.checked })}
+              />
+              <span>
+                Beta registered on Play (Stage 2 gate)
+              </span>
+            </label>
+            {form.betaRegistered && participant.betaRegisteredAt && (
+              <p className="text-xs text-gray-500 mt-0.5 ml-6">
+                Since {new Date(participant.betaRegisteredAt).toLocaleString()}
+              </p>
+            )}
+          </div>
+
+          <ReadField label="Invitation accepted (declared)">
+            {participant.invitationAcceptedDeclared ? "Yes" : "No"}
+            {participant.invitationLinkFailed && (
+              <span className="text-xs text-orange-600 ml-2">
+                (link didn't work)
+              </span>
+            )}
+          </ReadField>
+
+          <ReadField label="App updated (declared)">
+            {participant.appUpdatedDeclared ? "Yes" : "No"}
+          </ReadField>
+
+          {participant.versionScreenshotUrl && (
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Version screenshot review
+              </label>
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <div className="border border-gray-200 rounded p-2 text-center">
+                  <div className="text-[10px] text-gray-500 mb-1">Participant</div>
+                  <a
+                    href={participant.versionScreenshotUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 hover:underline"
+                  >
+                    Open in Drive
+                  </a>
+                </div>
+                <div className="border border-gray-200 rounded p-2 text-center">
+                  <div className="text-[10px] text-gray-500 mb-1">Reference</div>
+                  {referenceScreenshotUrl ? (
+                    <a
+                      href={referenceScreenshotUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-600 hover:underline"
+                    >
+                      Open in Drive
+                    </a>
+                  ) : (
+                    <span className="text-xs text-gray-400">Not uploaded</span>
+                  )}
+                </div>
+              </div>
+              {participant.versionAiExtractedText && (
+                <p className="text-xs text-gray-600">
+                  AI read: <span className="font-mono">{participant.versionAiExtractedText}</span>
+                  {participant.versionVerifiedByAi && (
+                    <span className="text-green-600 ml-1">(auto-verified)</span>
+                  )}
+                </p>
+              )}
+              {/* Quick-action buttons — set form directly and save */}
+              <div className="mt-2 flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, versionVerified: "verified" })}
+                  className={`text-xs px-2 py-1 rounded border ${
+                    form.versionVerified === "verified"
+                      ? "bg-green-100 border-green-300 text-green-800"
+                      : "border-gray-300 hover:bg-gray-50"
+                  }`}
+                >
+                  Verify
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, versionVerified: "mismatch" })}
+                  className={`text-xs px-2 py-1 rounded border ${
+                    form.versionVerified === "mismatch"
+                      ? "bg-red-100 border-red-300 text-red-800"
+                      : "border-gray-300 hover:bg-gray-50"
+                  }`}
+                >
+                  Mark mismatch
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Version verified
+            </label>
+            <select
+              value={form.versionVerified}
+              onChange={(e) =>
+                setForm({ ...form, versionVerified: e.target.value as any })
+              }
+              className="border border-gray-300 rounded px-2 py-1 text-sm"
+            >
+              <option value="pending">pending</option>
+              <option value="verified">verified</option>
+              <option value="mismatch">mismatch</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Reported version (typed)
+            </label>
+            <input
+              type="text"
+              value={form.reportedVersion}
+              onChange={(e) => setForm({ ...form, reportedVersion: e.target.value })}
+              className="border border-gray-300 rounded px-2 py-1 text-sm w-full"
+              placeholder="5.1.7-beta"
+            />
+          </div>
+        </div>
+        <div className="p-4 border-t border-gray-200 flex justify-end gap-2 sticky bottom-0 bg-white">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm text-gray-700 hover:text-gray-900"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={busy}
+            className="px-4 py-1.5 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 disabled:opacity-50"
+          >
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReadField({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="text-xs font-medium text-gray-700 mb-0.5">{label}</div>
+      <div className="text-sm text-gray-900">{children}</div>
+    </div>
+  );
+}

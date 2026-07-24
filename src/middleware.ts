@@ -15,6 +15,11 @@ export default auth((req) => {
                      // gracefully falls back to internal CST OS auth when
                      // there's no cookie, so this is safe to expose.
                      pathname.startsWith("/api/pin-validator/") ||
+                     // Pilot Tracker public API — QR-token gated in each route.
+                     // Each endpoint validates the qrToken against PilotProject
+                     // and only exposes participant-scoped data after identity
+                     // match. Safe to expose without NextAuth.
+                     pathname.startsWith("/api/pilot/") ||
                      /^\/api\/meetings\/[^/]+\/register$/.test(pathname) ||
                      /^\/api\/share\/[^/]+$/.test(pathname);
   const isPublicPage = pathname === "/" ||
@@ -25,7 +30,9 @@ export default auth((req) => {
                       pathname.startsWith("/addin") ||
                       // External validator UI — magic-link cookie session,
                       // not NextAuth. Don't bounce through Google sign-in.
-                      pathname.startsWith("/pin-validator");
+                      pathname.startsWith("/pin-validator") ||
+                      // Pilot Tracker public portal — QR-token gated.
+                      pathname.startsWith("/pilot/");
 
   // Allow auth-related paths to bypass middleware
   if (isAuthPage || isAuthApi) {
