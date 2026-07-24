@@ -167,6 +167,7 @@ const UPDATABLE_FIELDS = [
   "playStoreAppUrl",
   "blockedEmailDomains",
   "staleThresholdDays",
+  "internalBetaRequired",
   "status",
   "pilotStart",
   "pilotEnd",

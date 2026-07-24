@@ -12,7 +12,7 @@
  * `pilot-tracker:{qrToken}:participantId` so returning visits skip the
  * identity step. Clearing (or moving phones) drops back to identity.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Circle, Mail, ExternalLink, Smartphone, Camera, LogOut, AlertTriangle, Info } from "lucide-react";
 
 interface Project {
@@ -23,6 +23,7 @@ interface Project {
   referenceScreenshotUrl: string | null;
   status: string;
   blockedEmailDomains: string | null;
+  internalBetaRequired?: boolean;
 }
 
 interface Participant {
@@ -182,33 +183,54 @@ function IdentityMatch({
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  const search = async () => {
-    setBusy(true);
-    setError(null);
-    setInfo(null);
-    setMatches([]);
-    try {
-      const res = await fetch(`/api/pilot/${qrToken}/lookup`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        setError(json.error || "Lookup failed");
-        return;
-      }
-      if (json.matches.length === 0) {
-        setInfo("No matches found. Check with your CST rep — your record may not be on the roster yet.");
-      } else {
-        setMatches(json.matches);
-      }
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
+  // Debounced auto-search. Fires 350ms after the user stops typing so we
+  // don't spam the lookup endpoint on every keystroke. The abort ref
+  // cancels a pending fetch when a newer query supersedes it.
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setMatches([]);
+      setInfo(null);
+      setError(null);
+      return;
     }
-  };
+    const t = setTimeout(async () => {
+      abortRef.current?.abort();
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      setBusy(true);
+      setError(null);
+      setInfo(null);
+      try {
+        const res = await fetch(`/api/pilot/${qrToken}/lookup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: trimmed }),
+          signal: ctrl.signal,
+        });
+        const json = await res.json();
+        if (ctrl.signal.aborted) return;
+        if (!res.ok) {
+          setError(json.error || "Lookup failed");
+          setMatches([]);
+          return;
+        }
+        if (json.matches.length === 0) {
+          setMatches([]);
+          setInfo("No matches yet. Try more of your name, Emp ID, or mobile.");
+        } else {
+          setMatches(json.matches);
+        }
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;
+        setError(e?.message || "Lookup failed");
+      } finally {
+        if (!ctrl.signal.aborted) setBusy(false);
+      }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [query, qrToken]);
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
@@ -216,25 +238,24 @@ function IdentityMatch({
         Find your record
       </h2>
       <p className="text-sm text-gray-600 mb-4">
-        Enter your Employee ID, name, or mobile number.
+        Type your Employee ID, name, or mobile number — results appear as
+        you type.
       </p>
-      <div className="flex gap-2">
+      <div className="relative">
         <input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") search(); }}
           placeholder="e.g. EMP-042, Juan, or 09171234567"
-          className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm"
+          className="w-full border border-gray-300 rounded px-3 py-2 text-sm pr-10"
+          autoFocus
+          autoComplete="off"
         />
-        <button
-          type="button"
-          onClick={search}
-          disabled={busy || query.trim().length < 2}
-          className="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-        >
-          {busy ? "…" : "Find me"}
-        </button>
+        {busy && (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">
+            …
+          </span>
+        )}
       </div>
       {error && (
         <div className="mt-3 text-sm text-red-600 flex items-start gap-2">
@@ -312,12 +333,16 @@ function OnboardingChecklist({
         project={project}
         onDone={onRefresh}
       />
-      <InvitationStep
-        qrToken={qrToken}
-        participant={participant}
-        project={project}
-        onDone={onRefresh}
-      />
+      {/* Screen C — hidden when this pilot doesn't require an internal-beta
+          opt-in (participant will just update from the public store). */}
+      {project.internalBetaRequired !== false && (
+        <InvitationStep
+          qrToken={qrToken}
+          participant={participant}
+          project={project}
+          onDone={onRefresh}
+        />
+      )}
       <AppUpdateStep
         qrToken={qrToken}
         participant={participant}
@@ -665,7 +690,11 @@ function AppUpdateStep({
     }
   };
 
-  if (!participant.invitationAcceptedDeclared || !participant.betaRegistered) {
+  // When the pilot doesn't require internal-beta enrollment, Screens B → D
+  // proceed directly. Only gate the app-update step when internal beta
+  // actually applies.
+  const gatedByBeta = project.internalBetaRequired !== false;
+  if (gatedByBeta && (!participant.invitationAcceptedDeclared || !participant.betaRegistered)) {
     return (
       <Step done={false} title="3. Update the app">
         <p className="text-gray-500 text-xs">Complete step 2 first.</p>

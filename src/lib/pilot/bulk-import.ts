@@ -30,6 +30,7 @@ export interface ParsedRow {
   employeeId?: string;
   fullName?: string;
   mobileNumber?: string;
+  playstoreEmail?: string;
   status: RowStatus;
   message?: string;
 }
@@ -67,78 +68,114 @@ export function validateWorkbook(buffer: Buffer): ValidationReport {
   const raw: Record<string, any>[] = XLSX.utils.sheet_to_json(sheet, { defval: "" });
   const rows: ParsedRow[] = [];
   const seenIds = new Set<string>();
+  // Sequential counter for participants missing an Emp ID entirely — we
+  // synthesize NO-ID-1, NO-ID-2… so the roster still imports and the admin
+  // can fix the ID later without losing the row.
+  let missingIdCounter = 0;
 
   raw.forEach((r, idx) => {
     const rowNumber = idx + 2; // header is row 1
-    const employeeId = readField(r, ["Employee ID", "employeeId", "emp_id", "ID"]);
-    const fullName = readField(r, ["Full Name", "fullName", "Name", "name"]);
-    const mobileNumber = readField(r, ["Mobile Number", "mobileNumber", "Mobile", "mobile"]);
+    let employeeId = readField(r, [
+      "Employee ID", "Emp ID", "employeeId", "emp_id", "ID", "EmpID",
+    ]);
+    let fullName = readField(r, [
+      "Full Name", "Name", "fullName", "name",
+    ]);
+    const mobileNumberRaw = readField(r, [
+      "Mobile Number", "Mobile", "mobileNumber", "mobile", "Phone",
+    ]);
+    const playstoreEmail = readField(r, [
+      "Email Address", "Email", "Play Store Email", "playstoreEmail", "email",
+    ]);
 
     // Silently skip completely empty rows. Excel commonly saves sheets with
     // a used-range that extends thousands of rows past the last real cell,
     // and sheet_to_json walks the full range. Without this filter a user
     // uploads 5 real rows and sees 12,000 "Employee ID is required" errors.
-    if (!employeeId && !fullName && !mobileNumber) return;
+    if (!employeeId && !fullName && !mobileNumberRaw && !playstoreEmail) return;
 
-    // Silently skip the template's notes/guide row (row 3). The generated
-    // template has row 2 = example + row 3 = "(required; ...)" notes. When
-    // an admin re-uploads the untouched template we don't want either of
-    // those to land in the roster. Detected by the "(required" marker in
-    // any field.
-    const looksLikeNotesRow = [employeeId, fullName, mobileNumber].some(
+    // Silently skip the template's notes/guide row (row 3). Detected by
+    // the "(required" marker in any field.
+    const looksLikeNotesRow = [employeeId, fullName, mobileNumberRaw, playstoreEmail].some(
       (v) => v.trim().toLowerCase().startsWith("(required"),
     );
     if (looksLikeNotesRow) return;
 
-    // Silently skip the template's example row ("EMP-001 / Juan Dela Cruz /
-    // 09171234567"). Detected by exact match on all three fields — an
-    // extremely narrow filter so we don't accidentally drop a real
-    // participant named Juan Dela Cruz with EMP-001.
+    // Silently skip the template's example row. Very narrow match — Emp ID
+    // "EMP-001" + name "Juan Dela Cruz" + example mobile.
     if (
       employeeId === "EMP-001" &&
       fullName === "Juan Dela Cruz" &&
-      normalizeMobile(mobileNumber) === "09171234567"
+      normalizeMobile(mobileNumberRaw) === "639171234567"
     ) {
       return;
     }
 
-    // Required-field checks
-    if (!employeeId) {
-      rows.push({ rowNumber, status: "error", message: "Employee ID is required" });
-      return;
+    // Emp ID fallback #1: numeric prefix bleeding into Full Name column.
+    // Excel commonly does this when column A is blank — the number lands
+    // in column B. Example: Emp ID: "" / Name: "1 TARKIE, ABI"
+    //   → Emp ID: "1", Name: "TARKIE, ABI"
+    if (!employeeId && fullName) {
+      const m = fullName.match(/^(\d+)\s+(.+)$/);
+      if (m) {
+        employeeId = m[1];
+        fullName = m[2].trim();
+      }
     }
+
+    // Emp ID fallback #2: no ID at all — synthesize NO-ID-N and flag as
+    // warn so the row still imports and the admin can fix it later.
+    let missingIdSynthesized = false;
+    if (!employeeId) {
+      missingIdCounter++;
+      employeeId = `NO-ID-${missingIdCounter}`;
+      missingIdSynthesized = true;
+    }
+
+    // Required-field checks — after fallbacks
     if (!fullName) {
       rows.push({ rowNumber, employeeId, status: "error", message: "Full Name is required" });
       return;
     }
-    if (!mobileNumber) {
-      rows.push({ rowNumber, employeeId, fullName, status: "error", message: "Mobile Number is required" });
+    if (!mobileNumberRaw) {
+      rows.push({
+        rowNumber, employeeId, fullName, playstoreEmail,
+        status: "error", message: "Mobile Number is required",
+      });
       return;
     }
 
-    // Normalize mobile: strip non-digits, keep leading 0 or country prefix
-    // as typed. Not a strict validator — different pilots have different
-    // conventions and we don't want to reject on spacing/punctuation.
-    const normalizedMobile = normalizeMobile(mobileNumber);
-    if (normalizedMobile.length < 8) {
+    // Normalize mobile to canonical E.164-ish form: strip everything
+    // non-digit, then coerce to 639… (PH country prefix). We accept:
+    //   09171234567  → 639171234567
+    //    9171234567  → 639171234567
+    //   639171234567 → 639171234567 (unchanged)
+    //  +639171234567 → 639171234567
+    //   (0917) 123-4567 → 639171234567
+    const normalizedMobile = normalizeMobilePH(mobileNumberRaw);
+    if (!normalizedMobile) {
       rows.push({
-        rowNumber,
-        employeeId,
-        fullName,
-        mobileNumber,
+        rowNumber, employeeId, fullName,
+        mobileNumber: mobileNumberRaw, playstoreEmail,
         status: "error",
-        message: `Mobile number "${mobileNumber}" is too short after normalization`,
+        message: `Mobile "${mobileNumberRaw}" isn't a recognizable PH number`,
       });
       return;
+    }
+
+    // Basic email sanity — reject if it's clearly malformed. Accepting
+    // empty is fine (email is optional at import time; participant
+    // supplies it on the portal).
+    let emailWarning: string | null = null;
+    if (playstoreEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(playstoreEmail)) {
+      emailWarning = `Email "${playstoreEmail}" looks malformed — participant will need to confirm/edit on the portal`;
     }
 
     // Duplicate check within the same upload
     if (seenIds.has(employeeId)) {
       rows.push({
-        rowNumber,
-        employeeId,
-        fullName,
-        mobileNumber: normalizedMobile,
+        rowNumber, employeeId, fullName,
+        mobileNumber: normalizedMobile, playstoreEmail,
         status: "error",
         message: `Employee ID "${employeeId}" appears more than once in this file`,
       });
@@ -146,12 +183,16 @@ export function validateWorkbook(buffer: Buffer): ValidationReport {
     }
     seenIds.add(employeeId);
 
+    // Assemble any warnings
+    const warnings: string[] = [];
+    if (missingIdSynthesized) warnings.push(`Emp ID was blank — assigned "${employeeId}" placeholder`);
+    if (emailWarning) warnings.push(emailWarning);
+
     rows.push({
-      rowNumber,
-      employeeId,
-      fullName,
-      mobileNumber: normalizedMobile,
-      status: "ok",
+      rowNumber, employeeId, fullName,
+      mobileNumber: normalizedMobile, playstoreEmail,
+      status: warnings.length ? "warn" : "ok",
+      message: warnings.join("; ") || undefined,
     });
   });
 
@@ -205,13 +246,17 @@ export async function applyValidated(args: {
       // Update the display fields via a raw update (updateParticipant()
       // is designed for state-machine fields; these are import-side
       // fields that don't affect stage). Kept minimal.
+      const patch: Record<string, unknown> = {
+        fullName: row.fullName,
+        mobileNumber: row.mobileNumber,
+        updatedAt: new Date().toISOString(),
+      };
+      // Only overwrite playstoreEmail if the roster shipped one — never
+      // erase a self-declared email during re-import.
+      if (row.playstoreEmail) patch.playstoreEmail = row.playstoreEmail;
       await db
         .update(pilotParticipants)
-        .set({
-          fullName: row.fullName,
-          mobileNumber: row.mobileNumber,
-          updatedAt: new Date().toISOString(),
-        })
+        .set(patch)
         .where(eq(pilotParticipants.id, existingId));
       updated++;
     } else {
@@ -220,6 +265,7 @@ export async function applyValidated(args: {
         employeeId: row.employeeId,
         fullName: row.fullName,
         mobileNumber: row.mobileNumber,
+        playstoreEmail: row.playstoreEmail || null,
         lastActivityBy: "cst",
       });
       inserted++;
@@ -253,19 +299,24 @@ export async function applyValidated(args: {
 /**
  * Generate the downloadable template as an XLSX buffer. One sheet
  * "Roster" with header row + one example row + a notes row.
+ *
+ * Mobile is shown in 639… form intentionally — Excel strips leading zeros
+ * from 09… numbers if the cell isn't pre-formatted as text, which broke
+ * previous imports.
  */
 export function generateTemplate(): Buffer {
-  const headers = ["Employee ID", "Full Name", "Mobile Number"];
-  const example = ["EMP-001", "Juan Dela Cruz", "09171234567"];
+  const headers = ["Employee ID", "Full Name", "Mobile Number", "Email Address"];
+  const example = ["EMP-001", "Juan Dela Cruz", "639171234567", "juan@example.com"];
   const notes = [
     "(required; must be unique within this pilot)",
     "(required)",
-    "(required; digits only — spaces/dashes/parentheses are OK, we normalize)",
+    "(required; use 639XXXXXXXXX to survive Excel's leading-zero eat — 09/+639/9 forms also OK)",
+    "(optional at import; participant confirms/edits on the portal)",
   ];
   const aoa = [headers, example, notes];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   // Column widths for readability
-  ws["!cols"] = [{ wch: 20 }, { wch: 30 }, { wch: 20 }];
+  ws["!cols"] = [{ wch: 20 }, { wch: 30 }, { wch: 20 }, { wch: 30 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Roster");
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
@@ -285,6 +336,49 @@ function readField(row: Record<string, any>, candidates: string[]): string {
   return "";
 }
 
+/** Loose digits-only normalizer. Kept for internal use. */
 function normalizeMobile(input: string): string {
   return input.replace(/[^0-9+]/g, "").replace(/^\+/, "");
+}
+
+/**
+ * PH-mobile normalization. Returns the canonical 639XXXXXXXXX form (12
+ * digits, no plus) if the input parses as a plausible PH mobile, or ""
+ * if it doesn't.
+ *
+ * Accepts:
+ *   09171234567        (11 digits, leading 0)
+ *    9171234567        (10 digits, missing 0)
+ *   639171234567       (12 digits, country code)
+ *  +639171234567       (with plus)
+ *  0917 123 4567       (any spacing / dashes / parens)
+ *
+ * Rejects anything that isn't a plausible mobile — landlines, garbage,
+ * short strings. PH mobiles are always +63 + 9XX + 7 digits = 12 digits
+ * in canonical form, and the subscriber number always starts with 9.
+ */
+export function normalizeMobilePH(input: string): string {
+  if (!input) return "";
+  // Strip everything non-digit, drop leading +.
+  const digits = input.replace(/[^\d]/g, "");
+  if (!digits) return "";
+
+  // 09XXXXXXXXX (11 digits) → 63 + strip the leading 0
+  if (digits.length === 11 && digits.startsWith("09")) {
+    return "63" + digits.slice(1);
+  }
+  // 9XXXXXXXXX (10 digits, missing leading 0)
+  if (digits.length === 10 && digits.startsWith("9")) {
+    return "63" + digits;
+  }
+  // 639XXXXXXXXX (12 digits, country code prefix)
+  if (digits.length === 12 && digits.startsWith("639")) {
+    return digits;
+  }
+  // 0063… or 63… without the 9 marker → treat as trailing-9-required
+  // path if a stripped leading 0 gets us to 639… of the right length.
+  if (digits.length === 13 && digits.startsWith("0639")) {
+    return digits.slice(1);
+  }
+  return "";
 }

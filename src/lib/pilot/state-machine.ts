@@ -74,6 +74,11 @@ export interface ProjectState {
   blockedEmailDomains?: string | null;
   // Days of inactivity before STALE fires. Spec default: 3.
   staleThresholdDays?: number | null;
+  // Whether this pilot requires participants to opt into an internal-test
+  // track (Screens C + D). When false, Stages 2 (beta registered) and 3
+  // (invitation accepted) are auto-satisfied — the participant just needs
+  // to update the app from the public store. Defaults to true (safest).
+  internalBetaRequired?: boolean | null;
 }
 
 export interface ComputedState {
@@ -92,8 +97,20 @@ export function computeStage(
   participant: ParticipantState,
   project: ProjectState = {},
 ): ComputedState {
-  const stage = computeStageOnly(participant);
-  const issueFlag = computeIssueFlag(participant, project, stage);
+  // When the project doesn't require internal-beta enrollment (public app
+  // pilot), synthesize the two beta gates as satisfied. Everything else in
+  // the derivation is unchanged.
+  const p: ParticipantState =
+    project.internalBetaRequired === false
+      ? {
+          ...participant,
+          betaRegistered: true,
+          invitationAcceptedDeclared: true,
+          invitationLinkFailed: false, // Never fires the "invite" flag on public flow.
+        }
+      : participant;
+  const stage = computeStageOnly(p);
+  const issueFlag = computeIssueFlag(p, project, stage);
   return { stage, issueFlag };
 }
 

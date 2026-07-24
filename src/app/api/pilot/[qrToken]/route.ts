@@ -32,6 +32,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ qrToken: s
       referenceScreenshotUrl: pilotProjects.referenceScreenshotUrl,
       status: pilotProjects.status,
       blockedEmailDomains: pilotProjects.blockedEmailDomains,
+      internalBetaRequired: pilotProjects.internalBetaRequired,
     })
     .from(pilotProjects)
     .where(eq(pilotProjects.qrToken, qrToken))

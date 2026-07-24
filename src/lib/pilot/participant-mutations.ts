@@ -98,6 +98,7 @@ export async function updateParticipant(
     .select({
       blockedEmailDomains: pilotProjects.blockedEmailDomains,
       staleThresholdDays: pilotProjects.staleThresholdDays,
+      internalBetaRequired: pilotProjects.internalBetaRequired,
     })
     .from(pilotProjects)
     .where(eq(pilotProjects.id, current.projectId))
@@ -173,6 +174,7 @@ export async function updateParticipant(
     {
       blockedEmailDomains: project?.blockedEmailDomains ?? null,
       staleThresholdDays: project?.staleThresholdDays ?? null,
+      internalBetaRequired: project?.internalBetaRequired ?? true,
     },
   );
 

@@ -1293,6 +1293,13 @@ export const pilotProjects = sqliteTable("PilotProject", {
   //                     drive the "update the app" step on Screen D.
   betaInviteUrl:               text("betaInviteUrl"),
   playStoreAppUrl:             text("playStoreAppUrl"),
+  // Whether this pilot requires participants to opt into Google Play's
+  // internal-testing track. When true (default), participants go through
+  // Screens C (invite acceptance) + D (app update) in the portal flow.
+  // When false, we're piloting a publicly-listed app so participants can
+  // update straight from the Play Store — Screens C is skipped and
+  // betaInviteUrl becomes optional. Toggled from the admin settings.
+  internalBetaRequired:        integer("internalBetaRequired", { mode: "boolean" }).default(true).notNull(),
   // Reference screenshot the admin uploads showing what the correct
   // version screen looks like. Double duty: (a) shown to participants on
   // Screen F as a "your screen should look like this" guide, (b) shown

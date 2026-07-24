@@ -870,6 +870,7 @@ export async function ensureAccessSchema(): Promise<void> {
       targetAppVersion TEXT,
       betaInviteUrl TEXT,
       playStoreAppUrl TEXT,
+      internalBetaRequired INTEGER DEFAULT 1 NOT NULL,
       referenceScreenshotDriveId TEXT,
       referenceScreenshotUrl TEXT,
       driveFolderId TEXT,
@@ -884,6 +885,10 @@ export async function ensureAccessSchema(): Promise<void> {
       FOREIGN KEY (clientProfileId) REFERENCES ClientProfile(id) ON DELETE CASCADE
     )`);
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS PilotProject_clientProfile_idx ON PilotProject(clientProfileId)`); } catch {}
+    // Additive migration — internalBetaRequired was added after initial ship.
+    // Existing rows default to 1 (true) so pre-migration pilots keep the
+    // Screen C/D flow they were already using.
+    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN internalBetaRequired INTEGER DEFAULT 1 NOT NULL`); } catch {}
 
     await db.run(sql`CREATE TABLE IF NOT EXISTS PilotParticipant (
       id TEXT PRIMARY KEY,

@@ -15,6 +15,7 @@
  * which calls updateParticipant() → re-derives stage + flag automatically.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Search, X, AlertTriangle, CheckCircle2, Clock, Download, UserCheck } from "lucide-react";
 import { useToast } from "@/components/ui/ToastContext";
 
@@ -577,9 +578,13 @@ function ParticipantDrawer({
     }
   };
 
-  return (
+  // Render via portal to document.body so no ancestor's stacking context
+  // (e.g. the AccountHub tab bar) can clip us. z-[100] beats any modal
+  // header in the app that uses z-50.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div
-      className="fixed inset-0 bg-black/30 z-50 flex justify-end"
+      className="fixed inset-0 bg-black/30 z-[100] flex justify-end"
       onClick={onClose}
     >
       <div
@@ -793,7 +798,8 @@ function ParticipantDrawer({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

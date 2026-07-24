@@ -46,11 +46,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ qrToken: s
       return NextResponse.json({ error: "Pilot not available" }, { status: 404 });
     }
 
-    // Broad match across three fields. Digit-only substring for mobile,
-    // case-insensitive substring for id + name.
+    // Broad match across three fields. Case-insensitive substring for id +
+    // name. For mobile: match on the last 10 digits (the PH subscriber
+    // number) because the storage form is 639XXXXXXXXX but users type any
+    // of 09XXXXXXXXX / +639XXXXXXXXX / 9XXXXXXXXX. The last-10-digits
+    // suffix is invariant across all four representations.
     const digitsOnly = query.replace(/\D/g, "");
     const like_ = `%${query.toLowerCase()}%`;
-    const digitsLike = digitsOnly.length >= 3 ? `%${digitsOnly}%` : null;
+    // If the user typed enough digits, take the last 10 as the mobile
+    // matcher key. Shorter numeric queries still fall through as substring.
+    let mobileMatcher: string | null = null;
+    if (digitsOnly.length >= 10) {
+      // Full mobile-length input — match trailing 10 digits.
+      mobileMatcher = `%${digitsOnly.slice(-10)}%`;
+    } else if (digitsOnly.length >= 3) {
+      // Partial mobile input — user is still typing. Straight substring.
+      mobileMatcher = `%${digitsOnly}%`;
+    }
 
     const rows = await db
       .select({
@@ -67,10 +79,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ qrToken: s
           or(
             like(pilotParticipants.employeeId, like_),
             like(pilotParticipants.fullName, like_),
-            ...(digitsLike
+            ...(mobileMatcher
               ? [
-                  like(pilotParticipants.mobileNumber, digitsLike),
-                  like(pilotParticipants.mobileNumberCorrected, digitsLike),
+                  like(pilotParticipants.mobileNumber, mobileMatcher),
+                  like(pilotParticipants.mobileNumberCorrected, mobileMatcher),
                 ]
               : []),
           )!,

@@ -17,8 +17,10 @@
  * this component just fetches and posts.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Rocket, Upload, Download, QrCode, Settings, ImageIcon, Copy, ExternalLink,
+  ChevronDown, ChevronUp, Maximize2, X,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { useToast } from "@/components/ui/ToastContext";
@@ -32,6 +34,7 @@ interface PilotProject {
   targetAppVersion: string | null;
   betaInviteUrl: string | null;
   playStoreAppUrl: string | null;
+  internalBetaRequired: boolean;
   referenceScreenshotDriveId: string | null;
   referenceScreenshotUrl: string | null;
   driveFolderId: string | null;
@@ -76,6 +79,9 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
   const [importReport, setImportReport] = useState<ImportReport | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [showImport, setShowImport] = useState(false);
+  const [showQr, setShowQr] = useState(false);
+  const [qrEnlarged, setQrEnlarged] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const refFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -291,12 +297,11 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
 
   return (
     <div className="p-6 space-y-6">
-      {/* ── Header — project title + primary actions ──────────────────── */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1 min-w-0">
-          <h3 className="text-lg font-semibold text-gray-900">{project.name}</h3>
+      {/* ── Compact header — title + portal + toggle chips ────────────── */}
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <h3 className="text-base font-semibold text-gray-900">{project.name}</h3>
           <p className="text-xs text-gray-500 mt-0.5 break-all">
-            Portal:{" "}
             <a
               href={portalUrl}
               target="_blank"
@@ -310,58 +315,74 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
               onClick={copyPortalUrl}
               className="ml-2 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800"
             >
-              <Copy size={12} />
+              <Copy size={11} />
               Copy
             </button>
           </p>
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowSettings((s) => !s)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50"
-            >
-              <Settings size={14} />
-              {showSettings ? "Hide" : "Show"} settings
-            </button>
-            {project.driveFolderId && (
-              <a
-                href={`https://drive.google.com/drive/folders/${project.driveFolderId}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50"
-              >
-                <ExternalLink size={14} />
-                Drive folder
-              </a>
-            )}
-          </div>
         </div>
-
-        {/* QR code panel — participants scan this to reach the portal. */}
-        <div className="shrink-0 flex flex-col items-center gap-1.5 bg-white border border-gray-200 rounded-lg p-3">
-          <div className="w-[144px] h-[144px] flex items-center justify-center">
-            {qrDataUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={qrDataUrl}
-                alt="Portal QR code"
-                className="w-[144px] h-[144px]"
-              />
-            ) : (
-              <QrCode size={40} className="text-gray-300" />
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={downloadQr}
-            disabled={!qrDataUrl}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
-          >
-            <Download size={12} />
-            Download QR
-          </button>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <ToggleChip active={showQr} onClick={() => setShowQr((s) => !s)} icon={<QrCode size={12} />}>
+            QR
+          </ToggleChip>
+          <ToggleChip active={showImport} onClick={() => setShowImport((s) => !s)} icon={<Upload size={12} />}>
+            Import
+          </ToggleChip>
+          <ToggleChip active={showSettings} onClick={() => setShowSettings((s) => !s)} icon={<Settings size={12} />}>
+            Settings
+          </ToggleChip>
+          {project.driveFolderId && (
+            <a
+              href={`https://drive.google.com/drive/folders/${project.driveFolderId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 px-2.5 py-1 border border-gray-300 rounded-md text-xs text-gray-700 hover:bg-gray-50"
+            >
+              <ExternalLink size={12} />
+              Drive
+            </a>
+          )}
         </div>
       </div>
+
+      {/* ── QR panel (collapsible) ────────────────────────────────────── */}
+      {showQr && (
+        <div className="bg-white rounded-lg border border-gray-200 p-3 flex items-center gap-4">
+          <div className="w-[100px] h-[100px] flex items-center justify-center shrink-0 border border-gray-100 rounded">
+            {qrDataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={qrDataUrl} alt="Portal QR code" className="w-[100px] h-[100px]" />
+            ) : (
+              <QrCode size={32} className="text-gray-300" />
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs text-gray-600">
+              Share this QR so participants can scan into the portal without a
+              typed URL. Enlarge for on-screen presenting.
+            </div>
+            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setQrEnlarged(true)}
+                disabled={!qrDataUrl}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Maximize2 size={11} />
+                Enlarge
+              </button>
+              <button
+                type="button"
+                onClick={downloadQr}
+                disabled={!qrDataUrl}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Download size={11} />
+                PNG
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Settings panel (collapsible) ─────────────────────────────── */}
       {showSettings && (
@@ -374,7 +395,8 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
         />
       )}
 
-      {/* ── Import roster section ────────────────────────────────────── */}
+      {/* ── Import roster section (collapsible) ──────────────────────── */}
+      {showImport && (
       <div className="bg-white rounded-lg border border-gray-200 p-4">
         <div className="flex items-center justify-between gap-4 mb-3">
           <h4 className="text-sm font-semibold text-gray-900">
@@ -482,6 +504,7 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
           </div>
         )}
       </div>
+      )}
 
       {/* ── Roster grid ──────────────────────────────────────────────── */}
       <PilotRosterGrid
@@ -490,7 +513,92 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
         refreshTrigger={rosterRefresh}
         referenceScreenshotUrl={project.referenceScreenshotUrl}
       />
+
+      {/* ── Enlarged QR modal ───────────────────────────────────────── */}
+      {qrEnlarged && qrDataUrl && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4"
+            onClick={() => setQrEnlarged(false)}
+          >
+            <div
+              className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 flex flex-col items-center gap-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="w-full flex items-center justify-between">
+                <div className="text-sm font-semibold text-gray-900">
+                  Portal QR — {project.name}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setQrEnlarged(false)}
+                  className="text-gray-500 hover:text-gray-900 p-1"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={qrDataUrl}
+                alt="Portal QR code enlarged"
+                className="w-[420px] max-w-full h-auto"
+              />
+              <div className="text-xs text-gray-500 font-mono break-all text-center">
+                {portalUrl}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={copyPortalUrl}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  <Copy size={14} />
+                  Copy URL
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadQr}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                >
+                  <Download size={14} />
+                  Download PNG
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+      }
     </div>
+  );
+}
+
+// ─── Toggle chip helper ─────────────────────────────────────────────────
+function ToggleChip({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "inline-flex items-center gap-1 px-2.5 py-1 border rounded-md text-xs " +
+        (active
+          ? "bg-blue-50 border-blue-300 text-blue-700"
+          : "border-gray-300 text-gray-700 hover:bg-gray-50")
+      }
+    >
+      {icon}
+      {children}
+    </button>
   );
 }
 
@@ -519,6 +627,7 @@ function SettingsPanel({
     pilotStart: project.pilotStart || "",
     pilotEnd: project.pilotEnd || "",
     status: project.status,
+    internalBetaRequired: project.internalBetaRequired,
   });
   useEffect(() => {
     setForm({
@@ -531,6 +640,7 @@ function SettingsPanel({
       pilotStart: project.pilotStart || "",
       pilotEnd: project.pilotEnd || "",
       status: project.status,
+      internalBetaRequired: project.internalBetaRequired,
     });
   }, [project]);
 
@@ -540,6 +650,7 @@ function SettingsPanel({
       targetAppVersion: form.targetAppVersion || null,
       betaInviteUrl: form.betaInviteUrl || null,
       playStoreAppUrl: form.playStoreAppUrl || null,
+      internalBetaRequired: form.internalBetaRequired,
       blockedEmailDomains: form.blockedEmailDomains || null,
       staleThresholdDays: Number(form.staleThresholdDays),
       pilotStart: form.pilotStart || null,
@@ -569,17 +680,37 @@ function SettingsPanel({
           />
         </Field>
         <Field
-          label="Beta invitation URL"
-          hint="Google Play internal-testing opt-in link — changes when dev creates a new group"
+          label="Internal beta mode"
+          hint="Turn ON if participants must opt into a Play internal-testing track first. OFF = they update straight from the public listing."
         >
-          <input
-            type="url"
-            value={form.betaInviteUrl}
-            onChange={(e) => setForm({ ...form, betaInviteUrl: e.target.value })}
-            placeholder="https://play.google.com/apps/internaltest/…"
-            className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
-          />
+          <label className="inline-flex items-center gap-2 mt-1 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.internalBetaRequired}
+              onChange={(e) => setForm({ ...form, internalBetaRequired: e.target.checked })}
+              className="rounded border-gray-300"
+            />
+            <span className="text-sm text-gray-800">
+              {form.internalBetaRequired
+                ? "Internal beta REQUIRED — invitation URL is used"
+                : "PUBLIC store update — invitation URL skipped"}
+            </span>
+          </label>
         </Field>
+        {form.internalBetaRequired && (
+          <Field
+            label="Beta invitation URL"
+            hint="Google Play internal-testing opt-in link — changes when dev creates a new group"
+          >
+            <input
+              type="url"
+              value={form.betaInviteUrl}
+              onChange={(e) => setForm({ ...form, betaInviteUrl: e.target.value })}
+              placeholder="https://play.google.com/apps/internaltest/…"
+              className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+            />
+          </Field>
+        )}
         <Field label="Play Store app URL" hint="The public Tarkie listing — should not change">
           <input
             type="url"
