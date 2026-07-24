@@ -592,8 +592,8 @@ function choiceClass(
       : `${base} border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50`;
   }
   return active
-    ? `${base} bg-rose-100 border-rose-400 text-rose-800 hover:bg-rose-200 disabled:opacity-50`
-    : `${base} border-gray-300 bg-white text-gray-700 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300 disabled:opacity-50`;
+    ? `${base} bg-rose-100 border-rose-400 text-rose-800 disabled:opacity-50`
+    : `${base} border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50`;
 }
 
 // Screen B — Email step
@@ -728,11 +728,20 @@ function InvitationStep({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [guideOpen, setGuideOpen] = useState(false);
+  // "Not yet" is a transient (in-session) state — the server persists
+  // invitationAcceptedDeclared=false, invitationLinkFailed=false, which is
+  // indistinguishable from the initial state. Track the user's most recent
+  // tap locally so the button reflects their choice within the page load.
+  const [notYetTapped, setNotYetTapped] = useState(false);
 
   const submit = async (
     accepted: boolean,
     linkFailed: boolean,
   ) => {
+    // Update the transient "Not yet" state on every tap: true only when the
+    // user explicitly picked it, false otherwise (they moved on to Yes or
+    // Link-didn't-work).
+    setNotYetTapped(!accepted && !linkFailed);
     setBusy(true);
     setError(null);
     try {
@@ -840,10 +849,9 @@ function InvitationStep({
           onClick={() => submit(false, false)}
           disabled={busy}
           className={choiceClass(
-            false, // "Not yet" is never persisted as an explicit state
+            notYetTapped && !done && !participant.invitationLinkFailed,
             "negative",
             "px-3 py-2 rounded text-xs font-medium border",
-            done || participant.invitationLinkFailed,
           )}
         >
           Not yet
@@ -881,8 +889,13 @@ function AppUpdateStep({
   const done = participant.appUpdatedDeclared;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Same pattern as InvitationStep — "Not yet" is transient (server
+  // stores appUpdatedDeclared=false, same as the initial state), so we
+  // track the tap locally.
+  const [notYetTapped, setNotYetTapped] = useState(false);
 
   const submit = async (updated: boolean) => {
+    setNotYetTapped(!updated);
     setBusy(true);
     setError(null);
     try {
@@ -942,8 +955,8 @@ function AppUpdateStep({
         the invitation.
       </p>
       {error && <div className="text-sm text-red-600 mb-2">{error}</div>}
-      {/* Once "Yes, updated" is picked the negative recedes to neutral so
-          the confirmed state doesn't look like both are selected. */}
+      {/* Fill colors only paint the active choice. "Not yet" is a transient
+          in-session marker (server can't distinguish it from initial state). */}
       <div className="grid grid-cols-2 gap-2">
         <button
           type="button"
@@ -962,10 +975,9 @@ function AppUpdateStep({
           onClick={() => submit(false)}
           disabled={busy}
           className={choiceClass(
-            false,
+            notYetTapped && !participant.appUpdatedDeclared,
             "negative",
             "px-3 py-2 rounded text-xs font-medium border",
-            participant.appUpdatedDeclared,
           )}
         >
           Not yet
