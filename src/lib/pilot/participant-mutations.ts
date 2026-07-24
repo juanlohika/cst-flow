@@ -288,7 +288,50 @@ async function fireEventNotifications(
   updates: ParticipantUpdate,
   derived: { stage: number; issueFlag: string },
 ): Promise<void> {
-  const { notifyPilotEvent } = await import("./notifications");
+  const { notifyPilotEvent, broadcastPilotRegistrationRequest } = await import("./notifications");
+
+  // Beta registration request — the participant is now AWAITING_REGISTRATION
+  // (their Play Store email is captured but the dev hasn't added them to
+  // the tester list yet). Broadcast the email into every internal Telegram
+  // channel so devs can pick it up without touching CST OS. Fires ONCE per
+  // transition into the flag — subsequent updates that keep the flag stable
+  // don't re-broadcast.
+  if (
+    derived.issueFlag === "AWAITING_REGISTRATION" &&
+    before.issueFlag !== "AWAITING_REGISTRATION"
+  ) {
+    // Load the client company name for the message context. Optional — if
+    // the join fails, we still send the message with just employeeId/name.
+    let clientCompanyName: string | null = null;
+    try {
+      const { db } = await import("@/db");
+      const { pilotProjects, clientProfiles } = await import("@/db/schema");
+      const { eq } = await import("drizzle-orm");
+      const rows = await db
+        .select({ companyName: clientProfiles.companyName })
+        .from(pilotProjects)
+        .leftJoin(clientProfiles, eq(clientProfiles.id, pilotProjects.clientProfileId))
+        .where(eq(pilotProjects.id, before.projectId))
+        .limit(1);
+      clientCompanyName = rows[0]?.companyName || null;
+    } catch {}
+
+    const email =
+      updates.playstoreEmail !== undefined
+        ? updates.playstoreEmail
+        : before.playstoreEmail;
+    if (email) {
+      broadcastPilotRegistrationRequest({
+        participantId,
+        fullName: before.fullName,
+        employeeId: before.employeeId,
+        playstoreEmail: email,
+        clientCompanyName,
+      }).catch((e) =>
+        console.warn("[pilot/mutations] internal broadcast failed:", e),
+      );
+    }
+  }
 
   // Mobile corrected — only fire when the corrected number actually changes.
   if (

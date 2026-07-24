@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import QRCode from "qrcode";
 import {
   Loader2, Copy, Check, RefreshCw, Search, Plus, Trash2,
-  ExternalLink, MessageSquare, X, QrCode, AlertTriangle, Users,
+  ExternalLink, MessageSquare, X, QrCode, AlertTriangle, Users, Radio,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
@@ -19,7 +19,7 @@ interface ActiveBinding {
 interface BindKeyRow {
   id: string;
   clientProfileId: string | null;
-  scopeType?: "client" | "rm-team";
+  scopeType?: "client" | "rm-team" | "internal";
   scopeRef?: string | null;
   label: string;
   accessToken: string;
@@ -157,7 +157,7 @@ function Content() {
     }
   };
 
-  const [tab, setTab] = useState<"accounts" | "team-rooms">("accounts");
+  const [tab, setTab] = useState<"accounts" | "team-rooms" | "internal">("accounts");
 
   if (!isAdmin) return <div className="p-8"><p className="text-rose-700 font-bold">Admin only</p></div>;
 
@@ -171,7 +171,9 @@ function Content() {
           <p className="text-[12px] text-slate-500 mt-1">
             {tab === "accounts"
               ? <>Per-account bind keys (one GC per account). {totalBound} of {totalAccounts} accounts are bound.</>
-              : <>Team rooms for RMs — one GC scoped to an RM's assigned accounts.</>}
+              : tab === "team-rooms"
+              ? <>Team rooms for RMs — one GC scoped to an RM's assigned accounts.</>
+              : <>Internal channels — broadcast-only rooms with no client context. Used for Pilot Tracker registration requests.</>}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -195,6 +197,12 @@ function Content() {
           }`}>
           <Users className="w-3.5 h-3.5 inline -mt-px mr-1" /> Team Rooms
         </button>
+        <button onClick={() => setTab("internal")}
+          className={`px-4 py-2 text-[12px] font-bold border-b-2 transition-colors ${
+            tab === "internal" ? "border-sky-500 text-sky-700" : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}>
+          <Radio className="w-3.5 h-3.5 inline -mt-px mr-1" /> Internal Channels
+        </button>
       </div>
 
       {tab === "team-rooms" ? (
@@ -203,6 +211,11 @@ function Content() {
           copy={copy}
           copied={copied}
           openLink={(key, accountName) => setModal({ key: key as any, accountName })}
+        />
+      ) : tab === "internal" ? (
+        <InternalChannelsTab
+          botUsername={botUsername}
+          openLink={(key, roomLabel) => setModal({ key: key as any, accountName: roomLabel })}
         />
       ) : (<>
       {/* — accounts tab content below — */}
@@ -599,6 +612,174 @@ function TeamRoomsTab({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Internal Channels tab — broadcast-only GCs, no client / no user scope.
+// Currently used for the Pilot Tracker "beta registration request" flow.
+// ───────────────────────────────────────────────────────────────────────
+function InternalChannelsTab({
+  botUsername, openLink,
+}: {
+  botUsername: string | null;
+  openLink: (key: any, roomLabel: string) => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [rooms, setRooms] = useState<BindKeyRow[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [newLabel, setNewLabel] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/telegram-bindings/internal-rooms");
+      if (res.ok) {
+        const data = await res.json();
+        setRooms(Array.isArray(data?.rooms) ? data.rooms : []);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const createRoom = async () => {
+    setBusy("create");
+    try {
+      const res = await fetch("/api/admin/telegram-bindings/internal-rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: newLabel.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed");
+      setNewLabel("");
+      await load();
+      openLink(data.key, data.key.label);
+    } catch (e: any) {
+      alert(e?.message || String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const revokeRoom = async (room: BindKeyRow) => {
+    if (!window.confirm(
+      `Revoke "${room.label}"?\n\nAny group bound by this key will stop receiving pilot registration requests.`
+    )) return;
+    setBusy(`revoke-${room.id}`);
+    try {
+      const res = await fetch(`/api/admin/telegram-bindings/keys/${room.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "revoke" }),
+      });
+      if (!res.ok) throw new Error((await res.json())?.error || "Failed");
+      await load();
+    } catch (e: any) {
+      alert(e?.message || String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-3 text-[12px] text-sky-900">
+        <p className="font-bold mb-1">What these channels do</p>
+        <p>
+          Internal channels are Telegram GCs Arima uses to <b>post</b> — never
+          to read or answer. When a pilot participant enters the{" "}
+          <code>AWAITING_REGISTRATION</code> state (their Play Store email
+          needs to be added to the tester list), Arima broadcasts the email
+          to every currently-bound internal channel. Chat is one-way; the
+          intelligence loop is disabled for these rooms.
+        </p>
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[12px] text-slate-500">
+          {rooms.length} internal channel{rooms.length === 1 ? "" : "s"}
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+            placeholder="Label (e.g. Tarkie V5 Beta Registration)"
+            className="w-72 px-3 py-2 rounded-xl border border-slate-200 text-[12px] focus:outline-none focus:border-sky-300"
+          />
+          <button onClick={createRoom} disabled={busy === "create"}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-500 text-white text-[12px] font-bold hover:bg-sky-600 disabled:opacity-50">
+            <Plus className="w-4 h-4" /> {busy === "create" ? "Creating…" : "New Internal Channel"}
+          </button>
+        </div>
+      </div>
+
+      {!botUsername && (
+        <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-900">
+          Bot username isn't configured. Without it, the deep-link buttons won't work — only the <code>/bind &lt;token&gt;</code> fallback.
+        </div>
+      )}
+
+      <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <table className="w-full text-[13px]">
+          <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-500">
+            <tr>
+              <th className="text-left px-3 py-2.5">Channel</th>
+              <th className="text-left px-3 py-2.5">Status</th>
+              <th className="text-left px-3 py-2.5">Created</th>
+              <th className="text-right px-3 py-2.5"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={4} className="px-3 py-10 text-center"><Loader2 className="w-4 h-4 animate-spin mx-auto text-slate-400" /></td></tr>
+            ) : rooms.length === 0 ? (
+              <tr><td colSpan={4} className="px-3 py-10 text-center text-slate-400 text-[12px]">
+                No internal channels yet. Type a label above and click "+ New Internal Channel" to generate a bind link.
+              </td></tr>
+            ) : (
+              rooms.map(room => (
+                <tr key={room.id} className="border-t border-slate-100">
+                  <td className="px-3 py-3">
+                    <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                      <Radio className="w-3.5 h-3.5 text-sky-500" />
+                      {room.label}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono">{room.id}</div>
+                  </td>
+                  <td className="px-3 py-3 text-[12px]">
+                    {room.status === "revoked" ? (
+                      <span className="text-slate-400 line-through">revoked</span>
+                    ) : room.activeBinding ? (
+                      <span className="text-emerald-700">bound → {room.activeBinding.chatTitle || `chat ${room.activeBinding.chatId}`}</span>
+                    ) : (
+                      <span className="text-amber-700">unbound</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-3 text-[11px] text-slate-500">
+                    {new Date(room.createdAt).toLocaleDateString()}
+                  </td>
+                  <td className="px-3 py-3 text-right space-x-2">
+                    {room.status === "active" && (
+                      <>
+                        <button onClick={() => openLink(room, room.label)}
+                          className="text-[11px] text-sky-700 hover:underline">View link</button>
+                        <button onClick={() => revokeRoom(room)} disabled={busy === `revoke-${room.id}`}
+                          className="text-[11px] text-rose-600 hover:underline">
+                          {busy === `revoke-${room.id}` ? "Revoking…" : "Revoke"}
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

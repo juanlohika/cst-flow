@@ -18,7 +18,7 @@ export interface BindingInfo {
   /** Phase 20: which agent leads this room — "arima" (RM) or "eliana" (BA). Defaults to arima. */
   agentMode: "arima" | "eliana";
   /** Phase E.9 — scope shape: "client" (default, legacy) | "rm-team". */
-  scopeType: "client" | "rm-team";
+  scopeType: "client" | "rm-team" | "internal";
   /** clientProfileId for "client" rooms; userId for "rm-team" rooms. */
   scopeRef: string | null;
 }
@@ -61,7 +61,7 @@ export async function getActiveBindingForChat(chatId: number | string): Promise<
     status: r.status,
     boundAt: r.boundAt,
     agentMode: ((r as any).agentMode === "eliana" ? "eliana" : "arima"),
-    scopeType: ((r as any).scopeType === "rm-team" ? "rm-team" : "client"),
+    scopeType: ((r as any).scopeType === "rm-team" ? "rm-team" : (r as any).scopeType === "internal" ? "internal" : "client"),
     scopeRef: (r as any).scopeRef ?? r.clientProfileId ?? null,
   };
 }
@@ -88,7 +88,7 @@ export async function createBinding(args: {
   /** Phase E.8 — the ClientBindKey this binding was created from. Null in legacy paths. */
   bindKeyId?: string | null;
   /** Phase E.9 — scope discriminator. */
-  scopeType?: "client" | "rm-team";
+  scopeType?: "client" | "rm-team" | "internal";
   /** Phase E.9 — scope target. clientProfileId for "client", userId for "rm-team". */
   scopeRef?: string | null;
 }): Promise<void> {
@@ -171,7 +171,7 @@ export async function listActiveBindings(): Promise<BindingInfo[]> {
     status: r.status,
     boundAt: r.boundAt,
     agentMode: ((r as any).agentMode === "eliana" ? "eliana" : "arima"),
-    scopeType: ((r as any).scopeType === "rm-team" ? "rm-team" : "client"),
+    scopeType: ((r as any).scopeType === "rm-team" ? "rm-team" : (r as any).scopeType === "internal" ? "internal" : "client"),
     scopeRef: (r as any).scopeRef ?? r.clientProfileId ?? null,
   }));
 }

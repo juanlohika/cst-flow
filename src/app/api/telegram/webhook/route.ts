@@ -143,7 +143,24 @@ async function performKeyAwareBind(args: {
   });
 
   // Scope-aware confirmation message.
-  if (resolved.key.scopeType === "rm-team") {
+  if (resolved.key.scopeType === "internal") {
+    // Internal channels are outbound-only broadcast rooms. Say so
+    // explicitly — the humans in the GC need to know they can't @arima
+    // and expect a client-scoped answer here.
+    await safeReply(
+      botToken,
+      chat.id,
+      [
+        `✅ This group is bound as **${resolved.key.label}**.`,
+        `_${resolved.display.secondaryLine}_`,
+        ``,
+        `📣 **This is a system channel.** I'll post here whenever a pilot participant hits **AWAITING_REGISTRATION** — i.e. someone whose Play Store email needs to be added to the internal-testing tester list.`,
+        ``,
+        `Chat is one-way: I don't answer questions in this room. Discussion + follow-ups happen among the humans here.`,
+      ].join("\n"),
+      replyToMessageId,
+    );
+  } else if (resolved.key.scopeType === "rm-team") {
     await safeReply(
       botToken,
       chat.id,
@@ -538,6 +555,10 @@ export async function POST(req: Request) {
           await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound yet. Run `/bind <token>` first.", message.message_id);
           return NextResponse.json({ ok: true });
         }
+        if (current.scopeType === "internal") {
+          await safeReply(config.botToken, chat.id, "ℹ️ Agent mode doesn't apply to internal channels — this room is broadcast-only.", message.message_id);
+          return NextResponse.json({ ok: true });
+        }
         // Only CST OS admins can change agent mode (it changes which AI leads the room)
         const cstUser = await resolveCstUserFromTelegram(from.id);
         if (!cstUser || cstUser.role !== "admin") {
@@ -585,7 +606,10 @@ export async function POST(req: Request) {
           return NextResponse.json({ ok: true });
         }
         if (!current.clientProfileId) {
-          await safeReply(config.botToken, chat.id, "`/contacts` only works in a client-bound group. Team rooms span multiple accounts, so there's no single contact directory.", message.message_id);
+          const reason = current.scopeType === "internal"
+            ? "This is an internal channel — no client scope."
+            : "Team rooms span multiple accounts, so there's no single contact directory.";
+          await safeReply(config.botToken, chat.id, "`/contacts` only works in a client-bound group. " + reason, message.message_id);
           return NextResponse.json({ ok: true });
         }
         const reply = await buildContactsDirectory(current.id, current.clientProfileId, current.clientName);
@@ -601,6 +625,16 @@ export async function POST(req: Request) {
     // ─── NORMAL CHAT MESSAGE ─────────────────────────────────────────
     if (isGroup) {
       const binding = await getActiveBindingForChat(chat.id);
+      // Internal-scope firewall — these GCs are outbound-only system
+      // channels (e.g. the Pilot Tracker "beta registration request" room).
+      // Do NOT invoke the Arima intelligence loop, BRD capture, request
+      // capture, or any client-scoped tool — humans in the room are just
+      // reading system broadcasts and discussing among themselves. Ignoring
+      // the message silently is the correct behavior: no reply, no state
+      // change, no cost.
+      if (binding && binding.scopeType === "internal") {
+        return NextResponse.json({ ok: true, ignored: "internal-scope-inbound" });
+      }
       // If no client binding, check whether this is the bound Super Admin GC.
       // SA GC has its own dedicated routing — portfolio mode (no clientProfileId).
       if (!binding) {

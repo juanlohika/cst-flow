@@ -21,7 +21,22 @@ import {
 import { and, eq, desc } from "drizzle-orm";
 import crypto from "crypto";
 
-export type BindScopeType = "client" | "rm-team";
+/**
+ * scopeType semantics:
+ *   "client"    scopeRef=clientProfileId   — one Telegram GC ↔ one account.
+ *   "rm-team"   scopeRef=userId            — one GC ↔ all accounts the RM is
+ *                                             primary on. Live scope.
+ *   "internal"  scopeRef=NULL              — one GC not tied to any account
+ *                                             or any user. Used for global
+ *                                             internal channels (e.g. the
+ *                                             Pilot-Tracker "beta registration
+ *                                             request" room). Arima MUST NOT
+ *                                             run the intelligence tool loop
+ *                                             for messages coming from these
+ *                                             chats — they're outbound-only,
+ *                                             system-broadcast channels.
+ */
+export type BindScopeType = "client" | "rm-team" | "internal";
 
 export interface BindKey {
   id: string;
@@ -50,10 +65,16 @@ function generateToken(): string {
 }
 
 function rowToBindKey(k: any): BindKey {
+  const st: BindScopeType =
+    k.scopeType === "rm-team"
+      ? "rm-team"
+      : k.scopeType === "internal"
+      ? "internal"
+      : "client";
   return {
     id: k.id,
     clientProfileId: k.clientProfileId ?? null,
-    scopeType: (k.scopeType === "rm-team" ? "rm-team" : "client"),
+    scopeType: st,
     scopeRef: k.scopeRef ?? null,
     label: k.label,
     accessToken: k.accessToken,
@@ -243,6 +264,84 @@ export async function createTeamRoomBindKey(args: {
   };
 }
 
+/**
+ * Create an internal-scope bind key — for GCs that are not tied to any client
+ * account or user. Used for the Pilot Tracker "beta registration request"
+ * channel: CST + Dev live inside, Arima only ever *broadcasts* pilot events
+ * into it (never runs the tool loop or accepts client-scoped queries).
+ *
+ * Deliberately does NOT accept scopeRef — internal scope is global by
+ * definition. If we later need to distinguish (e.g. "pilot-registration"
+ * vs "release-announcements"), we'll add a purpose field then; for now the
+ * label is enough.
+ */
+export async function createInternalBindKey(args: {
+  label?: string;
+  createdBy?: string;
+}): Promise<BindKey> {
+  const label =
+    (args.label || "").trim() ||
+    "CST Tarkie V5 Internal Beta Registration Request";
+  const id = `bk_internal_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+  const accessToken = generateToken();
+  const now = new Date().toISOString();
+  await db.insert(clientBindKeys).values({
+    id,
+    clientProfileId: null,
+    scopeType: "internal",
+    scopeRef: null,
+    label,
+    accessToken,
+    status: "active",
+    createdBy: args.createdBy || null,
+    createdAt: now,
+  });
+  return {
+    id,
+    clientProfileId: null,
+    scopeType: "internal",
+    scopeRef: null,
+    label,
+    accessToken,
+    status: "active",
+    createdBy: args.createdBy || null,
+    createdAt: now,
+    revokedAt: null,
+  };
+}
+
+/**
+ * List all internal-scope keys. Used by the admin "Internal channels" tab.
+ */
+export async function listInternalKeys(): Promise<BindKeyWithBinding[]> {
+  const rows = await db
+    .select()
+    .from(clientBindKeys)
+    .where(eq(clientBindKeys.scopeType, "internal"))
+    .orderBy(desc(clientBindKeys.createdAt));
+  return attachActiveBinding(rows.map(rowToBindKey));
+}
+
+/**
+ * Return every currently-bound Telegram chatId for an internal-scope
+ * channel. This is what the pilot notifier iterates over when it needs to
+ * broadcast an AWAITING_REGISTRATION event.
+ */
+export async function listInternalActiveChatIds(): Promise<Array<{ chatId: string; chatTitle: string | null }>> {
+  const rows = await db
+    .select({
+      chatId: arimaChannelBindings.chatId,
+      chatTitle: arimaChannelBindings.chatTitle,
+    })
+    .from(arimaChannelBindings)
+    .where(and(
+      eq(arimaChannelBindings.channel, "telegram"),
+      eq(arimaChannelBindings.status, "active"),
+      eq(arimaChannelBindings.scopeType, "internal"),
+    ));
+  return rows;
+}
+
 export async function revokeBindKey(keyId: string): Promise<void> {
   const now = new Date().toISOString();
   await db.update(clientBindKeys)
@@ -343,6 +442,19 @@ async function resolveKeyDisplay(key: BindKey): Promise<ResolvedBindKey> {
         secondaryLine: acct[0].tier ? `Tier ${acct[0].tier}` : "",
       },
       clientProfileId: acct[0].id,
+    };
+  }
+
+  // internal — no account, no user. Display label + a fixed subtitle so the
+  // bind confirmation flow reads "You just bound the Internal channel".
+  if (key.scopeType === "internal") {
+    return {
+      key,
+      display: {
+        primaryLine: key.label,
+        secondaryLine: "Internal channel · broadcast-only (no client context)",
+      },
+      clientProfileId: null,
     };
   }
 

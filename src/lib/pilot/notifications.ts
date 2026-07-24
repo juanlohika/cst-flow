@@ -26,6 +26,65 @@ interface PilotNotifyArgs {
 }
 
 /**
+ * Broadcast a beta-registration request to every currently-bound internal
+ * Telegram channel. One-way: no reply parsing, no threading, no read
+ * receipts. Simply posts the participant's Play Store email and a short
+ * context blurb so a dev can copy the email into the Play Console tester
+ * list.
+ *
+ * Best-effort — logs and swallows per-channel failures (a temporarily
+ * kicked bot or a revoked chat shouldn't block the caller). Never throws.
+ */
+export async function broadcastPilotRegistrationRequest(args: {
+  participantId: string;
+  fullName: string;
+  employeeId: string;
+  playstoreEmail: string;
+  clientCompanyName?: string | null;
+}): Promise<void> {
+  try {
+    const { listInternalActiveChatIds } = await import("@/lib/telegram/bind-keys");
+    const targets = await listInternalActiveChatIds();
+    if (targets.length === 0) return;
+
+    const { getTelegramConfig } = await import("@/lib/telegram/config");
+    const cfg = await getTelegramConfig();
+    if (!cfg.botToken) {
+      console.warn("[pilot/notifications] internal broadcast skipped — no bot token");
+      return;
+    }
+
+    const { tgSendMessage, truncateForTelegram } = await import("@/lib/telegram/api");
+    const clientLine = args.clientCompanyName ? ` · ${args.clientCompanyName}` : "";
+    const text = truncateForTelegram(
+      [
+        `🆕 *Add to Play Store tester list*`,
+        ``,
+        `\`${args.playstoreEmail}\``,
+        ``,
+        `_${args.fullName} · ${args.employeeId}${clientLine}_`,
+      ].join("\n"),
+    );
+    // Fan out in parallel — one bad chat shouldn't hold up the rest.
+    await Promise.all(
+      targets.map((t) =>
+        tgSendMessage(cfg.botToken, t.chatId, text, {
+          parseMode: "Markdown",
+          disablePreview: true,
+        }).catch((e: any) => {
+          console.warn(
+            `[pilot/notifications] broadcast failed for chatId=${t.chatId}:`,
+            e?.message || e,
+          );
+        }),
+      ),
+    );
+  } catch (e) {
+    console.warn("[pilot/notifications] internal broadcast crashed:", e);
+  }
+}
+
+/**
  * Notify all admins who have access to the account owning the given
  * participant. Never throws — best-effort delivery, logs on failure.
  */
