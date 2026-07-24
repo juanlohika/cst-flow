@@ -121,6 +121,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         const cutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
         filters.push(eq(pilotParticipants.currentStage, 3));
         filters.push(lt(pilotParticipants.lastActivityAt, cutoff));
+      } else if (flag === "WORK_EMAIL_PENDING") {
+        filters.push(eq(pilotParticipants.mobileConfirmed, true));
+        filters.push(eq(pilotParticipants.workEmailConfirmed, false));
+        filters.push(sql`${pilotParticipants.workEmail} IS NOT NULL AND ${pilotParticipants.workEmail} != ''`);
       } else {
         filters.push(eq(pilotParticipants.issueFlag, flag));
       }
@@ -178,14 +182,18 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     //             (invitation accepted but app not updated)
     //   stage 4 → mobile number OR work email corrected on the portal
     //             (needs a Users-module update on our side)
-    //   stage 5 → VERSION_MISMATCH
+    //   stage 5 → participants who confirmed mobile but still need to
+    //             confirm their work email (only counts those with a
+    //             workEmail on file)
+    //   stage 6 → VERSION_MISMATCH
     // Each of these is an SQL count, cheap at pilot scale.
     const blockedByStage = {
       s1: 0,     // email corrections
       s2: (flagCounts["CLICKED_NOT_REGISTERED"] || 0) + (flagCounts["INVITE_NOT_RECEIVED"] || 0),
       s3: 0,     // stuck at stage 3
       s4: 0,     // mobile/work email corrections
-      s5: flagCounts["VERSION_MISMATCH"] || 0,
+      s5: 0,     // mobile confirmed but work email pending
+      s6: flagCounts["VERSION_MISMATCH"] || 0,
     };
 
     try {
@@ -247,6 +255,22 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           ),
         );
       blockedByStage.s3 = Number(s3Rows[0]?.c || 0);
+
+      // Participants whose work email confirmation is still pending. Only
+      // meaningful when they have a workEmail on file — mobile-only users
+      // are never in this bucket.
+      const s5Rows = await db
+        .select({ c: sql<number>`count(*)`.as("c") })
+        .from(pilotParticipants)
+        .where(
+          and(
+            eq(pilotParticipants.projectId, a.projectId),
+            eq(pilotParticipants.mobileConfirmed, true),
+            eq(pilotParticipants.workEmailConfirmed, false),
+            sql`${pilotParticipants.workEmail} IS NOT NULL AND ${pilotParticipants.workEmail} != ''`,
+          ),
+        );
+      blockedByStage.s5 = Number(s5Rows[0]?.c || 0);
     } catch (e) {
       // Best-effort. If the computed layer fails we still return
       // stageCounts / flagCounts so the UI degrades gracefully.

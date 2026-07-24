@@ -199,6 +199,8 @@ export async function updateParticipant(
       invitationLinkFailed: Boolean(next.invitationLinkFailed),
       appUpdatedDeclared: Boolean(next.appUpdatedDeclared),
       mobileConfirmed: Boolean(next.mobileConfirmed),
+      workEmail: next.workEmail,
+      workEmailConfirmed: Boolean(next.workEmailConfirmed),
       versionScreenshotDriveId: next.versionScreenshotDriveId,
       versionConfirmedByUser: Boolean(next.versionConfirmedByUser),
       versionVerified: next.versionVerified,

@@ -38,8 +38,11 @@ export type IssueFlag =
 //   2 BETA_REGISTERED    — dev has added the email to Play tester list (hard gate)
 //   3 INVITATION_ACCEPTED — participant clicked opt-in link + tapped "Become a tester"
 //   4 APP_UPDATED        — participant updated the app from Play Store
-//   5 SCREENSHOT_UPLOADED — participant uploaded version proof (awaiting review)
-//   6 VERSION_VERIFIED   — CST/AI confirmed screenshot matches targetAppVersion (Complete)
+//   5 CONTACTS_CONFIRMED  — participant confirmed mobile number (and work email, if
+//                           they have one on file). Screenshot is no longer a stage;
+//                           it's optional evidence for Stage 6.
+//   6 VERSION_VERIFIED   — versionVerified === "verified" (one-tap confirmation OR
+//                           CST/AI reviewed a screenshot).
 export type Stage = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 /**
@@ -58,11 +61,13 @@ export interface ParticipantState {
   invitationLinkFailed: boolean;
   // Stage 4 input
   appUpdatedDeclared: boolean;
-  // Stage 5 inputs — screenshot OR one-tap confirmation is enough. Both are
-  // "declared" signals; the screenshot only becomes stronger evidence once
-  // CST/AI review it. The one-tap is intentionally trust-based: if the user
-  // lies, CST reverts versionVerified to 'pending' from the roster drawer.
+  // Stage 5 inputs — participant confirmed mobile (and, if their roster
+  // row shipped a work email, they confirmed that too). Screenshot upload
+  // is now decoupled from stage progression; it's just optional evidence
+  // that helps CST/AI verify Stage 6.
   mobileConfirmed: boolean;
+  workEmail?: string | null;
+  workEmailConfirmed?: boolean;
   versionScreenshotDriveId: string | null | undefined;
   versionConfirmedByUser?: boolean;
   // Stage 6 input (CST/AI-controlled)
@@ -130,13 +135,16 @@ function computeStageOnly(p: ParticipantState): Stage {
   // downstream matters after this; it's the terminal Complete state.
   if (p.versionVerified === "verified") return 6;
 
-  // Stage 5 — the participant has declared they're on the target build.
-  // Two acceptable signals, either is enough:
-  //   (a) screenshot uploaded (stronger evidence — CST/AI can eyeball it),
-  //   (b) one-tap "Yes, I'm on {target}" confirmation (trust-based).
-  // Mobile confirmation stays a pre-req because Screen E gates Screen F in
-  // the portal flow.
-  if (p.mobileConfirmed && (p.versionScreenshotDriveId || p.versionConfirmedByUser)) return 5;
+  // Stage 5 — participant has confirmed their contact details.
+  //   • Mobile is always required.
+  //   • Work email is required only when they have one on file — mobile-
+  //     only field users don't have a work email to confirm, so mobile
+  //     alone qualifies them.
+  //
+  // Screenshot / one-tap version confirmation live at Stage 6 only.
+  const hasWorkEmail = Boolean(p.workEmail);
+  const workEmailOk = hasWorkEmail ? Boolean(p.workEmailConfirmed) : true;
+  if (p.mobileConfirmed && workEmailOk) return 5;
 
   // Stage 4 — participant claims app updated.
   if (p.appUpdatedDeclared) return 4;
@@ -280,7 +288,7 @@ export function stageLabel(stage: Stage): string {
     "Beta registered",
     "Invitation accepted",
     "App updated",
-    "Screenshot uploaded",
+    "Mobile & work email confirmed",
     "Version verified",
   ][stage] || "Unknown";
 }

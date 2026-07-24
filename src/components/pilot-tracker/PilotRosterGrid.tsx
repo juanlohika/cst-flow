@@ -59,7 +59,8 @@ interface Payload {
     s2: number;    // CLICKED_NOT_REGISTERED + INVITE_NOT_RECEIVED
     s3: number;    // stuck at stage 3 (no activity 3+ days)
     s4: number;    // mobile/work email corrected by user
-    s5: number;    // VERSION_MISMATCH
+    s5: number;    // mobile confirmed but work email still pending
+    s6: number;    // VERSION_MISMATCH
   };
 }
 
@@ -71,8 +72,8 @@ const STAGE_BLOCK_FILTER: Record<number, string | null> = {
   2: "CLICKED_NOT_REGISTERED",  // covers the larger of the two Step-2 flags
   3: "STUCK_STAGE3",
   4: "CONTACT_CORRECTED_BY_USER",
-  5: "VERSION_MISMATCH",
-  6: null,
+  5: "WORK_EMAIL_PENDING",
+  6: "VERSION_MISMATCH",
 };
 
 const STAGE_LABELS = [
@@ -81,7 +82,7 @@ const STAGE_LABELS = [
   "Beta registered",
   "Invitation accepted",
   "App updated",
-  "Screenshot uploaded",
+  "Mobile & work email confirmed",
   "Version verified",
 ];
 
@@ -99,6 +100,7 @@ const FLAG_LABELS: Record<string, string> = {
   EMAIL_CORRECTED_BY_USER: "Play Store email corrected",
   CONTACT_CORRECTED_BY_USER: "Mobile / work email corrected",
   STUCK_STAGE3: "Stuck at App update (3+ days)",
+  WORK_EMAIL_PENDING: "Work email confirmation pending",
 };
 
 const FLAG_COLORS: Record<string, string> = {
@@ -112,6 +114,7 @@ const FLAG_COLORS: Record<string, string> = {
   EMAIL_CORRECTED_BY_USER: "bg-rose-100 text-rose-800 border-rose-200",
   CONTACT_CORRECTED_BY_USER: "bg-rose-100 text-rose-800 border-rose-200",
   STUCK_STAGE3: "bg-red-100 text-red-800 border-red-200",
+  WORK_EMAIL_PENDING: "bg-rose-100 text-rose-800 border-rose-200",
 };
 
 interface Props {
@@ -277,6 +280,7 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
               : i === 3 ? data.blockedByStage?.s3 ?? 0
               : i === 4 ? data.blockedByStage?.s4 ?? 0
               : i === 5 ? data.blockedByStage?.s5 ?? 0
+              : i === 6 ? data.blockedByStage?.s6 ?? 0
               : 0;
             const blockFilter = STAGE_BLOCK_FILTER[i];
             const blockedActive = blockFilter != null && flagFilter === blockFilter;
@@ -1108,10 +1112,24 @@ function CstStageOverride({
       updates: { appUpdatedDeclared: true },
     },
     {
-      label: "5. Confirm on target version (auto-verify)",
+      label: "5. Confirm mobile & work email",
+      show:
+        participant.appUpdatedDeclared &&
+        (!participant.mobileConfirmed ||
+          (Boolean(participant.workEmail) && !participant.workEmailConfirmed)),
+      updates: {
+        mobileConfirmed: true,
+        // Only flip work-email confirm true when we actually have a
+        // workEmail on file — otherwise the field is meaningless.
+        ...(participant.workEmail ? { workEmailConfirmed: true } : {}),
+      },
+    },
+    {
+      label: "6. Confirm on target version (auto-verify)",
       show: participant.appUpdatedDeclared && participant.versionVerified !== "verified",
       updates: {
         mobileConfirmed: true,
+        ...(participant.workEmail ? { workEmailConfirmed: true } : {}),
         versionConfirmedByUser: true,
       },
     },
@@ -1125,6 +1143,7 @@ function CstStageOverride({
         invitationLinkFailed: false,
         appUpdatedDeclared: true,
         mobileConfirmed: true,
+        ...(participant.workEmail ? { workEmailConfirmed: true } : {}),
         versionConfirmedByUser: true,
       },
     },
