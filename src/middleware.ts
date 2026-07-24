@@ -55,5 +55,11 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|manifest\\.xml|arima-portal-manifest\\.json|icon-.*\\.png|debug.txt|tarkie-logo.svg).*)"],
+  // Middleware must skip static assets that the public portal needs while
+  // signed-out. Public files under /public/pilot-guide/ are the illustrated
+  // onboarding screenshots — without this exemption they resolve to the
+  // sign-in page for anonymous mobile users and render as broken images.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|manifest\\.xml|arima-portal-manifest\\.json|icon-.*\\.png|debug.txt|tarkie-logo.svg|pilot-guide/).*)",
+  ],
 };

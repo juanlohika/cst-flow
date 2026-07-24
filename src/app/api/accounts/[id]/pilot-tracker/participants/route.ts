@@ -85,6 +85,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           like(pilotParticipants.mobileNumber, like_),
           like(pilotParticipants.mobileNumberCorrected, like_),
           like(pilotParticipants.playstoreEmail, like_),
+          like(pilotParticipants.workEmail, like_),
         )!,
       );
     }

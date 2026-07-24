@@ -29,6 +29,8 @@ interface Participant {
   mobileConfirmed: boolean;
   playstoreEmail: string | null;
   emailConfirmedIsPlaystore: boolean;
+  workEmail: string | null;
+  workEmailConfirmed: boolean;
   betaRegistered: boolean;
   betaRegisteredAt: string | null;
   invitationAcceptedDeclared: boolean;
@@ -367,7 +369,7 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
               <Th>Name</Th>
               <Th>Stage</Th>
               <Th>Flag</Th>
-              <Th>Play Store email</Th>
+              <Th>Emails</Th>
               <Th>Mobile</Th>
               <Th>Version</Th>
               <Th>Last activity</Th>
@@ -403,8 +405,15 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
                 <Td>
                   <FlagBadge flag={p.issueFlag} />
                 </Td>
-                <Td className="text-xs text-gray-600">
-                  {p.playstoreEmail || "—"}
+                <Td className="text-xs text-gray-600 max-w-[220px]">
+                  <div className="truncate" title={p.workEmail || ""}>
+                    <span className="text-[10px] uppercase text-gray-400 mr-1">W</span>
+                    {p.workEmail || "—"}
+                  </div>
+                  <div className="truncate text-gray-500" title={p.playstoreEmail || ""}>
+                    <span className="text-[10px] uppercase text-gray-400 mr-1">P</span>
+                    {p.playstoreEmail || "—"}
+                  </div>
                 </Td>
                 <Td className="text-xs">
                   {p.mobileNumberCorrected ? (
@@ -572,6 +581,7 @@ function ParticipantDrawer({
   const [form, setForm] = useState({
     betaRegistered: participant.betaRegistered,
     versionVerified: participant.versionVerified as "pending" | "verified" | "mismatch",
+    workEmail: participant.workEmail || "",
     playstoreEmail: participant.playstoreEmail || "",
     reportedVersion: participant.reportedVersion || "",
   });
@@ -610,6 +620,9 @@ function ParticipantDrawer({
       }
       if (form.playstoreEmail !== (participant.playstoreEmail || "")) {
         patch.playstoreEmail = form.playstoreEmail || null;
+      }
+      if (form.workEmail !== (participant.workEmail || "")) {
+        patch.workEmail = form.workEmail || null;
       }
       if (form.reportedVersion !== (participant.reportedVersion || "")) {
         patch.reportedVersion = form.reportedVersion || null;
@@ -706,7 +719,29 @@ function ParticipantDrawer({
 
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">
-              Play Store email
+              Work email <span className="text-gray-400 font-normal">(admin sign-in / OTP target)</span>
+            </label>
+            <input
+              type="email"
+              value={form.workEmail}
+              onChange={(e) => setForm({ ...form, workEmail: e.target.value })}
+              className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+              placeholder="user@company.com"
+            />
+            {participant.workEmailConfirmed && (
+              <span className="text-xs text-green-600 mt-0.5 inline-block">
+                ✓ Participant confirmed this on the portal
+              </span>
+            )}
+            <p className="text-[10px] text-gray-500 mt-0.5">
+              Leave blank for field-only users (mobile OTP). Setting a value
+              here makes Screen 4 show a work-email confirm.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Play Store email <span className="text-gray-400 font-normal">(Google account on the phone)</span>
             </label>
             <input
               type="email"

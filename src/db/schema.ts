@@ -1356,6 +1356,15 @@ export const pilotParticipants = sqliteTable("PilotParticipant", {
   // Required acknowledgment on Screen B. Submit is blocked without this.
   emailConfirmedIsPlaystore:     integer("emailConfirmedIsPlaystore", { mode: "boolean" }).default(false).notNull(),
   emailCapturedAt:               text("emailCapturedAt"),
+  // Work email — separate identity from playstoreEmail. On Tarkie V5 this
+  // is what admins use to sign in to the control tower; regular field
+  // users don't have one and only receive OTPs on their mobile. Because
+  // of that split, we render Screen 4's work-email confirmation only when
+  // the roster shipped a value here. Never derived from playstoreEmail —
+  // the two are collected independently in the XLSX template.
+  workEmail:                     text("workEmail"),
+  workEmailConfirmed:            integer("workEmailConfirmed", { mode: "boolean" }).default(false).notNull(),
+  workEmailConfirmedAt:          text("workEmailConfirmedAt"),
   // Stage 2 — the hard gate. Set by dev/CST after adding the email to the
   // Play internal-testing tester list. Everything downstream depends on
   // this being true, and the CLICKED_NOT_REGISTERED contradiction fires

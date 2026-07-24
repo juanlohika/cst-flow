@@ -23,6 +23,9 @@ export interface ParticipantUpdate {
   playstoreEmail?: string | null;
   emailConfirmedIsPlaystore?: boolean;
   emailCapturedAt?: string | null;
+  workEmail?: string | null;
+  workEmailConfirmed?: boolean;
+  workEmailConfirmedAt?: string | null;
   betaRegistered?: boolean;
   betaRegisteredAt?: string | null;
   betaRegisteredByUserId?: string | null;
@@ -117,6 +120,7 @@ export async function updateParticipant(
   autoStamp(finalUpdates, current, "mobileConfirmed", "mobileConfirmedAt", now);
   autoStamp(finalUpdates, current, "betaRegistered", "betaRegisteredAt", now);
   autoStamp(finalUpdates, current, "emailConfirmedIsPlaystore", "emailCapturedAt", now);
+  autoStamp(finalUpdates, current, "workEmailConfirmed", "workEmailConfirmedAt", now);
   autoStamp(finalUpdates, current, "versionConfirmedByUser", "versionConfirmedByUserAt", now);
   // Auto-verify on user confirmation. If the participant taps "Yes, I'm on
   // {target}" on Screen F and the target version is set on the project,

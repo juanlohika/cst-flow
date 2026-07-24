@@ -30,6 +30,11 @@ export interface ParsedRow {
   employeeId?: string;
   fullName?: string;
   mobileNumber?: string;
+  // Two distinct emails. Different purposes:
+  //   workEmail       — admin/control-tower identity. Optional in the roster.
+  //   playstoreEmail  — the Google account participant uses on Play Store.
+  //                     Optional at import; usually captured on Screen B.
+  workEmail?: string;
   playstoreEmail?: string;
   status: RowStatus;
   message?: string;
@@ -84,20 +89,27 @@ export function validateWorkbook(buffer: Buffer): ValidationReport {
     const mobileNumberRaw = readField(r, [
       "Mobile Number", "Mobile", "mobileNumber", "mobile", "Phone",
     ]);
+    // Two email columns in the new template. Legacy "Email" / "Email Address"
+    // headers are treated as WORK email (that's what CST already ships in
+    // existing rosters, and it's the primary admin identifier now).
+    const workEmail = readField(r, [
+      "Work Email", "workEmail",
+      "Email Address", "Email", "email",
+    ]);
     const playstoreEmail = readField(r, [
-      "Email Address", "Email", "Play Store Email", "playstoreEmail", "email",
+      "Play Store Email", "playstoreEmail", "Google Play Email",
     ]);
 
     // Silently skip completely empty rows. Excel commonly saves sheets with
     // a used-range that extends thousands of rows past the last real cell,
     // and sheet_to_json walks the full range. Without this filter a user
     // uploads 5 real rows and sees 12,000 "Employee ID is required" errors.
-    if (!employeeId && !fullName && !mobileNumberRaw && !playstoreEmail) return;
+    if (!employeeId && !fullName && !mobileNumberRaw && !workEmail && !playstoreEmail) return;
 
     // Silently skip the template's notes/guide row (row 3). Detected by
     // the "(required" marker in any field.
-    const looksLikeNotesRow = [employeeId, fullName, mobileNumberRaw, playstoreEmail].some(
-      (v) => v.trim().toLowerCase().startsWith("(required"),
+    const looksLikeNotesRow = [employeeId, fullName, mobileNumberRaw, workEmail, playstoreEmail].some(
+      (v) => v.trim().toLowerCase().startsWith("(required") || v.trim().toLowerCase().startsWith("(optional"),
     );
     if (looksLikeNotesRow) return;
 
@@ -139,7 +151,7 @@ export function validateWorkbook(buffer: Buffer): ValidationReport {
     }
     if (!mobileNumberRaw) {
       rows.push({
-        rowNumber, employeeId, fullName, playstoreEmail,
+        rowNumber, employeeId, fullName, workEmail, playstoreEmail,
         status: "error", message: "Mobile Number is required",
       });
       return;
@@ -163,19 +175,23 @@ export function validateWorkbook(buffer: Buffer): ValidationReport {
       return;
     }
 
-    // Basic email sanity — reject if it's clearly malformed. Accepting
-    // empty is fine (email is optional at import time; participant
-    // supplies it on the portal).
-    let emailWarning: string | null = null;
-    if (playstoreEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(playstoreEmail)) {
-      emailWarning = `Email "${playstoreEmail}" looks malformed — participant will need to confirm/edit on the portal`;
+    // Basic email sanity — warn on malformed, accept empty (both emails
+    // are optional at import).
+    const emailWarnings: string[] = [];
+    const isValidEmail = (v: string) =>
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+    if (workEmail && !isValidEmail(workEmail)) {
+      emailWarnings.push(`Work Email "${workEmail}" looks malformed`);
+    }
+    if (playstoreEmail && !isValidEmail(playstoreEmail)) {
+      emailWarnings.push(`Play Store Email "${playstoreEmail}" looks malformed`);
     }
 
     // Duplicate check within the same upload
     if (seenIds.has(employeeId)) {
       rows.push({
         rowNumber, employeeId, fullName,
-        mobileNumber: normalizedMobile, playstoreEmail,
+        mobileNumber: normalizedMobile, workEmail, playstoreEmail,
         status: "error",
         message: `Employee ID "${employeeId}" appears more than once in this file`,
       });
@@ -186,11 +202,11 @@ export function validateWorkbook(buffer: Buffer): ValidationReport {
     // Assemble any warnings
     const warnings: string[] = [];
     if (missingIdSynthesized) warnings.push(`Emp ID was blank — assigned "${employeeId}" placeholder`);
-    if (emailWarning) warnings.push(emailWarning);
+    warnings.push(...emailWarnings);
 
     rows.push({
       rowNumber, employeeId, fullName,
-      mobileNumber: normalizedMobile, playstoreEmail,
+      mobileNumber: normalizedMobile, workEmail, playstoreEmail,
       status: warnings.length ? "warn" : "ok",
       message: warnings.join("; ") || undefined,
     });
@@ -251,9 +267,10 @@ export async function applyValidated(args: {
         mobileNumber: row.mobileNumber,
         updatedAt: new Date().toISOString(),
       };
-      // Only overwrite playstoreEmail if the roster shipped one — never
-      // erase a self-declared email during re-import.
+      // Only overwrite emails if the roster shipped a value — never erase
+      // a self-declared email during re-import.
       if (row.playstoreEmail) patch.playstoreEmail = row.playstoreEmail;
+      if (row.workEmail) patch.workEmail = row.workEmail;
       await db
         .update(pilotParticipants)
         .set(patch)
@@ -265,6 +282,7 @@ export async function applyValidated(args: {
         employeeId: row.employeeId,
         fullName: row.fullName,
         mobileNumber: row.mobileNumber,
+        workEmail: row.workEmail || null,
         playstoreEmail: row.playstoreEmail || null,
         lastActivityBy: "cst",
       });
@@ -305,18 +323,32 @@ export async function applyValidated(args: {
  * previous imports.
  */
 export function generateTemplate(): Buffer {
-  const headers = ["Employee ID", "Full Name", "Mobile Number", "Email Address"];
-  const example = ["EMP-001", "Juan Dela Cruz", "639171234567", "juan@example.com"];
+  const headers = [
+    "Employee ID",
+    "Full Name",
+    "Mobile Number",
+    "Work Email",
+    "Play Store Email",
+  ];
+  const example = [
+    "EMP-001",
+    "Juan Dela Cruz",
+    "639171234567",
+    "juan@acme.com",
+    "juan.tester@gmail.com",
+  ];
   const notes = [
     "(required; must be unique within this pilot)",
     "(required)",
     "(required; use 639XXXXXXXXX to survive Excel's leading-zero eat — 09/+639/9 forms also OK)",
-    "(optional at import; participant confirms/edits on the portal)",
+    "(optional; work email for admins who sign in to the control tower — OTPs go here for them)",
+    "(optional; the Google account used on Play Store — participant can correct on the portal)",
   ];
   const aoa = [headers, example, notes];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  // Column widths for readability
-  ws["!cols"] = [{ wch: 20 }, { wch: 30 }, { wch: 20 }, { wch: 30 }];
+  ws["!cols"] = [
+    { wch: 20 }, { wch: 30 }, { wch: 20 }, { wch: 30 }, { wch: 30 },
+  ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Roster");
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });

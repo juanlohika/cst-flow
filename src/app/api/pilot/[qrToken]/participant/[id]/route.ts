@@ -40,6 +40,9 @@ const PORTAL_WRITABLE_FIELDS = new Set<keyof ParticipantUpdate>([
   // One-tap Screen F confirmation. updateParticipant() auto-verifies when
   // this flips to true and stamps reportedVersion from project.targetAppVersion.
   "versionConfirmedByUser",
+  // Work-email confirmation (only rendered when workEmail is on file).
+  // Participant can NOT edit workEmail from the portal — that's admin-side.
+  "workEmailConfirmed",
 ]);
 
 async function resolveParticipant(qrToken: string, participantId: string) {
@@ -80,6 +83,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ qrToken: s
       mobileConfirmed: Boolean(p.mobileConfirmed),
       playstoreEmail: p.playstoreEmail,
       emailConfirmedIsPlaystore: Boolean(p.emailConfirmedIsPlaystore),
+      workEmail: p.workEmail,
+      workEmailConfirmed: Boolean(p.workEmailConfirmed),
       betaRegistered: Boolean(p.betaRegistered),
       invitationAcceptedDeclared: Boolean(p.invitationAcceptedDeclared),
       invitationLinkFailed: Boolean(p.invitationLinkFailed),

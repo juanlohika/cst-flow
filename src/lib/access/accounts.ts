@@ -935,6 +935,13 @@ export async function ensureAccessSchema(): Promise<void> {
     // only by uploading a screenshot. Existing rows default to 0 (false).
     try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN versionConfirmedByUser INTEGER DEFAULT 0 NOT NULL`); } catch {}
     try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN versionConfirmedByUserAt TEXT`); } catch {}
+    // Additive migration — split work email from Play Store email. Existing
+    // rows keep whatever playstoreEmail they had (Screen B still captures
+    // that). Work email starts null; Screen 4's work-email confirm only
+    // renders when a value is set (usually by the XLSX import).
+    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN workEmail TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN workEmailConfirmed INTEGER DEFAULT 0 NOT NULL`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN workEmailConfirmedAt TEXT`); } catch {}
 
     await db.run(sql`CREATE TABLE IF NOT EXISTS PilotChangeLog (
       id TEXT PRIMARY KEY,

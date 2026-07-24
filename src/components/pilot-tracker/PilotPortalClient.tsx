@@ -36,6 +36,8 @@ interface Participant {
   mobileConfirmed: boolean;
   playstoreEmail: string | null;
   emailConfirmedIsPlaystore: boolean;
+  workEmail: string | null;
+  workEmailConfirmed: boolean;
   betaRegistered: boolean;
   invitationAcceptedDeclared: boolean;
   invitationLinkFailed: boolean;
@@ -413,6 +415,34 @@ function Step({
   );
 }
 
+/**
+ * Choice-button styling helper for the portal.
+ *
+ * Every question in the portal is a set of mutually-exclusive choices, and
+ * only one of them at a time should look "filled". Previously each button
+ * baked its own color into the className unconditionally, so once the user
+ * picked something the other buttons still looked chosen in their negative
+ * palette. This helper switches every non-active button back to a neutral
+ * outlined state so the participant's current answer is unambiguous.
+ *
+ *   variant "positive" → green fill when active
+ *   variant "negative" → rose fill when active
+ *   inactive (either)  → white / gray outlined
+ */
+function choiceClass(
+  active: boolean,
+  variant: "positive" | "negative",
+  base: string,
+): string {
+  if (!active) {
+    return `${base} border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50`;
+  }
+  if (variant === "positive") {
+    return `${base} bg-green-100 border-green-300 text-green-800 disabled:opacity-50`;
+  }
+  return `${base} bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100 disabled:opacity-50`;
+}
+
 // Screen B — Email step
 function EmailStep({
   qrToken,
@@ -632,16 +662,20 @@ function InvitationStep({
         <strong> "Become a tester"</strong>.
       </p>
       {error && <div className="text-sm text-red-600 mb-2">{error}</div>}
+      {/* Three mutually-exclusive choices. Only the currently-selected one
+          shows in its "filled" state — the others fall back to a neutral
+          outlined look. This keeps the participant's active answer visually
+          obvious even after they switch. */}
       <div className="grid grid-cols-3 gap-2">
         <button
           type="button"
           onClick={() => submit(true, false)}
           disabled={busy}
-          className={`px-3 py-2 rounded text-xs font-medium border ${
-            done
-              ? "bg-green-100 border-green-300 text-green-800"
-              : "border-gray-300 bg-white hover:bg-gray-50"
-          }`}
+          className={choiceClass(
+            done,
+            "positive",
+            "px-3 py-2 rounded text-xs font-medium border",
+          )}
         >
           Yes, accepted
         </button>
@@ -649,7 +683,11 @@ function InvitationStep({
           type="button"
           onClick={() => submit(false, false)}
           disabled={busy}
-          className="px-3 py-2 rounded text-xs font-medium border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+          className={choiceClass(
+            !participant.invitationAcceptedDeclared && !participant.invitationLinkFailed && participant.emailConfirmedIsPlaystore && participant.betaRegistered,
+            "negative",
+            "px-3 py-2 rounded text-xs font-medium border",
+          )}
         >
           Not yet
         </button>
@@ -657,7 +695,11 @@ function InvitationStep({
           type="button"
           onClick={() => submit(false, true)}
           disabled={busy}
-          className="px-3 py-2 rounded text-xs font-medium border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+          className={choiceClass(
+            participant.invitationLinkFailed,
+            "negative",
+            "px-3 py-2 rounded text-xs font-medium border",
+          )}
         >
           Link didn't work
         </button>
@@ -742,16 +784,18 @@ function AppUpdateStep({
         the invitation.
       </p>
       {error && <div className="text-sm text-red-600 mb-2">{error}</div>}
+      {/* Same rule as Screen C — only the active choice takes its filled
+          color; the other reverts to neutral. */}
       <div className="grid grid-cols-2 gap-2">
         <button
           type="button"
           onClick={() => submit(true)}
           disabled={busy}
-          className={`px-3 py-2 rounded text-xs font-medium border ${
-            done
-              ? "bg-green-100 border-green-300 text-green-800"
-              : "border-gray-300 bg-white hover:bg-gray-50"
-          }`}
+          className={choiceClass(
+            participant.appUpdatedDeclared,
+            "positive",
+            "px-3 py-2 rounded text-xs font-medium border",
+          )}
         >
           Yes, updated
         </button>
@@ -759,7 +803,11 @@ function AppUpdateStep({
           type="button"
           onClick={() => submit(false)}
           disabled={busy}
-          className="px-3 py-2 rounded text-xs font-medium border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+          className={choiceClass(
+            false,
+            "negative",
+            "px-3 py-2 rounded text-xs font-medium border",
+          )}
         >
           Not yet
         </button>
@@ -768,7 +816,15 @@ function AppUpdateStep({
   );
 }
 
-// Screen E — Mobile confirm step
+// Screen E — Mobile + (optional) work-email confirm step.
+//
+// Only participants with a workEmail on file see the second sub-field. Field-
+// only users (mobile-only, will use the Tarkie app + OTP-to-mobile) see the
+// step exactly as before — one mobile confirm, done. Admins with a work
+// email must confirm both before the step ticks green, because on Tarkie V5
+// OTPs go to the work email (not the mobile) for anyone signing into the
+// control tower — so an unconfirmed work email is as blocking as an
+// unconfirmed mobile.
 function MobileStep({
   qrToken,
   participant,
@@ -778,14 +834,17 @@ function MobileStep({
   participant: Participant;
   onDone: () => void;
 }) {
-  const done = participant.mobileConfirmed;
+  const hasWorkEmail = Boolean(participant.workEmail);
+  const done = hasWorkEmail
+    ? participant.mobileConfirmed && participant.workEmailConfirmed
+    : participant.mobileConfirmed;
   const currentMobile = participant.mobileNumberCorrected || participant.mobileNumber;
   const [correction, setCorrection] = useState("");
   const [showFix, setShowFix] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const confirm = async () => {
+  const patch = async (updates: Record<string, any>) => {
     setBusy(true);
     setError(null);
     try {
@@ -794,9 +853,7 @@ function MobileStep({
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            updates: { mobileConfirmed: true },
-          }),
+          body: JSON.stringify({ updates }),
         },
       );
       const json = await res.json();
@@ -808,69 +865,64 @@ function MobileStep({
       setBusy(false);
     }
   };
+
+  const confirmMobile = () => patch({ mobileConfirmed: true });
+  const confirmWorkEmail = () => patch({ workEmailConfirmed: true });
 
   const submitCorrection = async () => {
     if (!correction.trim() || correction.replace(/\D/g, "").length < 8) {
       setError("Please enter a valid mobile number.");
       return;
     }
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(
-        `/api/pilot/${qrToken}/participant/${participant.id}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            updates: {
-              mobileNumberCorrected: correction.trim(),
-              mobileConfirmed: true,
-            },
-          }),
-        },
-      );
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Save failed");
-      setShowFix(false);
-      setCorrection("");
-      onDone();
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
+    await patch({
+      mobileNumberCorrected: correction.trim(),
+      mobileConfirmed: true,
+    });
+    setShowFix(false);
+    setCorrection("");
   };
 
   return (
-    <Step done={done} title="4. Confirm your mobile number">
+    <Step done={done} title={hasWorkEmail ? "4. Confirm your mobile & work email" : "4. Confirm your mobile number"}>
+      <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Mobile number</div>
       <div className="flex items-center gap-2 mb-3">
         <Smartphone size={16} className="text-gray-500" />
         <span className="font-mono text-sm text-gray-900">{currentMobile}</span>
         {participant.mobileNumberCorrected && (
           <span className="text-xs text-amber-700">(corrected)</span>
         )}
+        {participant.mobileConfirmed && (
+          <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
+            ✓ Confirmed
+          </span>
+        )}
       </div>
       {error && <div className="text-sm text-red-600 mb-2">{error}</div>}
       {!showFix ? (
+        // Active choice highlights; the "No, fix it" trigger stays neutral
+        // until it's clicked — showFix reveals the correction form below.
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
-            onClick={confirm}
-            disabled={busy}
-            className={`px-3 py-2 rounded text-xs font-medium border ${
-              done
-                ? "bg-green-100 border-green-300 text-green-800"
-                : "border-gray-300 bg-white hover:bg-gray-50"
-            }`}
+            onClick={confirmMobile}
+            disabled={busy || participant.mobileConfirmed}
+            className={choiceClass(
+              participant.mobileConfirmed,
+              "positive",
+              "px-3 py-2 rounded text-xs font-medium border",
+            )}
           >
-            Yes, that's correct
+            {participant.mobileConfirmed ? "✓ Confirmed" : "Yes, that's correct"}
           </button>
           <button
             type="button"
             onClick={() => setShowFix(true)}
             disabled={busy}
-            className="px-3 py-2 rounded text-xs font-medium border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+            className={choiceClass(
+              false,
+              "negative",
+              "px-3 py-2 rounded text-xs font-medium border",
+            )}
           >
             No, fix it
           </button>
@@ -899,6 +951,53 @@ function MobileStep({
               className="px-3 py-2 text-xs text-gray-600 hover:text-gray-900"
             >
               Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {hasWorkEmail && (
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">
+            Work email
+          </div>
+          <div className="flex items-center gap-2 mb-2 min-w-0">
+            <Mail size={16} className="text-gray-500 shrink-0" />
+            <span className="text-sm text-gray-900 break-all">{participant.workEmail}</span>
+            {participant.workEmailConfirmed && (
+              <span className="shrink-0 text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
+                ✓ Confirmed
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] text-gray-600 mb-2 leading-snug">
+            Admins sign in to the control tower with this address, and OTPs
+            for the app go here (not to your mobile). Confirm we have it right.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={confirmWorkEmail}
+              disabled={busy || participant.workEmailConfirmed}
+              className={choiceClass(
+                participant.workEmailConfirmed,
+                "positive",
+                "px-3 py-2 rounded text-xs font-medium border",
+              )}
+            >
+              {participant.workEmailConfirmed ? "✓ Confirmed" : "Yes, that's correct"}
+            </button>
+            <button
+              type="button"
+              disabled
+              title="Ping your CST rep on Viber if this email is wrong — they'll correct it on the admin side."
+              className={choiceClass(
+                false,
+                "negative",
+                "px-3 py-2 rounded text-xs font-medium border cursor-default",
+              )}
+            >
+              No / Wrong email
             </button>
           </div>
         </div>
@@ -1055,8 +1154,12 @@ function ScreenshotStep({
             <button
               type="button"
               disabled
-              className="px-3 py-2 rounded text-sm font-medium border border-rose-300 bg-rose-50 text-rose-700 cursor-default"
               title="If you're not on the target, don't tap Yes — upload a screenshot instead so we can help."
+              className={choiceClass(
+                false,
+                "negative",
+                "px-3 py-2 rounded text-sm font-medium border cursor-default",
+              )}
             >
               No / Not sure
             </button>
