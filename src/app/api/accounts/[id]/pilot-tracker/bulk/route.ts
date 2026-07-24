@@ -51,6 +51,45 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       return NextResponse.json({ error: "Required: action, participantIds[]" }, { status: 400 });
     }
 
+    if (action === "delete") {
+      // Belongs-to check before deleting anything — reject entire batch on
+      // any foreign ID, same policy as markRegistered.
+      const belonging = await db
+        .select({ id: pilotParticipants.id })
+        .from(pilotParticipants)
+        .where(
+          and(
+            eq(pilotParticipants.projectId, project.id),
+            inArray(pilotParticipants.id, ids),
+          ),
+        );
+      if (belonging.length !== ids.length) {
+        return NextResponse.json(
+          { error: "Some participants don't belong to this account's pilot" },
+          { status: 400 },
+        );
+      }
+      // PilotChangeLog rows cascade via FK (ON DELETE CASCADE on
+      // participantId). Version screenshots in Drive are intentionally
+      // left in place — if CST needs to fully purge them, they can do so
+      // from the Drive folder directly. That trade-off keeps this
+      // operation instant and reversible in the "oops I deleted the
+      // wrong row" case (Drive still has the artifact).
+      const result = await db
+        .delete(pilotParticipants)
+        .where(
+          and(
+            eq(pilotParticipants.projectId, project.id),
+            inArray(pilotParticipants.id, ids),
+          ),
+        );
+      const deleted =
+        (result as any)?.rowsAffected ??
+        (result as any)?.changes ??
+        ids.length;
+      return NextResponse.json({ ok: true, deleted });
+    }
+
     if (action === "markRegistered") {
       // Verify all IDs belong to this project — reject entire batch on mismatch.
       const belonging = await db

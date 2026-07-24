@@ -649,7 +649,7 @@ function InvitationStep({
           type="button"
           onClick={() => submit(false, false)}
           disabled={busy}
-          className="px-3 py-2 rounded text-xs border border-gray-300 bg-white hover:bg-gray-50"
+          className="px-3 py-2 rounded text-xs font-medium border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-50"
         >
           Not yet
         </button>
@@ -657,7 +657,7 @@ function InvitationStep({
           type="button"
           onClick={() => submit(false, true)}
           disabled={busy}
-          className="px-3 py-2 rounded text-xs border border-gray-300 bg-white hover:bg-gray-50"
+          className="px-3 py-2 rounded text-xs font-medium border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-50"
         >
           Link didn't work
         </button>
@@ -759,7 +759,7 @@ function AppUpdateStep({
           type="button"
           onClick={() => submit(false)}
           disabled={busy}
-          className="px-3 py-2 rounded text-xs border border-gray-300 bg-white hover:bg-gray-50"
+          className="px-3 py-2 rounded text-xs font-medium border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-50"
         >
           Not yet
         </button>
@@ -870,7 +870,7 @@ function MobileStep({
             type="button"
             onClick={() => setShowFix(true)}
             disabled={busy}
-            className="px-3 py-2 rounded text-xs border border-gray-300 bg-white hover:bg-gray-50"
+            className="px-3 py-2 rounded text-xs font-medium border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-50"
           >
             No, fix it
           </button>
@@ -1055,7 +1055,7 @@ function ScreenshotStep({
             <button
               type="button"
               disabled
-              className="px-3 py-2 rounded text-sm border border-gray-300 bg-white text-gray-500 cursor-default"
+              className="px-3 py-2 rounded text-sm font-medium border border-rose-300 bg-rose-50 text-rose-700 cursor-default"
               title="If you're not on the target, don't tap Yes — upload a screenshot instead so we can help."
             >
               No / Not sure

@@ -210,3 +210,42 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     );
   }
 }
+
+/**
+ * DELETE /api/accounts/[id]/pilot-tracker/participants?participantId=xxx
+ *   → hard-deletes one participant. PilotChangeLog rows cascade via FK.
+ *     Version screenshots in Drive are intentionally left in place — if
+ *     they need purging, do that from the Drive folder. Keeps this
+ *     op instant and lets us recover if the wrong row was deleted.
+ */
+export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params;
+  const a = await authorize(id);
+  if ("error" in a) {
+    return NextResponse.json({ error: a.error.message }, { status: a.error.status });
+  }
+  try {
+    const url = new URL(req.url);
+    const participantId = url.searchParams.get("participantId");
+    if (!participantId) {
+      return NextResponse.json({ error: "Required: participantId" }, { status: 400 });
+    }
+    const [participant] = await db
+      .select({ id: pilotParticipants.id, projectId: pilotParticipants.projectId })
+      .from(pilotParticipants)
+      .where(eq(pilotParticipants.id, String(participantId)))
+      .limit(1);
+    if (!participant || participant.projectId !== a.projectId) {
+      return NextResponse.json({ error: "Participant not found for this account" }, { status: 404 });
+    }
+    await db
+      .delete(pilotParticipants)
+      .where(eq(pilotParticipants.id, String(participantId)));
+    return NextResponse.json({ ok: true, deleted: 1 });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message || "Failed to delete participant" },
+      { status: 500 },
+    );
+  }
+}

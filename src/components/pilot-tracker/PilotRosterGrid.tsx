@@ -16,7 +16,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, X, AlertTriangle, CheckCircle2, Clock, Download, UserCheck } from "lucide-react";
+import { Search, X, AlertTriangle, CheckCircle2, Clock, Download, UserCheck, Trash2 } from "lucide-react";
 import { useToast } from "@/components/ui/ToastContext";
 
 interface Participant {
@@ -158,6 +158,39 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
       }
       return next;
     });
+  };
+
+  const deleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    // Two-step confirm — first the count, then a typed-in yes-word — because
+    // this is destructive and pilots with hundreds of rows would be painful
+    // to rebuild from XLSX. The re-import path is idempotent by employeeId,
+    // so bulk-delete-then-reimport is still cheap; the friction here is
+    // guarding against a mis-click on the toolbar.
+    if (!confirm(`Delete ${selectedIds.size} participant(s)? This can't be undone from the app.`)) return;
+    setBulkBusy(true);
+    try {
+      const res = await fetch(
+        `/api/accounts/${accountId}/pilot-tracker/bulk`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "delete",
+            participantIds: Array.from(selectedIds),
+          }),
+        },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || res.statusText);
+      showToast(`Deleted ${json.deleted} participant(s).`, "success");
+      setSelectedIds(new Set());
+      refresh();
+    } catch (e: any) {
+      showToast(`Delete failed: ${e.message}`, "error");
+    } finally {
+      setBulkBusy(false);
+    }
   };
 
   const markSelectedRegistered = async () => {
@@ -302,6 +335,15 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
           >
             <UserCheck size={12} />
             {bulkBusy ? "Working…" : "Mark as beta-registered on Play"}
+          </button>
+          <button
+            type="button"
+            onClick={deleteSelected}
+            disabled={bulkBusy}
+            className="inline-flex items-center gap-1.5 px-3 py-1 bg-white text-red-700 border border-red-300 rounded text-xs font-medium hover:bg-red-50 disabled:opacity-50"
+          >
+            <Trash2 size={12} />
+            Delete selected
           </button>
         </div>
       )}
@@ -533,6 +575,28 @@ function ParticipantDrawer({
     playstoreEmail: participant.playstoreEmail || "",
     reportedVersion: participant.reportedVersion || "",
   });
+
+  const deleteOne = async () => {
+    // Match the confirm-word style of the bulk delete — same destructive
+    // op, same standard of caution. onSaved() refreshes the roster.
+    const label = `${participant.fullName} (${participant.employeeId})`;
+    if (!confirm(`Delete ${label}? This can't be undone from the app.`)) return;
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/accounts/${accountId}/pilot-tracker/participants?participantId=${encodeURIComponent(participant.id)}`,
+        { method: "DELETE" },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || res.statusText);
+      showToast(`Deleted ${label}.`, "success");
+      onSaved();
+    } catch (e: any) {
+      showToast(`Delete failed: ${e.message}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const save = async () => {
     setBusy(true);
@@ -788,7 +852,17 @@ function ParticipantDrawer({
             />
           </div>
         </div>
-        <div className="p-4 border-t border-gray-200 flex justify-end gap-2 sticky bottom-0 bg-white">
+        <div className="p-4 border-t border-gray-200 flex items-center gap-2 sticky bottom-0 bg-white">
+          <button
+            type="button"
+            onClick={deleteOne}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-700 border border-red-300 rounded-md hover:bg-red-50 disabled:opacity-50"
+          >
+            <Trash2 size={14} />
+            Delete
+          </button>
+          <div className="flex-1" />
           <button
             type="button"
             onClick={onClose}
