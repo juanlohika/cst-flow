@@ -824,7 +824,7 @@ function InvitationStep({
           href={project.betaInviteUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 mb-3"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded text-sm font-semibold whitespace-nowrap no-underline hover:bg-blue-700 hover:text-white mb-3 shadow-sm"
         >
           <Mail size={14} /> Open invitation link
         </a>
@@ -947,7 +947,7 @@ function AppUpdateStep({
           href={project.playStoreAppUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 mb-3"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded text-sm font-semibold whitespace-nowrap no-underline hover:bg-blue-700 hover:text-white mb-3 shadow-sm"
         >
           <ExternalLink size={14} /> Open Tarkie on Play Store
         </a>
