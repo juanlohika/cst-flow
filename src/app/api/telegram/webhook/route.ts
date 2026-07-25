@@ -698,14 +698,42 @@ export async function POST(req: Request) {
     // ─── NORMAL CHAT MESSAGE ─────────────────────────────────────────
     if (isGroup) {
       const binding = await getActiveBindingForChat(chat.id);
-      // Internal-scope firewall — these GCs are outbound-only system
-      // channels (e.g. the Pilot Tracker "beta registration request" room).
-      // Do NOT invoke the Arima intelligence loop, BRD capture, request
-      // capture, or any client-scoped tool — humans in the room are just
-      // reading system broadcasts and discussing among themselves. Ignoring
-      // the message silently is the correct behavior: no reply, no state
-      // change, no cost.
+      // Internal-scope firewall — these GCs are outbound-only broadcast
+      // channels. The one narrow exception is a short ack ("done", "ok",
+      // etc.) from the channel's tagged assignee, which we treat as
+      // authoritative confirmation that the dev has added the pending
+      // pilot emails to the Play Store tester list. All other messages
+      // are silently ignored: no reply, no Arima loop, no cost.
       if (binding && binding.scopeType === "internal") {
+        const senderHandle = from.username ? `@${from.username}` : null;
+        const assignee = binding.broadcastAssignee;
+        const isAssignee =
+          !!senderHandle &&
+          !!assignee &&
+          senderHandle.toLowerCase() === assignee.toLowerCase();
+        if (isAssignee) {
+          const { looksLikeBetaRegisterAck, markAwaitingRegistrationAsRegistered } =
+            await import("@/lib/pilot/beta-registration-ack");
+          if (looksLikeBetaRegisterAck(text)) {
+            // Look up the CST user linked to this Telegram sender (if
+            // any). If not linked, actorUserId stays null and the audit
+            // trail records the Telegram handle only.
+            const cst = await resolveCstUserFromTelegram(from.id);
+            const summary = await markAwaitingRegistrationAsRegistered({
+              actorLabel: senderHandle || `Telegram user ${from.id}`,
+              actorUserId: cst?.cstUserId ?? null,
+              note: `Ack via internal channel by ${senderHandle}`,
+            });
+            const reply =
+              summary.marked === 0
+                ? `Thanks ${senderHandle}! Nothing was pending on our side, but noted.`
+                : summary.perProject.length === 1
+                ? `Thanks ${senderHandle}! Marked ${summary.marked} participant${summary.marked === 1 ? "" : "s"} in ${summary.perProject[0].projectName} as Beta registered.`
+                : `Thanks ${senderHandle}! Marked ${summary.marked} participants as Beta registered across ${summary.perProject.length} projects.`;
+            await safeReply(config.botToken, chat.id, reply, message.message_id);
+            return NextResponse.json({ ok: true });
+          }
+        }
         return NextResponse.json({ ok: true, ignored: "internal-scope-inbound" });
       }
       // If no client binding, check whether this is the bound Super Admin GC.

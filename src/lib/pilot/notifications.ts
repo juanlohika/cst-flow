@@ -67,39 +67,32 @@ export async function broadcastPilotRegistrationDigest(args: {
     }
 
     const { tgSendMessage, truncateForTelegram } = await import("@/lib/telegram/api");
-    // Plain-text conversational format — no Markdown, no monospace, no
-    // italics. Reads like a note a person would send. Company name goes
-    // in the ask line so the ceremonial "for the X company" flows.
     const company = (args.clientCompanyName || "").trim();
     const forCompany = company ? ` for the ${company} company` : "";
-    const bullets = args.entries.map((e) => `- ${e.playstoreEmail}`).join("\n");
+    // Emails render one per line, no leading "- " — the dev copies the
+    // raw email address into Play Console, and the "- " prefix used to
+    // get in the way of clean copy.
+    const emailLines = args.entries.map((e) => e.playstoreEmail).join("\n");
 
     await Promise.all(
       targets.map((t) => {
-        const greetingName = t.broadcastAssignee
-          ? // Strip a leading "@" when composing the greeting so we get
-            // "Hi Lester," not "Hi @Lester,". The mention still fires a
-            // push because Telegram parses @handles when parseMode is
-            // absent, as long as the token appears anywhere in the text.
-            (t.broadcastAssignee.startsWith("@")
-              ? t.broadcastAssignee.slice(1)
-              : t.broadcastAssignee)
-          : "team";
-        // Include the raw @handle on its own line so Telegram still
-        // pings the assignee. Bare "Hi Name," without the handle would
-        // not trigger a notification.
-        const pingLine = t.broadcastAssignee ? `${t.broadcastAssignee}\n\n` : "";
+        // The @handle now lives INSIDE the greeting line so Telegram
+        // still fires a push notification for the assignee while
+        // avoiding a redundant top line. Fallback greeting when no
+        // assignee is set on this channel.
+        const greeting = t.broadcastAssignee
+          ? `Hi ${t.broadcastAssignee},`
+          : `Hi team,`;
         const text = truncateForTelegram(
-          pingLine +
-            [
-              `Hi ${greetingName},`,
-              ``,
-              `Please add the following to the Tarkie V5 Internal Beta Tester list${forCompany}:`,
-              ``,
-              bullets,
-              ``,
-              `Thanks.`,
-            ].join("\n"),
+          [
+            greeting,
+            ``,
+            `Please add the following to the Tarkie V5 Internal Beta Tester list${forCompany}:`,
+            ``,
+            emailLines,
+            ``,
+            `Thanks.`,
+          ].join("\n"),
         );
         return tgSendMessage(cfg.botToken, t.chatId, text, {
           disablePreview: true,
@@ -150,23 +143,19 @@ export async function broadcastPilotRegistrationRequest(args: {
     const forCompany = company ? ` for the ${company} company` : "";
     await Promise.all(
       targets.map((t) => {
-        const greetingName = t.broadcastAssignee
-          ? t.broadcastAssignee.startsWith("@")
-            ? t.broadcastAssignee.slice(1)
-            : t.broadcastAssignee
-          : "team";
-        const pingLine = t.broadcastAssignee ? `${t.broadcastAssignee}\n\n` : "";
+        const greeting = t.broadcastAssignee
+          ? `Hi ${t.broadcastAssignee},`
+          : `Hi team,`;
         const text = truncateForTelegram(
-          pingLine +
-            [
-              `Hi ${greetingName},`,
-              ``,
-              `Please add the following to the Tarkie V5 Internal Beta Tester list${forCompany}:`,
-              ``,
-              `- ${args.playstoreEmail}`,
-              ``,
-              `Thanks.`,
-            ].join("\n"),
+          [
+            greeting,
+            ``,
+            `Please add the following to the Tarkie V5 Internal Beta Tester list${forCompany}:`,
+            ``,
+            args.playstoreEmail,
+            ``,
+            `Thanks.`,
+          ].join("\n"),
         );
         return tgSendMessage(cfg.botToken, t.chatId, text, {
           disablePreview: true,
