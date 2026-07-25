@@ -16,7 +16,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, X, AlertTriangle, CheckCircle2, Clock, Download, UserCheck, Trash2, RefreshCw, Copy as CopyIcon, Check } from "lucide-react";
+import { Search, X, AlertTriangle, CheckCircle2, Clock, Download, UserCheck, Trash2, RefreshCw, Copy as CopyIcon, Check, ChevronDown, ChevronsUp } from "lucide-react";
 import { useToast } from "@/components/ui/ToastContext";
 
 interface Participant {
@@ -288,6 +288,61 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
     }
   };
 
+  // Bulk CST override — advance every selected participant to `stage`.
+  // Cumulative: the API satisfies all earlier stages too, and never
+  // demotes anyone already further along. This is the batch twin of the
+  // per-participant "CST override" tray in the drawer.
+  const advanceSelectedToStage = async (stage: number) => {
+    if (selectedIds.size === 0) return;
+    const label = STAGE_LABELS[stage];
+    if (
+      !confirm(
+        `Advance ${selectedIds.size} participant(s) to "${stage}. ${label}"?\n\n` +
+          `This also satisfies every earlier stage. Participants already past ` +
+          `this stage are left alone. Auditable in the change log.`,
+      )
+    ) {
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await fetch(
+        `/api/accounts/${accountId}/pilot-tracker/bulk`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "advanceStage",
+            stage,
+            participantIds: Array.from(selectedIds),
+          }),
+        },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || res.statusText);
+      // Surface the no-email skips explicitly — silently doing nothing for
+      // those rows is exactly the kind of thing that erodes trust in a
+      // bulk tool. Name a couple so CST knows where to look.
+      const skipped: Array<{ employeeId: string; fullName: string }> =
+        json.skippedNoEmail || [];
+      let msg = `Advanced ${json.advanced} to stage ${stage}.`;
+      if (json.unchanged) msg += ` ${json.unchanged} already there.`;
+      if (skipped.length) {
+        const names = skipped.slice(0, 3).map((s) => s.employeeId).join(", ");
+        msg += ` Skipped ${skipped.length} with no Play Store email (${names}${
+          skipped.length > 3 ? "…" : ""
+        }).`;
+      }
+      showToast(msg, skipped.length ? "info" : "success");
+      setSelectedIds(new Set());
+      refresh();
+    } catch (e: any) {
+      showToast(`Bulk advance failed: ${e.message}`, "error");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   const markSelectedRegistered = async () => {
     if (selectedIds.size === 0) return;
     if (!confirm(`Mark ${selectedIds.size} participant(s) as beta-registered on Play?`)) return;
@@ -340,9 +395,11 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
             // Card is stage-filter primary. The bottom row is a secondary
             // click target that jumps to the matching flag filter — we
             // rely on stopPropagation so the outer stage-filter isn't
-            // toggled at the same time. Stage cards without a mapped
-            // block filter (0, 6) still render the "0 blocked" line for
-            // visual consistency, but the row isn't clickable.
+            // toggled at the same time. Stages with no mapped block
+            // filter (0 = nothing has happened yet, 7 = complete by
+            // definition) render no pill at all — a "0 blocked" chip on
+            // "Complete (no blockers)" is a contradiction in terms, and
+            // on Stage 0 it implies a signal we don't compute.
             const blocked =
               i === 1 ? data.blockedByStage?.s1 ?? 0
               : i === 2 ? data.blockedByStage?.s2 ?? 0
@@ -411,8 +468,14 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
                     {blocked} blocked
                   </button>
                 ) : (
-                  <span className="self-start inline-block mt-1.5 text-[10px] leading-none rounded-full px-1.5 py-0.5 border bg-gray-50 border-gray-200 text-gray-400">
-                    0 blocked
+                  // No blocker signal for this stage. Render an invisible
+                  // spacer of the same height as the pill so all eight
+                  // cards in the funnel row stay vertically aligned.
+                  <span
+                    aria-hidden="true"
+                    className="self-start inline-block mt-1.5 text-[10px] leading-none px-1.5 py-0.5 border border-transparent invisible"
+                  >
+                    &nbsp;
                   </span>
                 )}
               </div>
@@ -501,11 +564,16 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
             Clear
           </button>
           <div className="flex-1" />
+          <BulkStageMenu
+            count={selectedIds.size}
+            busy={bulkBusy}
+            onPick={advanceSelectedToStage}
+          />
           <button
             type="button"
             onClick={markSelectedRegistered}
             disabled={bulkBusy}
-            className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3 py-1 bg-white text-blue-700 border border-blue-300 rounded text-xs font-medium hover:bg-blue-100 disabled:opacity-50"
           >
             <UserCheck size={12} />
             {bulkBusy ? "Working…" : "Mark as beta-registered on Play"}
@@ -633,6 +701,99 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
             refresh();
           }}
         />
+      )}
+    </div>
+  );
+}
+
+// ─── Bulk stage-advance menu ─────────────────────────────────────────
+
+/**
+ * Dropdown that advances every selected participant to a chosen stage —
+ * the batch equivalent of the drawer's CST override tray.
+ *
+ * Why a menu and not one button per stage: seven inline buttons would
+ * dominate the selection bar, and the operation is deliberate enough that
+ * one extra click is a feature, not friction. Stage 0 is absent — it's
+ * "imported, nothing done yet", which is where rows already start; there's
+ * nothing to advance TO, and the API only accepts 1–7.
+ */
+function BulkStageMenu({
+  count,
+  busy,
+  onPick,
+}: {
+  count: number;
+  busy: boolean;
+  onPick: (stage: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  // Close on outside click / Escape. Without this the menu lingers over
+  // the table and swallows row clicks.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = () => setOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" onMouseDown={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50"
+      >
+        <ChevronsUp size={12} />
+        {busy ? "Working…" : "Advance stage"}
+        <ChevronDown size={12} className={open ? "rotate-180 transition" : "transition"} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-20 w-72 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+          <div className="px-3 py-2 border-b border-gray-100 bg-gray-50">
+            <div className="text-xs font-semibold text-gray-900">
+              Advance {count} participant{count === 1 ? "" : "s"} to…
+            </div>
+            <div className="text-[10px] text-gray-500 leading-tight mt-0.5">
+              Bypass the portal when you&apos;ve already confirmed with them.
+              Earlier stages are satisfied automatically; nobody is demoted.
+            </div>
+          </div>
+          <div className="py-1 max-h-72 overflow-y-auto">
+            {STAGE_LABELS.map((label, i) => {
+              if (i === 0) return null;  // nothing to advance to
+              const isComplete = i === 7;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setOpen(false);
+                    onPick(i);
+                  }}
+                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-blue-50 disabled:opacity-50 flex items-center gap-2 ${
+                    isComplete ? "text-emerald-800 font-medium" : "text-gray-800"
+                  }`}
+                >
+                  {isComplete && <CheckCircle2 size={12} className="shrink-0" />}
+                  <span>
+                    {i}. {label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1441,6 +1602,19 @@ function CstStageOverride({
       },
     },
     {
+      // Stage 7 — the only way out of Stage 6 is clearing the portal-driven
+      // corrections CST still owes downstream. Both resolve flags are safe
+      // to set even when only one correction exists: the state machine
+      // treats a resolved-but-never-corrected field as a no-op, and
+      // updateParticipant() skips fields whose value didn't change.
+      label: "7. Mark blockers resolved (complete)",
+      show: participant.versionVerified === "verified" && participant.currentStage < 7,
+      updates: {
+        contactCorrectionResolved: true,
+        emailCorrectionResolved: true,
+      },
+    },
+    {
       label: "Mark complete (all stages)",
       show: participant.versionVerified !== "verified",
       updates: {
@@ -1452,6 +1626,11 @@ function CstStageOverride({
         mobileConfirmed: true,
         ...(participant.workEmail ? { workEmailConfirmed: true } : {}),
         versionConfirmedByUser: true,
+        // Land directly at Stage 7, not 6. Without these, a participant
+        // who ever corrected their mobile/email via the portal gets stuck
+        // at "Version verified" even though CST just declared them done.
+        contactCorrectionResolved: true,
+        emailCorrectionResolved: true,
       },
     },
   ];
@@ -1469,7 +1648,9 @@ function CstStageOverride({
 
       {visible.length === 0 ? (
         <div className="text-xs text-amber-800">
-          This participant is fully complete. Nothing to advance.
+          {participant.currentStage >= 7
+            ? "This participant is fully complete. Nothing to advance."
+            : "Nothing left to advance from here — remaining work is on the blocker banners below."}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-1.5">
