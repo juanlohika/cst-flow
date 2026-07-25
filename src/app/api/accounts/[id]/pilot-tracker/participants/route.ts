@@ -132,7 +132,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       } else if (flag === "NOT_YET_ACCEPTED") {
         // Participants who explicitly tapped "Not yet" on Screen C.
         // Resolved from the change log — see the Promise.all query
-        // above for the definition of the signal.
+        // above for the definition of the signal, including why the
+        // currentStage < 3 gate is required.
         const rows = await db
           .select({ pid: pilotChangeLog.participantId })
           .from(pilotChangeLog)
@@ -143,6 +144,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
               eq(pilotChangeLog.actor, "participant"),
               eq(pilotChangeLog.field, "invitationAcceptedDeclared"),
               eq(pilotChangeLog.newValue, "false"),
+              lt(pilotParticipants.currentStage, 3),
             ),
           );
         const idset = Array.from(new Set(rows.map((r) => r.pid).filter((x): x is string => !!x)));
@@ -165,6 +167,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
               eq(pilotChangeLog.actor, "participant"),
               eq(pilotChangeLog.field, "invitationAcceptedDeclared"),
               eq(pilotChangeLog.newValue, "false"),
+              lt(pilotParticipants.currentStage, 3),
             ),
           );
         const notYetPids = Array.from(new Set(notYetPidRows.map((r) => r.pid).filter((x): x is string => !!x)));
@@ -292,6 +295,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       // We return participant IDs (not just a count) so the client can
       // render a "Not yet accepted" chip in the Flag column alongside
       // the real issueFlag chip.
+      //
+      // The currentStage gate is essential: a change-log row is a
+      // permanent historical record, so without it a participant who
+      // tapped "Not yet" in week 1 and finished the whole flow in week 2
+      // would keep inflating the Step-2 blocker count forever. "Not yet"
+      // only describes a live blocker while they're still AT that gate.
       db
         .select({ pid: pilotChangeLog.participantId })
         .from(pilotChangeLog)
@@ -302,6 +311,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
             eq(pilotChangeLog.actor, "participant"),
             eq(pilotChangeLog.field, "invitationAcceptedDeclared"),
             eq(pilotChangeLog.newValue, "false"),
+            lt(pilotParticipants.currentStage, 3),
           ),
         ),
     ]);
