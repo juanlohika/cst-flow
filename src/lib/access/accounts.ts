@@ -945,6 +945,11 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN workEmail TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN workEmailConfirmed INTEGER DEFAULT 0 NOT NULL`); } catch {}
     try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN workEmailConfirmedAt TEXT`); } catch {}
+    // CST-side resolution markers for portal-driven corrections.
+    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN contactCorrectionResolvedAt TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN contactCorrectionResolvedBy TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN emailCorrectionResolvedAt TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN emailCorrectionResolvedBy TEXT`); } catch {}
 
     await db.run(sql`CREATE TABLE IF NOT EXISTS PilotChangeLog (
       id TEXT PRIMARY KEY,

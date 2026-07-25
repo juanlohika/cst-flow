@@ -11,7 +11,7 @@
  */
 import { db } from "@/db";
 import { pilotParticipants, pilotProjects, pilotChangeLog } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { computeStage, type IssueFlag } from "./state-machine";
 
 /**
@@ -48,6 +48,16 @@ export interface ParticipantUpdate {
   versionVerifiedByAi?: boolean;
   versionAiExtractedText?: string | null;
   versionVerifiedAt?: string | null;
+  // CST-side resolution flags for portal-driven corrections. Setting
+  // these true stamps the *At and *By fields; the state machine reads
+  // the resolved status to decide whether the participant is eligible
+  // for Stage 7 (Complete, no blockers).
+  contactCorrectionResolved?: boolean;
+  contactCorrectionResolvedAt?: string | null;
+  contactCorrectionResolvedBy?: string | null;
+  emailCorrectionResolved?: boolean;
+  emailCorrectionResolvedAt?: string | null;
+  emailCorrectionResolvedBy?: string | null;
 }
 
 export type Actor = "participant" | "cst" | "dev" | "ai" | "system";
@@ -128,6 +138,31 @@ export async function updateParticipant(
   autoStamp(finalUpdates, current, "emailConfirmedIsPlaystore", "emailCapturedAt", now);
   autoStamp(finalUpdates, current, "workEmailConfirmed", "workEmailConfirmedAt", now);
   autoStamp(finalUpdates, current, "versionConfirmedByUser", "versionConfirmedByUserAt", now);
+
+  // CST-side blocker resolution — the caller passes {contactCorrectionResolved:
+  // true} (or the email variant); we translate that into the persisted
+  // *ResolvedAt / *ResolvedBy columns. Passing false clears the resolution
+  // so the blocker re-appears (rare, but supported).
+  if (finalUpdates.contactCorrectionResolved !== undefined) {
+    if (finalUpdates.contactCorrectionResolved) {
+      finalUpdates.contactCorrectionResolvedAt = now;
+      finalUpdates.contactCorrectionResolvedBy = options.actorUserId ?? null;
+    } else {
+      finalUpdates.contactCorrectionResolvedAt = null;
+      finalUpdates.contactCorrectionResolvedBy = null;
+    }
+    delete (finalUpdates as any).contactCorrectionResolved;
+  }
+  if (finalUpdates.emailCorrectionResolved !== undefined) {
+    if (finalUpdates.emailCorrectionResolved) {
+      finalUpdates.emailCorrectionResolvedAt = now;
+      finalUpdates.emailCorrectionResolvedBy = options.actorUserId ?? null;
+    } else {
+      finalUpdates.emailCorrectionResolvedAt = null;
+      finalUpdates.emailCorrectionResolvedBy = null;
+    }
+    delete (finalUpdates as any).emailCorrectionResolved;
+  }
   // Auto-verify on user confirmation. If the participant taps "Yes, I'm on
   // {target}" on Screen F and the target version is set on the project,
   // stamp reportedVersion + flip versionVerified to 'verified' in one go.
@@ -156,6 +191,31 @@ export async function updateParticipant(
   ) {
     finalUpdates.versionScreenshotUploadedAt = now;
   }
+  // If a participant makes a fresh correction (mobile / work email /
+  // playstore email) via the portal AFTER CST already resolved a prior
+  // one, the resolution has to reset — otherwise the blocker count would
+  // stay wrongly at zero while a new correction sits unaddressed.
+  // Only fire when the actor is the participant (a CST edit is not the
+  // participant "again correcting themselves").
+  if (options.actor === "participant") {
+    const contactChanged =
+      (finalUpdates.mobileNumberCorrected !== undefined &&
+        finalUpdates.mobileNumberCorrected !== current.mobileNumberCorrected) ||
+      (finalUpdates.workEmail !== undefined &&
+        finalUpdates.workEmail !== current.workEmail);
+    if (contactChanged && current.contactCorrectionResolvedAt) {
+      finalUpdates.contactCorrectionResolvedAt = null;
+      finalUpdates.contactCorrectionResolvedBy = null;
+    }
+    const emailChanged =
+      finalUpdates.playstoreEmail !== undefined &&
+      finalUpdates.playstoreEmail !== current.playstoreEmail;
+    if (emailChanged && current.emailCorrectionResolvedAt) {
+      finalUpdates.emailCorrectionResolvedAt = null;
+      finalUpdates.emailCorrectionResolvedBy = null;
+    }
+  }
+
   // versionVerified transitioning into verified/mismatch → stamp
   if (
     finalUpdates.versionVerified !== undefined &&
@@ -190,6 +250,47 @@ export async function updateParticipant(
 
   // Build the "next" participant state for stage/flag derivation.
   const next = { ...current, ...finalUpdates };
+  // Compute the "unresolved correction" flags for Stage-7 gating. Only
+  // relevant when the participant is at Stage 6 semantically — for
+  // earlier stages the derivation ignores these inputs. Read the
+  // change log for correction events, then compare against the current
+  // resolution timestamp.
+  const nextContactResolvedAt = (next as any).contactCorrectionResolvedAt as string | null | undefined;
+  const nextEmailResolvedAt = (next as any).emailCorrectionResolvedAt as string | null | undefined;
+  let hasUnresolvedContactCorrection = false;
+  let hasUnresolvedEmailCorrection = false;
+  if (next.versionVerified === "verified" && !nextContactResolvedAt) {
+    const rows = await db
+      .select({ id: pilotChangeLog.id })
+      .from(pilotChangeLog)
+      .where(
+        and(
+          eq(pilotChangeLog.participantId, participantId),
+          eq(pilotChangeLog.actor, "participant"),
+          or(
+            eq(pilotChangeLog.field, "mobileNumberCorrected"),
+            eq(pilotChangeLog.field, "workEmail"),
+          )!,
+        ),
+      )
+      .limit(1);
+    hasUnresolvedContactCorrection = rows.length > 0;
+  }
+  if (next.versionVerified === "verified" && !nextEmailResolvedAt) {
+    const rows = await db
+      .select({ id: pilotChangeLog.id })
+      .from(pilotChangeLog)
+      .where(
+        and(
+          eq(pilotChangeLog.participantId, participantId),
+          eq(pilotChangeLog.actor, "participant"),
+          eq(pilotChangeLog.field, "playstoreEmail"),
+        ),
+      )
+      .limit(1);
+    hasUnresolvedEmailCorrection = rows.length > 0;
+  }
+
   const derived = computeStage(
     {
       playstoreEmail: next.playstoreEmail,
@@ -204,6 +305,10 @@ export async function updateParticipant(
       versionScreenshotDriveId: next.versionScreenshotDriveId,
       versionConfirmedByUser: Boolean(next.versionConfirmedByUser),
       versionVerified: next.versionVerified,
+      contactCorrectionResolvedAt: nextContactResolvedAt ?? null,
+      emailCorrectionResolvedAt: nextEmailResolvedAt ?? null,
+      hasUnresolvedContactCorrection,
+      hasUnresolvedEmailCorrection,
       lastActivityAt: now,  // treat "now" as the activity timestamp for STALE
     },
     {

@@ -1412,6 +1412,17 @@ export const pilotParticipants = sqliteTable("PilotParticipant", {
   // after CST manual override.
   versionAiExtractedText:        text("versionAiExtractedText"),
   versionVerifiedAt:             text("versionVerifiedAt"),
+  // CST-only "resolution" markers for portal-driven corrections.
+  // When a participant edits their mobile / work email via the portal,
+  // CST needs to mirror the change into the Users profile module before
+  // the change is truly resolved. Once resolved, the participant drops
+  // out of the Stage-4 blocker count and (per feature 3) can advance
+  // to the "Complete (no blockers)" stage.
+  contactCorrectionResolvedAt:   text("contactCorrectionResolvedAt"),
+  contactCorrectionResolvedBy:   text("contactCorrectionResolvedBy"),
+  // Same mechanism for Play Store email corrections (Stage 1 blocker).
+  emailCorrectionResolvedAt:     text("emailCorrectionResolvedAt"),
+  emailCorrectionResolvedBy:     text("emailCorrectionResolvedBy"),
   // Derived + cached from the fields above via computeStage(). Re-computed
   // on every mutation so queries can filter on stage/flag directly.
   currentStage:                  integer("currentStage").default(0).notNull(),

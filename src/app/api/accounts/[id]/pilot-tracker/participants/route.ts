@@ -69,7 +69,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const filters: any[] = [eq(pilotParticipants.projectId, a.projectId)];
     if (stage !== null && stage !== "") {
       const n = Number(stage);
-      if (Number.isInteger(n) && n >= 0 && n <= 6) {
+      if (Number.isInteger(n) && n >= 0 && n <= 7) {
         filters.push(eq(pilotParticipants.currentStage, n));
       }
     }
@@ -79,6 +79,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       // column. Handled here as an early-return path so the main list
       // query can restrict to the resolved participant IDs.
       if (flag === "EMAIL_CORRECTED_BY_USER") {
+        // Only unresolved corrections count as blocked — once CST marks
+        // it resolved the participant drops out of this filter.
         const rows = await db
           .select({ pid: pilotChangeLog.participantId })
           .from(pilotChangeLog)
@@ -88,6 +90,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
               eq(pilotParticipants.projectId, a.projectId),
               eq(pilotChangeLog.actor, "participant"),
               eq(pilotChangeLog.field, "playstoreEmail"),
+              sql`${pilotParticipants.emailCorrectionResolvedAt} IS NULL`,
             ),
           );
         const idset = Array.from(new Set(rows.map((r) => r.pid)));
@@ -109,6 +112,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
                 eq(pilotChangeLog.field, "mobileNumberCorrected"),
                 eq(pilotChangeLog.field, "workEmail"),
               )!,
+              sql`${pilotParticipants.contactCorrectionResolvedAt} IS NULL`,
             ),
           );
         const idset = Array.from(new Set(rows.map((r) => r.pid)));
@@ -216,8 +220,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         .groupBy(pilotParticipants.currentStage, pilotParticipants.issueFlag),
 
       // Distinct participants with a portal-driven playstoreEmail
-      // correction. Project scoped via a join so we can drop the
-      // separate idsInProject round-trip.
+      // correction that CST hasn't marked resolved yet. Once resolved
+      // (emailCorrectionResolvedAt IS NOT NULL), the participant drops
+      // out of the blocker count.
       db
         .select({
           c: sql<number>`count(distinct ${pilotChangeLog.participantId})`.as("c"),
@@ -229,11 +234,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
             eq(pilotParticipants.projectId, a.projectId),
             eq(pilotChangeLog.actor, "participant"),
             eq(pilotChangeLog.field, "playstoreEmail"),
+            sql`${pilotParticipants.emailCorrectionResolvedAt} IS NULL`,
           ),
         ),
 
       // Distinct participants with a mobileNumberCorrected OR workEmail
-      // change by the participant.
+      // change by the participant, still unresolved on the CST side.
       db
         .select({
           c: sql<number>`count(distinct ${pilotChangeLog.participantId})`.as("c"),
@@ -248,6 +254,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
               eq(pilotChangeLog.field, "mobileNumberCorrected"),
               eq(pilotChangeLog.field, "workEmail"),
             )!,
+            sql`${pilotParticipants.contactCorrectionResolvedAt} IS NULL`,
           ),
         ),
 
@@ -299,7 +306,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         ),
     ]);
 
-    const stageCounts = new Array(7).fill(0);
+    const stageCounts = new Array(8).fill(0);
     const flagCounts: Record<string, number> = {};
     let total = 0;
     for (const r of funnelRows) {

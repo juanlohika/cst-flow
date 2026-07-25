@@ -16,7 +16,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, X, AlertTriangle, CheckCircle2, Clock, Download, UserCheck, Trash2, RefreshCw } from "lucide-react";
+import { Search, X, AlertTriangle, CheckCircle2, Clock, Download, UserCheck, Trash2, RefreshCw, Copy as CopyIcon, Check } from "lucide-react";
 import { useToast } from "@/components/ui/ToastContext";
 
 interface Participant {
@@ -47,6 +47,11 @@ interface Participant {
   issueFlag: string;
   lastActivityAt: string;
   lastActivityBy: string | null;
+  // CST-side resolution timestamps for portal-driven corrections. When
+  // set, the participant drops out of the corresponding "blocked" count
+  // and (via the state machine) becomes eligible for Stage 7.
+  contactCorrectionResolvedAt: string | null;
+  emailCorrectionResolvedAt: string | null;
 }
 
 interface Payload {
@@ -78,6 +83,7 @@ const STAGE_BLOCK_FILTER: Record<number, string | null> = {
   4: "CONTACT_CORRECTED_BY_USER",
   5: "WORK_EMAIL_PENDING",
   6: "VERSION_MISMATCH",
+  7: null,  // "Complete (no blockers)" is by definition blocker-free
 };
 
 const STAGE_LABELS = [
@@ -88,6 +94,7 @@ const STAGE_LABELS = [
   "App updated",
   "Mobile & work email confirmed",
   "Version verified",
+  "Complete (no blockers)",
 ];
 
 const FLAG_LABELS: Record<string, string> = {
@@ -328,7 +335,7 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
         <h4 className="text-sm font-semibold text-gray-900 mb-3">
           Funnel · {data.total} participants
         </h4>
-        <div className="grid grid-cols-7 gap-2 mb-3">
+        <div className="grid grid-cols-4 md:grid-cols-8 gap-2 mb-3">
           {STAGE_LABELS.map((label, i) => {
             // Card is stage-filter primary. The bottom row is a secondary
             // click target that jumps to the matching flag filter — we
@@ -343,7 +350,7 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
               : i === 4 ? data.blockedByStage?.s4 ?? 0
               : i === 5 ? data.blockedByStage?.s5 ?? 0
               : i === 6 ? data.blockedByStage?.s6 ?? 0
-              : 0;
+              : 0;  // stage 7 = complete; no blocker signal
             const blockFilter = STAGE_BLOCK_FILTER[i];
             const blockedActive = blockFilter != null && flagFilter === blockFilter;
             const stageActive = stageFilter === String(i);
@@ -351,12 +358,15 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
             // click target inside another <button> triggers both handlers
             // on tap in mobile browsers even with stopPropagation, which
             // was making the pill and the card fight each other.
+            const isCompleteStage = i === 7;
             return (
               <div
                 key={i}
                 className={`text-left rounded-md border p-2 transition flex flex-col ${
                   stageActive
                     ? "border-blue-500 bg-blue-50 ring-1 ring-blue-300"
+                    : isCompleteStage
+                    ? "border-emerald-200 bg-emerald-50/40"
                     : "border-gray-200 bg-white"
                 }`}
               >
@@ -653,18 +663,24 @@ function Td({
 
 function StageBadge({ stage }: { stage: number }) {
   const label = STAGE_LABELS[stage] || "Unknown";
-  const isComplete = stage === 6;
+  // Stage 7 = "Complete (no blockers)" is the truest finish line and
+  // gets the strongest green treatment. Stage 6 is "on target build but
+  // CST has residual work" — an intermediate green.
+  const isFullyComplete = stage === 7;
+  const isVersionVerified = stage === 6;
   return (
     <span
       className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded ${
-        isComplete
+        isFullyComplete
+          ? "bg-emerald-100 text-emerald-800"
+          : isVersionVerified
           ? "bg-green-100 text-green-800"
           : stage >= 3
           ? "bg-blue-100 text-blue-800"
           : "bg-gray-100 text-gray-700"
       }`}
     >
-      {isComplete && <CheckCircle2 size={12} />}
+      {(isFullyComplete || isVersionVerified) && <CheckCircle2 size={12} />}
       {stage}. {label}
     </span>
   );
@@ -745,6 +761,7 @@ function ParticipantDrawer({
 }) {
   const { showToast } = useToast();
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
   const [form, setForm] = useState({
     betaRegistered: participant.betaRegistered,
     versionVerified: participant.versionVerified as "pending" | "verified" | "mismatch",
@@ -752,6 +769,55 @@ function ParticipantDrawer({
     playstoreEmail: participant.playstoreEmail || "",
     reportedVersion: participant.reportedVersion || "",
   });
+
+  // 1-click copy for the corrected values (mobile / work email / play-store
+  // email) — CST needs to paste these into the Users profile module, and
+  // typing them by hand is error-prone.
+  const copyToClipboard = async (value: string, tag: string) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(tag);
+      setTimeout(() => setCopied((c) => (c === tag ? null : c)), 1500);
+    } catch (e: any) {
+      showToast(`Copy failed: ${e.message}`, "error");
+    }
+  };
+
+  // Mark a portal-driven correction as resolved (i.e. CST mirrored it
+  // into the Users module already). Drops the participant out of the
+  // corresponding Stage-1 / Stage-4 blocker count and, if they're at
+  // Stage 6, promotes them to Stage 7 (Complete, no blockers).
+  const markResolved = async (kind: "contact" | "email") => {
+    setBusy(true);
+    try {
+      const updates: Record<string, unknown> =
+        kind === "contact"
+          ? { contactCorrectionResolved: true }
+          : { emailCorrectionResolved: true };
+      const res = await fetch(
+        `/api/accounts/${accountId}/pilot-tracker/participants`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ participantId: participant.id, updates }),
+        },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || res.statusText);
+      showToast(
+        json.stageChanged
+          ? `Marked resolved. Stage advanced to ${json.newStage}.`
+          : "Marked resolved.",
+        "success",
+      );
+      onSaved();
+    } catch (e: any) {
+      showToast(`Failed: ${e.message}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const deleteOne = async () => {
     // Match the confirm-word style of the bulk delete — same destructive
@@ -869,18 +935,81 @@ function ParticipantDrawer({
 
           <ReadField label="Mobile">
             {participant.mobileNumberCorrected ? (
-              <span>
-                <span className="text-amber-700 font-medium">
-                  {participant.mobileNumberCorrected}
-                </span>
-                <span className="text-gray-400 text-xs ml-2">
-                  (original: {participant.mobileNumber})
-                </span>
-              </span>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-amber-700 font-medium">
+                    {participant.mobileNumberCorrected}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      copyToClipboard(participant.mobileNumberCorrected || "", "mobile")
+                    }
+                    className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+                    title="Copy corrected mobile"
+                  >
+                    {copied === "mobile" ? (
+                      <>
+                        <Check size={11} /> Copied
+                      </>
+                    ) : (
+                      <>
+                        <CopyIcon size={11} /> Copy
+                      </>
+                    )}
+                  </button>
+                  <span className="text-gray-400 text-xs">
+                    (original: {participant.mobileNumber})
+                  </span>
+                </div>
+              </div>
             ) : (
               participant.mobileNumber
             )}
           </ReadField>
+
+          {/* Contact-correction resolve marker — visible whenever the
+              participant has corrected mobile OR work email. Green banner
+              once CST has mirrored the change into the Users module. */}
+          {(participant.mobileNumberCorrected ||
+            (participant.workEmail && participant.workEmailConfirmed)) && (
+            <div
+              className={`rounded-md border p-2 text-xs ${
+                participant.contactCorrectionResolvedAt
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-amber-200 bg-amber-50 text-amber-900"
+              }`}
+            >
+              {participant.contactCorrectionResolvedAt ? (
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 size={14} />
+                  Contact correction resolved
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => markResolved("contact")}
+                    className="ml-auto text-[10px] text-emerald-700 hover:underline disabled:opacity-50"
+                    title="Undo — mark as still-outstanding"
+                  >
+                    Undo
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <AlertTriangle size={14} />
+                  <span>Mirror this correction into the Users module, then mark resolved.</span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => markResolved("contact")}
+                    className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                  >
+                    <CheckCircle2 size={11} /> Mark resolved
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           <hr className="border-gray-100" />
 
@@ -888,13 +1017,33 @@ function ParticipantDrawer({
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Work email <span className="text-gray-400 font-normal">(admin sign-in / OTP target)</span>
             </label>
-            <input
-              type="email"
-              value={form.workEmail}
-              onChange={(e) => setForm({ ...form, workEmail: e.target.value })}
-              className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
-              placeholder="user@company.com"
-            />
+            <div className="flex gap-1">
+              <input
+                type="email"
+                value={form.workEmail}
+                onChange={(e) => setForm({ ...form, workEmail: e.target.value })}
+                className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm"
+                placeholder="user@company.com"
+              />
+              {participant.workEmail && (
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(participant.workEmail || "", "workEmail")}
+                  className="inline-flex items-center gap-1 text-[11px] px-2 rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+                  title="Copy work email"
+                >
+                  {copied === "workEmail" ? (
+                    <>
+                      <Check size={11} /> Copied
+                    </>
+                  ) : (
+                    <>
+                      <CopyIcon size={11} /> Copy
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
             {participant.workEmailConfirmed && (
               <span className="text-xs text-green-600 mt-0.5 inline-block">
                 ✓ Participant confirmed this on the portal
@@ -910,19 +1059,89 @@ function ParticipantDrawer({
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Play Store email <span className="text-gray-400 font-normal">(Google account on the phone)</span>
             </label>
-            <input
-              type="email"
-              value={form.playstoreEmail}
-              onChange={(e) => setForm({ ...form, playstoreEmail: e.target.value })}
-              className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
-              placeholder="user@gmail.com"
-            />
+            <div className="flex gap-1">
+              <input
+                type="email"
+                value={form.playstoreEmail}
+                onChange={(e) => setForm({ ...form, playstoreEmail: e.target.value })}
+                className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm"
+                placeholder="user@gmail.com"
+              />
+              {participant.playstoreEmail && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    copyToClipboard(participant.playstoreEmail || "", "psEmail")
+                  }
+                  className="inline-flex items-center gap-1 text-[11px] px-2 rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+                  title="Copy Play Store email"
+                >
+                  {copied === "psEmail" ? (
+                    <>
+                      <Check size={11} /> Copied
+                    </>
+                  ) : (
+                    <>
+                      <CopyIcon size={11} /> Copy
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
             {participant.emailConfirmedIsPlaystore && (
               <span className="text-xs text-green-600 mt-0.5 inline-block">
                 ✓ Participant acknowledged this is their Play Store email
               </span>
             )}
           </div>
+
+          {/* Email correction resolve marker */}
+          {participant.playstoreEmail &&
+            participant.emailConfirmedIsPlaystore &&
+            /* Only show if there's a portal-driven correction on record —
+               a fresh roster-supplied email that the participant confirmed
+               without editing has no blocker. Approximate by checking if
+               emailCorrectionResolvedAt is null AND participant later
+               changed the email via portal (which sets it back to null via
+               the correction path). If we don't have signal either way,
+               we still show the button for CST convenience. */ (
+              <div
+                className={`rounded-md border p-2 text-xs ${
+                  participant.emailCorrectionResolvedAt
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-amber-200 bg-amber-50 text-amber-900"
+                }`}
+              >
+                {participant.emailCorrectionResolvedAt ? (
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={14} />
+                    Email correction resolved
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => markResolved("email")}
+                      className="ml-auto text-[10px] text-emerald-700 hover:underline disabled:opacity-50"
+                      title="Undo — mark as still-outstanding"
+                    >
+                      Undo
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <AlertTriangle size={14} />
+                    <span>Only tap "Mark resolved" if the participant edited their Play Store email and you've synced downstream.</span>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => markResolved("email")}
+                      className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                    >
+                      <CheckCircle2 size={11} /> Mark resolved
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
           <div>
             <label className="inline-flex items-center gap-2 text-sm text-gray-800">

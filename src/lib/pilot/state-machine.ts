@@ -32,7 +32,7 @@ export type IssueFlag =
   | "STALE"
   | "NONE";
 
-// The 7 stages of onboarding. See spec §7 for the narrative version.
+// The 8 stages of onboarding. See spec §7 for the narrative version.
 //   0 IMPORTED           — roster row exists, participant hasn't opened portal
 //   1 EMAIL_CAPTURED     — playstoreEmail set + emailConfirmedIsPlaystore=true
 //   2 BETA_REGISTERED    — dev has added the email to Play tester list (hard gate)
@@ -43,7 +43,11 @@ export type IssueFlag =
 //                           it's optional evidence for Stage 6.
 //   6 VERSION_VERIFIED   — versionVerified === "verified" (one-tap confirmation OR
 //                           CST/AI reviewed a screenshot).
-export type Stage = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+//   7 NO_BLOCKERS        — Stage 6 AND no outstanding portal-driven corrections
+//                           still need CST attention. Only participants at this
+//                           stage are "truly complete" from an onboarding
+//                           perspective.
+export type Stage = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 /**
  * The subset of participant fields the state machine reads. Kept as a plain
@@ -72,6 +76,16 @@ export interface ParticipantState {
   versionConfirmedByUser?: boolean;
   // Stage 6 input (CST/AI-controlled)
   versionVerified: "pending" | "verified" | "mismatch" | string;
+  // Stage 7 inputs — CST has resolved every portal-driven correction so
+  // the participant has no outstanding actions on our side. Nullable ISO
+  // timestamps; presence = resolved.
+  contactCorrectionResolvedAt?: string | null;
+  emailCorrectionResolvedAt?: string | null;
+  // Whether this participant has *any* unresolved portal correction on
+  // record. The caller sets this by consulting the change log — the state
+  // machine takes it as a plain boolean so it stays pure.
+  hasUnresolvedContactCorrection?: boolean;
+  hasUnresolvedEmailCorrection?: boolean;
   // For STALE detection. ISO-8601 datetime string. Optional — if omitted,
   // STALE never fires.
   lastActivityAt?: string | null;
@@ -131,8 +145,24 @@ export function computeStage(
  * cascade is correct: any earlier stage's requirements are implicit.
  */
 function computeStageOnly(p: ParticipantState): Stage {
-  // Stage 6 — the only stage that requires a *verified* value. Nothing
-  // downstream matters after this; it's the terminal Complete state.
+  // Stage 7 — the "truly complete" bucket. Requires Stage 6 semantics
+  // AND no outstanding portal correction still awaiting CST resolution.
+  // The `hasUnresolved*Correction` inputs are computed by the caller
+  // (participant-mutations reads the change log); their absence
+  // defaults to false, so a fresh-inserted verified participant lands
+  // directly at Stage 7 with no lookups.
+  if (
+    p.versionVerified === "verified" &&
+    !p.hasUnresolvedContactCorrection &&
+    !p.hasUnresolvedEmailCorrection
+  ) {
+    return 7;
+  }
+
+  // Stage 6 — verified, but at least one CST-side correction is
+  // outstanding. The participant is on the target build but we still
+  // need to mirror their mobile / work email / Play Store email to
+  // our other systems.
   if (p.versionVerified === "verified") return 6;
 
   // Stage 5 — participant has confirmed their contact details.
@@ -290,8 +320,10 @@ export function stageLabel(stage: Stage): string {
     "App updated",
     "Mobile & work email confirmed",
     "Version verified",
+    "Complete (no blockers)",
   ][stage] || "Unknown";
 }
+
 
 /**
  * Human-readable flag label — for the admin dashboard chips.
