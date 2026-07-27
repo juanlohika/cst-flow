@@ -205,7 +205,36 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     updates.updatedAt = new Date().toISOString();
     await db.update(pilotProjects).set(updates).where(eq(pilotProjects.id, existing.id));
     const project = await loadActiveProject(id);
-    return NextResponse.json({ project, updated: true });
+
+    // Renaming (or first setting) a custom-column label changes the roster
+    // Sheet's column layout. Re-push and re-protect immediately rather
+    // than waiting for someone to press Refresh: a newly added column
+    // would otherwise be missing from the Sheet, and — worse — sit
+    // outside the protection map that Lock relies on.
+    //
+    // Only fires when a label actually changed, so ordinary settings saves
+    // don't touch Drive. Best-effort: a Sheets failure must not fail the
+    // settings save the CST just made.
+    const labelChanged =
+      ("custom1Label" in updates &&
+        (updates.custom1Label || "") !== (existing.custom1Label || "")) ||
+      ("custom2Label" in updates &&
+        (updates.custom2Label || "") !== (existing.custom2Label || ""));
+    let sheetResynced = false;
+    if (labelChanged && existing.rosterSheetId) {
+      try {
+        const { pushToSheet, applyProtection } = await import("@/lib/pilot/roster-sheet");
+        await pushToSheet(existing.id);
+        await applyProtection(existing.id, existing.rosterSheetState === "locked");
+        sheetResynced = true;
+      } catch (e: any) {
+        console.warn(
+          "[pilot-tracker] custom label changed but Sheet re-sync failed:",
+          e?.message || e,
+        );
+      }
+    }
+    return NextResponse.json({ project, updated: true, sheetResynced });
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message || "Failed to update pilot project" },

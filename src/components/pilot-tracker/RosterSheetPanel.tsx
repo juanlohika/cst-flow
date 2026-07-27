@@ -30,6 +30,8 @@ interface SheetState {
   state: "collecting" | "locked";
   lockedAt: string | null;
   syncedAt: string | null;
+  custom1Label?: string | null;
+  custom2Label?: string | null;
 }
 
 interface FieldChange {
@@ -56,9 +58,13 @@ interface Preview {
 export function RosterSheetPanel({
   accountId,
   onChanged,
+  // Bumped by the parent after a settings save so a custom-column rename
+  // (which re-syncs the Sheet server-side) is reflected here too.
+  refreshTrigger,
 }: {
   accountId: string;
   onChanged: () => void;
+  refreshTrigger?: number;
 }) {
   const { showToast } = useToast();
   const [state, setState] = useState<SheetState | null>(null);
@@ -80,7 +86,7 @@ export function RosterSheetPanel({
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, refreshTrigger]);
 
   const call = async (action: string, extra: Record<string, unknown> = {}) => {
     setBusy(true);
@@ -184,6 +190,14 @@ export function RosterSheetPanel({
               until you lock the sheet — so dev gets one registration list, not
               one message per person.
             </p>
+            {!state?.custom1Label && !state?.custom2Label && (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mt-2 leading-relaxed">
+                Tip: name your custom columns (e.g. Branch, Area) in{" "}
+                <strong>Settings</strong> first and they&apos;ll be included in the
+                Sheet. You can still add them later — the Sheet updates itself
+                when you rename a label.
+              </p>
+            )}
             <button
               type="button"
               onClick={provision}

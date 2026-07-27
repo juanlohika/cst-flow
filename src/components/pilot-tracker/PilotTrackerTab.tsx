@@ -156,7 +156,15 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setProject(data.project);
-      showToast("Settings saved.", "success");
+      showToast(
+        data.sheetResynced
+          ? "Settings saved. Roster Sheet columns updated."
+          : "Settings saved.",
+        "success",
+      );
+      // A custom-column rename changes both the Sheet layout and the
+      // roster grid's columns/filters — refresh both.
+      setRosterRefresh((n) => n + 1);
       return true;
     } catch (e: any) {
       showToast(`Save failed: ${e.message}`, "error");
@@ -514,6 +522,7 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
       <RosterSheetPanel
         accountId={accountId}
         onChanged={() => setRosterRefresh((n) => n + 1)}
+        refreshTrigger={rosterRefresh}
       />
 
       {/* ── Roster grid ──────────────────────────────────────────────── */}
