@@ -20,7 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Rocket, Upload, Download, QrCode, Settings, ImageIcon, Copy, ExternalLink,
-  ChevronDown, ChevronUp, Maximize2, X,
+  ChevronDown, ChevronUp, Maximize2, X, Table2,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { useToast } from "@/components/ui/ToastContext";
@@ -85,6 +85,14 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [showQr, setShowQr] = useState(false);
+  // Roster Sheet panel is collapsed by default — it's used in bursts (open
+  // a collection window, lock it) rather than watched continuously, so it
+  // shouldn't cost vertical space above the funnel the rest of the time.
+  const [showRosterSheet, setShowRosterSheet] = useState(false);
+  // Lifted out of the panel so the header chip can show the window state
+  // even while collapsed. An open window that nobody remembers to lock is
+  // the failure mode worth spending a chip on.
+  const [sheetState, setSheetState] = useState<"collecting" | "locked" | null>(null);
   const [qrEnlarged, setQrEnlarged] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const refFileInputRef = useRef<HTMLInputElement>(null);
@@ -108,6 +116,34 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Sheet state for the header chip's "still open" dot. Fetched here
+  // rather than reported up from the panel, because the panel is
+  // unmounted while collapsed — and a collapsed panel is exactly when
+  // you most need reminding that a collection window is still open.
+  useEffect(() => {
+    if (!project) {
+      setSheetState(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/accounts/${accountId}/pilot-tracker/roster-sheet`,
+          { cache: "no-store" },
+        );
+        if (!res.ok) return;
+        const j = await res.json();
+        if (!cancelled) setSheetState(j.sheetId ? j.state : null);
+      } catch {
+        /* non-fatal — the chip just won't show a dot */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, project, rosterRefresh]);
 
   // Regenerate the QR whenever we have a project (qrToken can theoretically
   // rotate if we ever add a "regenerate token" action). window.location.origin
@@ -339,6 +375,19 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
           <ToggleChip active={showImport} onClick={() => setShowImport((s) => !s)} icon={<Upload size={12} />}>
             Import
           </ToggleChip>
+          <ToggleChip
+            active={showRosterSheet}
+            onClick={() => setShowRosterSheet((s) => !s)}
+            icon={<Table2 size={12} />}
+          >
+            Roster Sheet
+            {sheetState === "collecting" && (
+              <span
+                className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-amber-500"
+                title="Open for admin edits — lock it to adopt the changes"
+              />
+            )}
+          </ToggleChip>
           <ToggleChip active={showSettings} onClick={() => setShowSettings((s) => !s)} icon={<Settings size={12} />}>
             Settings
           </ToggleChip>
@@ -519,11 +568,13 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
       )}
 
       {/* ── Roster Sheet (client-admin data collection window) ───────── */}
-      <RosterSheetPanel
-        accountId={accountId}
-        onChanged={() => setRosterRefresh((n) => n + 1)}
-        refreshTrigger={rosterRefresh}
-      />
+      {showRosterSheet && (
+        <RosterSheetPanel
+          accountId={accountId}
+          onChanged={() => setRosterRefresh((n) => n + 1)}
+          refreshTrigger={rosterRefresh}
+        />
+      )}
 
       {/* ── Roster grid ──────────────────────────────────────────────── */}
       <PilotRosterGrid
