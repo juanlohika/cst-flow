@@ -43,6 +43,10 @@ interface Participant {
   versionVerified: "pending" | "verified" | "mismatch";
   versionVerifiedByAi: boolean;
   versionAiExtractedText: string | null;
+  // Client-owned organizational tags, set via the roster Sheet. Labels
+  // are per-project (Payload.custom1Label / custom2Label).
+  custom1: string | null;
+  custom2: string | null;
   currentStage: number;
   issueFlag: string;
   lastActivityAt: string;
@@ -71,6 +75,15 @@ interface Payload {
   // with a secondary "Not yet accepted" chip in the Flag column and
   // included in the Step-2 blocker union filter.
   notYetIds?: string[];
+  // Display labels for the two custom tag columns. Null/empty = the
+  // column is unused, and the grid hides it entirely rather than
+  // rendering a blank column for every row.
+  custom1Label?: string | null;
+  custom2Label?: string | null;
+  // Distinct values across the WHOLE project, for the filter dropdowns.
+  // Project-wide (not filtered-set) so selecting one option doesn't
+  // collapse the list down to just that option.
+  customValues?: { custom1: string[]; custom2: string[] };
 }
 
 // Which synthetic flag each stage's red pill maps to when tapped. Keep in
@@ -148,6 +161,10 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
   const [stageFilter, setStageFilter] = useState<string>("");
   const [flagFilter, setFlagFilter] = useState<string>("");
   const [search, setSearch] = useState("");
+  // Client-owned tag filters (e.g. Branch = "Cebu"). Server-side so the
+  // funnel counts and the table agree.
+  const [custom1Filter, setCustom1Filter] = useState("");
+  const [custom2Filter, setCustom2Filter] = useState("");
   const [selected, setSelected] = useState<Participant | null>(null);
   // Multi-select for bulk operations.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -165,6 +182,8 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
       if (stageFilter) params.set("stage", stageFilter);
       if (flagFilter) params.set("flag", flagFilter);
       if (search.trim()) params.set("search", search.trim());
+      if (custom1Filter) params.set("custom1", custom1Filter);
+      if (custom2Filter) params.set("custom2", custom2Filter);
       const url = `/api/accounts/${accountId}/pilot-tracker/participants?${params.toString()}`;
       const res = await fetch(url, { cache: "no-store" });
       const json = await res.json();
@@ -179,7 +198,7 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
     } finally {
       if (!opts.silent) setLoading(false);
     }
-  }, [accountId, stageFilter, flagFilter, search, showToast]);
+  }, [accountId, stageFilter, flagFilter, search, custom1Filter, custom2Filter, showToast]);
 
   useEffect(() => {
     refresh();
@@ -227,9 +246,16 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
     setStageFilter("");
     setFlagFilter("");
     setSearch("");
+    setCustom1Filter("");
+    setCustom2Filter("");
   };
 
-  const anyFilter = stageFilter !== "" || flagFilter !== "" || search.trim() !== "";
+  const anyFilter =
+    stageFilter !== "" ||
+    flagFilter !== "" ||
+    search.trim() !== "" ||
+    custom1Filter !== "" ||
+    custom2Filter !== "";
 
   const toggleSelected = (id: string) => {
     setSelectedIds((prev) => {
@@ -383,6 +409,12 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
   }
   if (!data) return null;
 
+  // An unlabeled custom column is unused for this pilot — hide the table
+  // column and its filter entirely rather than showing a blank column on
+  // every row.
+  const c1Label = (data.custom1Label || "").trim();
+  const c2Label = (data.custom2Label || "").trim();
+
   return (
     <div className="bg-white rounded-lg border border-gray-200">
       {/* ── Funnel ─────────────────────────────────────────────────── */}
@@ -516,6 +548,22 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
             className="w-full pl-7 pr-2 py-1.5 border border-gray-300 rounded-md text-sm"
           />
         </div>
+        {c1Label && (
+          <TagFilter
+            label={c1Label}
+            value={custom1Filter}
+            options={data.customValues?.custom1 || []}
+            onChange={setCustom1Filter}
+          />
+        )}
+        {c2Label && (
+          <TagFilter
+            label={c2Label}
+            value={custom2Filter}
+            options={data.customValues?.custom2 || []}
+            onChange={setCustom2Filter}
+          />
+        )}
         {anyFilter && (
           <button
             type="button"
@@ -607,6 +655,8 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
               </Th>
               <Th>Emp ID</Th>
               <Th>Name</Th>
+              {c1Label && <Th>{c1Label}</Th>}
+              {c2Label && <Th>{c2Label}</Th>}
               <Th>Stage</Th>
               <Th>Flag</Th>
               <Th>Emails</Th>
@@ -618,7 +668,10 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
           <tbody>
             {data.participants.length === 0 && (
               <tr>
-                <td colSpan={9} className="py-8 text-center text-gray-500 text-sm">
+                <td
+                  colSpan={9 + (c1Label ? 1 : 0) + (c2Label ? 1 : 0)}
+                  className="py-8 text-center text-gray-500 text-sm"
+                >
                   No participants match these filters.
                 </td>
               </tr>
@@ -639,6 +692,12 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
                 </Td>
                 <Td className="font-mono text-xs">{p.employeeId}</Td>
                 <Td>{p.fullName}</Td>
+                {c1Label && (
+                  <Td className="text-xs text-gray-700">{p.custom1 || "—"}</Td>
+                )}
+                {c2Label && (
+                  <Td className="text-xs text-gray-700">{p.custom2 || "—"}</Td>
+                )}
                 <Td>
                   <StageBadge stage={p.currentStage} />
                 </Td>
@@ -703,6 +762,47 @@ export function PilotRosterGrid({ accountId, refreshTrigger, referenceScreenshot
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Dropdown filter for a client-owned tag column (Branch / Area).
+ *
+ * Options come from the values actually present in the project, so the
+ * list can't offer a branch nobody is assigned to. A plain <select> rather
+ * than a custom menu — the option count is small and native selects are
+ * keyboard- and mobile-friendly for free.
+ */
+function TagFilter({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+}) {
+  if (options.length === 0) return null;
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      title={`Filter by ${label}`}
+      className={`text-xs border rounded-md px-2 py-1.5 max-w-[160px] ${
+        value
+          ? "border-blue-400 bg-blue-50 text-blue-900 font-medium"
+          : "border-gray-300 text-gray-700"
+      }`}
+    >
+      <option value="">{label}: all</option>
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
   );
 }
 

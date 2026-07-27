@@ -892,6 +892,17 @@ export async function ensureAccessSchema(): Promise<void> {
     // Existing rows default to 1 (true) so pre-migration pilots keep the
     // Screen C/D flow they were already using.
     try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN internalBetaRequired INTEGER DEFAULT 1 NOT NULL`); } catch {}
+    // Roster Google Sheet — external-admin data collection window.
+    // Pre-existing projects default to "collecting" but have no sheet;
+    // rosterSheetId IS NULL is the "not provisioned yet" signal.
+    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN rosterSheetId TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN rosterSheetUrl TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN rosterSheetState TEXT DEFAULT 'collecting' NOT NULL`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN rosterSheetLockedAt TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN rosterSheetLockedBy TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN rosterSheetSyncedAt TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN custom1Label TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN custom2Label TEXT`); } catch {}
 
     await db.run(sql`CREATE TABLE IF NOT EXISTS PilotParticipant (
       id TEXT PRIMARY KEY,
@@ -950,6 +961,10 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN contactCorrectionResolvedBy TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN emailCorrectionResolvedAt TEXT`); } catch {}
     try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN emailCorrectionResolvedBy TEXT`); } catch {}
+    // Client-admin-owned organizational tags (e.g. Branch / Area), set via
+    // the roster Sheet. Labels live on PilotProject.custom1Label/2Label.
+    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN custom1 TEXT`); } catch {}
+    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN custom2 TEXT`); } catch {}
 
     await db.run(sql`CREATE TABLE IF NOT EXISTS PilotChangeLog (
       id TEXT PRIMARY KEY,

@@ -182,6 +182,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         filters.push(eq(pilotParticipants.issueFlag, flag));
       }
     }
+    // Exact-match filters on the client-owned tag columns (e.g. Branch =
+    // "Cebu"). Exact rather than LIKE: these come from a controlled
+    // dropdown built from values already in the data, so a substring match
+    // would only create surprises ("Cebu" also matching "Cebu North").
+    const c1 = url.searchParams.get("custom1");
+    const c2 = url.searchParams.get("custom2");
+    if (c1) filters.push(eq(pilotParticipants.custom1, c1));
+    if (c2) filters.push(eq(pilotParticipants.custom2, c2));
     if (search) {
       const like_ = `%${search}%`;
       filters.push(
@@ -192,6 +200,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           like(pilotParticipants.mobileNumberCorrected, like_),
           like(pilotParticipants.playstoreEmail, like_),
           like(pilotParticipants.workEmail, like_),
+          like(pilotParticipants.custom1, like_),
+          like(pilotParticipants.custom2, like_),
         )!,
       );
     }
@@ -350,6 +360,40 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       s6: flagCounts["VERSION_MISMATCH"] || 0,
     };
 
+    // Custom-tag labels + the distinct values present across the WHOLE
+    // project (not just the filtered page) so the filter dropdown doesn't
+    // shrink to only the options that survive the current filter — which
+    // would make it impossible to switch between them.
+    const [proj] = await db
+      .select({
+        custom1Label: pilotProjects.custom1Label,
+        custom2Label: pilotProjects.custom2Label,
+      })
+      .from(pilotProjects)
+      .where(eq(pilotProjects.id, a.projectId))
+      .limit(1);
+    const customValues: { custom1: string[]; custom2: string[] } = {
+      custom1: [],
+      custom2: [],
+    };
+    if (proj?.custom1Label || proj?.custom2Label) {
+      const tagRows = await db
+        .select({
+          custom1: pilotParticipants.custom1,
+          custom2: pilotParticipants.custom2,
+        })
+        .from(pilotParticipants)
+        .where(eq(pilotParticipants.projectId, a.projectId));
+      const s1 = new Set<string>();
+      const s2 = new Set<string>();
+      for (const t of tagRows) {
+        if (t.custom1?.trim()) s1.add(t.custom1.trim());
+        if (t.custom2?.trim()) s2.add(t.custom2.trim());
+      }
+      customValues.custom1 = Array.from(s1).sort();
+      customValues.custom2 = Array.from(s2).sort();
+    }
+
     return NextResponse.json({
       participants: rows,
       total,
@@ -360,6 +404,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       // "Not yet accepted" chip in the Flag column. Also drives the
       // NOT_YET_ACCEPTED synthetic filter for tap-through.
       notYetIds,
+      custom1Label: proj?.custom1Label || null,
+      custom2Label: proj?.custom2Label || null,
+      customValues,
     });
   } catch (e: any) {
     return NextResponse.json(

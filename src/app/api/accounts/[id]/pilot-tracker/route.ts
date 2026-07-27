@@ -173,6 +173,11 @@ const UPDATABLE_FIELDS = [
   "pilotEnd",
   "referenceScreenshotDriveId",
   "referenceScreenshotUrl",
+  // Display labels for the two client-owned tag columns (e.g. "Branch",
+  // "Area"). Blank/null hides the column from the roster grid and the
+  // Sheet entirely.
+  "custom1Label",
+  "custom2Label",
 ] as const;
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {

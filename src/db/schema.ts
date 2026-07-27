@@ -1316,6 +1316,40 @@ export const pilotProjects = sqliteTable("PilotProject", {
   // on activation. One folder per project keeps files browsable outside
   // the app.
   driveFolderId:               text("driveFolderId"),
+  // ── Roster Google Sheet ────────────────────────────────────────────
+  // A per-project Sheet, created on demand inside driveFolderId, that the
+  // client's own admins fill in with their people's Play Store emails and
+  // organizational tags. Shared externally; the CST app is the only other
+  // writer.
+  //
+  // The Sheet is a SNAPSHOT + INBOX, not a live mirror of the database.
+  // That distinction is the whole design: a spreadsheet has no merge
+  // semantics, so a background push would overwrite whatever an admin is
+  // typing at that moment. Instead the system writes only its own
+  // (protected) columns, and only on an explicit Refresh; the admin
+  // columns are read exactly once per collection window, at Lock.
+  rosterSheetId:               text("rosterSheetId"),
+  rosterSheetUrl:              text("rosterSheetUrl"),
+  // Collection-window lifecycle:
+  //   collecting — admin columns unprotected. NOTHING flows into the
+  //                database, so no stage changes and no per-row dev
+  //                notifications while admins work.
+  //   locked     — admin columns protected. Everything has been adopted.
+  //
+  // Locking is the checkpoint that adopts the sheet in one pass and emits
+  // a SINGLE registration digest, instead of 300 individual broadcasts.
+  // Reopening is deliberately one click: corrections don't stop just
+  // because a window closed, and forcing them onto Viber/DM would put
+  // them somewhere the tracker can't see.
+  rosterSheetState:            text("rosterSheetState").default("collecting").notNull(),
+  rosterSheetLockedAt:         text("rosterSheetLockedAt"),
+  rosterSheetLockedBy:         text("rosterSheetLockedBy"),
+  rosterSheetSyncedAt:         text("rosterSheetSyncedAt"),
+  // Display labels for PilotParticipant.custom1 / custom2. Empty or null
+  // means the column is unused — the roster grid hides it entirely rather
+  // than showing a blank column, and the Sheet omits it.
+  custom1Label:                text("custom1Label"),
+  custom2Label:                text("custom2Label"),
   // Comma-separated list of email domains that should be flagged WRONG_EMAIL
   // if entered as the Play Store email (e.g. "sepco.com.ph,mopt.com"). Soft
   // warning on Screen B, does NOT hard-block submission — participants
@@ -1351,6 +1385,18 @@ export const pilotParticipants = sqliteTable("PilotParticipant", {
   employeeId:                    text("employeeId").notNull(),
   fullName:                      text("fullName").notNull(),
   mobileNumber:                  text("mobileNumber").notNull(),
+  // Two free-text organizational tags, owned by the client's admins and
+  // populated via the roster Google Sheet (never by the portal). Their
+  // display labels are per-project — see PilotProject.custom1Label — so a
+  // pilot can call them "Branch" and "Area" while another uses "Region"
+  // and "Cluster".
+  //
+  // Deliberately excluded from computeStage(): these are metadata for
+  // filtering the roster, never inputs to onboarding progression. Keeping
+  // them out of the state machine means a mis-typed branch name can never
+  // affect anyone's stage.
+  custom1:                       text("custom1"),
+  custom2:                       text("custom2"),
   // Mobile-correction gets a dedicated field so CST can see "original vs
   // corrected" without diffing history. Notified to CST on write.
   mobileNumberCorrected:         text("mobileNumberCorrected"),

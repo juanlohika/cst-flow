@@ -25,6 +25,7 @@ import {
 import QRCode from "qrcode";
 import { useToast } from "@/components/ui/ToastContext";
 import { PilotRosterGrid } from "./PilotRosterGrid";
+import { RosterSheetPanel } from "./RosterSheetPanel";
 
 interface PilotProject {
   id: string;
@@ -40,6 +41,9 @@ interface PilotProject {
   driveFolderId: string | null;
   blockedEmailDomains: string | null;
   staleThresholdDays: number;
+  // Display labels for the client-owned tag columns. Null = unused.
+  custom1Label: string | null;
+  custom2Label: string | null;
   status: string;
   pilotStart: string | null;
   pilotEnd: string | null;
@@ -506,6 +510,12 @@ export function PilotTrackerTab({ accountId, companyName }: Props) {
       </div>
       )}
 
+      {/* ── Roster Sheet (client-admin data collection window) ───────── */}
+      <RosterSheetPanel
+        accountId={accountId}
+        onChanged={() => setRosterRefresh((n) => n + 1)}
+      />
+
       {/* ── Roster grid ──────────────────────────────────────────────── */}
       <PilotRosterGrid
         accountId={accountId}
@@ -628,6 +638,8 @@ function SettingsPanel({
     pilotEnd: project.pilotEnd || "",
     status: project.status,
     internalBetaRequired: project.internalBetaRequired,
+    custom1Label: project.custom1Label || "",
+    custom2Label: project.custom2Label || "",
   });
   useEffect(() => {
     setForm({
@@ -641,6 +653,8 @@ function SettingsPanel({
       pilotEnd: project.pilotEnd || "",
       status: project.status,
       internalBetaRequired: project.internalBetaRequired,
+      custom1Label: project.custom1Label || "",
+      custom2Label: project.custom2Label || "",
     });
   }, [project]);
 
@@ -656,6 +670,8 @@ function SettingsPanel({
       pilotStart: form.pilotStart || null,
       pilotEnd: form.pilotEnd || null,
       status: form.status,
+      custom1Label: form.custom1Label.trim() || null,
+      custom2Label: form.custom2Label.trim() || null,
     });
   };
 
@@ -668,6 +684,30 @@ function SettingsPanel({
             type="text"
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
+            className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+          />
+        </Field>
+        <Field
+          label="Custom column 1"
+          hint="Client-owned tag, e.g. Branch. Blank hides it everywhere."
+        >
+          <input
+            type="text"
+            value={form.custom1Label}
+            onChange={(e) => setForm({ ...form, custom1Label: e.target.value })}
+            placeholder="Branch"
+            className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+          />
+        </Field>
+        <Field
+          label="Custom column 2"
+          hint="Second tag, e.g. Area. Both appear in the roster Sheet and as filters."
+        >
+          <input
+            type="text"
+            value={form.custom2Label}
+            onChange={(e) => setForm({ ...form, custom2Label: e.target.value })}
+            placeholder="Area"
             className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
           />
         </Field>

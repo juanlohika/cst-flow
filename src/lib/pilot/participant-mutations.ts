@@ -69,11 +69,20 @@ export interface UpdateOptions {
   actorUserId?: string | null;
   // Optional context appended to every ChangeLog row written from this call.
   note?: string;
-  // Callers doing a bulk operation (e.g. roster XLSX import) set this true
-  // so per-participant broadcasts are suppressed. The bulk caller is
-  // expected to collect events and emit a single digest broadcast at the
-  // end. All non-broadcast side effects (audit log, stage derivation,
-  // web-push / email dispatch) still run.
+  // Callers doing a bulk operation (roster XLSX import, roster Sheet
+  // adopt, bulk CST override) set this true so PER-PARTICIPANT
+  // notifications are suppressed. The bulk caller is expected to emit a
+  // single digest at the end.
+  //
+  // This covers both the internal Telegram broadcast AND the
+  // notifyPilotEvent dispatches (mobile corrected / contradiction /
+  // screenshot). Originally it only guarded the Telegram path, which meant
+  // adopting 300 sheet rows still fired up to 300 in-app notifications —
+  // the same flood, just on a different channel. "Suppress per-row noise
+  // during a bulk operation" was always the intent.
+  //
+  // Everything that is not a notification still runs: audit log, stage
+  // derivation, timestamp bookkeeping.
   suppressInternalBroadcast?: boolean;
 }
 
@@ -406,6 +415,12 @@ async function fireEventNotifications(
 ): Promise<void> {
   const { notifyPilotEvent, broadcastPilotRegistrationRequest } = await import("./notifications");
 
+  // Bulk callers emit their own digest — stay silent per row. Returning
+  // before any dispatch also saves the notification-table lookups.
+  const notify: typeof notifyPilotEvent = opts.suppressInternalBroadcast
+    ? (async () => {}) as any
+    : notifyPilotEvent;
+
   // Beta registration request — broadcast into every internal Telegram
   // channel so devs can add the email to the Play Console tester list.
   //
@@ -466,7 +481,7 @@ async function fireEventNotifications(
     updates.mobileNumberCorrected &&
     updates.mobileNumberCorrected !== before.mobileNumberCorrected
   ) {
-    await notifyPilotEvent({
+    await notify({
       participantId,
       event: "mobile_corrected",
       title: `Mobile corrected: ${before.fullName}`,
@@ -481,7 +496,7 @@ async function fireEventNotifications(
     derived.issueFlag === "CLICKED_NOT_REGISTERED" &&
     before.issueFlag !== "CLICKED_NOT_REGISTERED"
   ) {
-    await notifyPilotEvent({
+    await notify({
       participantId,
       event: "contradiction",
       title: `${before.fullName} says accepted, but not registered`,
@@ -495,7 +510,7 @@ async function fireEventNotifications(
     updates.versionScreenshotDriveId &&
     !before.versionScreenshotDriveId
   ) {
-    await notifyPilotEvent({
+    await notify({
       participantId,
       event: "screenshot_uploaded",
       title: `Screenshot to review: ${before.fullName}`,

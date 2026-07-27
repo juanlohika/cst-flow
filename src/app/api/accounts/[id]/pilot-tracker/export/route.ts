@@ -94,6 +94,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const headers = [
     "employeeId",
     "fullName",
+    // Client-owned tags (Branch / Area). Kept next to identity rather than
+    // at the end so a filtered export reads naturally.
+    "custom1",
+    "custom2",
     "mobileNumber",
     "mobileNumberCorrected",
     "workEmail",
