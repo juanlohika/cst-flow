@@ -83,7 +83,40 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
       console.error("[courtesy-calls GET] evidence load failed", e);
     }
 
-    return NextResponse.json({ history: rows, cadence, evidence });
+    // Build the year's PERIOD slots and merge in what has been recorded, so the
+    // tab shows every slot — including future ones, letting an RM record an
+    // invitation already sent for next month. This is the shape the personnel
+    // metrics need ("planned vs completed"), not a list of calls.
+    const year = Number(new URL(_.url).searchParams.get("year")) || new Date().getFullYear();
+    let periods: any[] = [];
+    try {
+      const { periodsForYear, periodCompliance } = await import("@/lib/courtesy/periods");
+      const slots = periodsForYear(year, cadence.label);
+      const byPeriod = new Map(rows.filter(r => r.periodLabel).map(r => [r.periodLabel, r]));
+      // Calls logged before periods existed have no label — attach them to the
+      // slot their date falls in so history is not orphaned.
+      const unlabelled = rows.filter(r => !r.periodLabel && r.callDate);
+      periods = slots.map(slot => {
+        const rec = byPeriod.get(slot.label)
+          || unlabelled.find(r => r.callDate! >= slot.start && r.callDate! <= slot.end)
+          || null;
+        return {
+          ...slot,
+          callId: rec?.id ?? null,
+          callDate: rec?.callDate ?? null,
+          momSentDate: rec?.momSentDate ?? null,
+          notes: rec?.notes ?? null,
+          loggedByName: rec?.loggedByName ?? null,
+          status: periodCompliance({
+            slot, callDate: rec?.callDate, momSentDate: rec?.momSentDate,
+          }),
+        };
+      });
+    } catch (e) {
+      console.error("[courtesy-calls GET] period build failed", e);
+    }
+
+    return NextResponse.json({ history: rows, cadence, evidence, periods, year });
   } catch (error: any) {
     console.error("[courtesy-calls GET]", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -115,9 +148,28 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       return NextResponse.json({ error: "The MOM date cannot be before the call date." }, { status: 400 });
     }
 
+    // Stamp the period this call satisfies, derived from the account's cadence,
+    // so "planned vs completed per period" is answerable without re-deriving.
+    let periodLabel: string | null = null, plannedStart: string | null = null, plannedEnd: string | null = null;
+    try {
+      const prof2 = await db.select({ tier: clientProfiles.tier, frequencyOverride: clientProfiles.frequencyOverride })
+        .from(clientProfiles).where(eq(clientProfiles.id, params.id)).limit(1);
+      const { loadTierFrequencyMap, resolveAccountFrequency } = await import("@/lib/accounts/tier-frequency");
+      const { periodForDate } = await import("@/lib/courtesy/periods");
+      const cad = resolveAccountFrequency({
+        tier: prof2[0]?.tier, frequencyOverride: prof2[0]?.frequencyOverride,
+        tierMap: await loadTierFrequencyMap(),
+      });
+      const slot = periodForDate(callDate, cad.label);
+      if (slot) { periodLabel = slot.label; plannedStart = slot.start; plannedEnd = slot.end; }
+    } catch (e) {
+      console.error("[courtesy-calls POST] period stamp failed", e);
+    }
+
     await db.insert(courtesyCallHistory).values({
       id,
       clientProfileId: params.id,
+      periodLabel, plannedStart, plannedEnd,
       callDate,
       momSentDate,
       // A period is only compliant once BOTH the call and its MOM are recorded.

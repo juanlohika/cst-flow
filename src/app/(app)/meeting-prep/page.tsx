@@ -2386,6 +2386,11 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
   const [rows, setRows] = useState<CCRow[]>([]);
   const [evidence, setEvidence] = useState<Record<string, any[]>>({});
   const [cadence, setCadence] = useState<{ label: string; days: number | null; source: string } | null>(null);
+  // Every period slot for the year — including future ones, so an RM can record
+  // an invitation already sent for a month that has not arrived yet. This is
+  // the "planned vs completed" shape the personnel metrics will aggregate.
+  const [periods, setPeriods] = useState<any[]>([]);
+  const [year, setYear] = useState<number>(new Date().getFullYear());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [callDate, setCallDate] = useState("");
@@ -2397,16 +2402,17 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
 
   const load = useCallback(() => {
     setLoading(true);
-    fetch(`/api/accounts/${accountId}/courtesy-calls`)
+    fetch(`/api/accounts/${accountId}/courtesy-calls?year=${year}`)
       .then(r => (r.ok ? r.json() : { history: [] }))
       .then(d => {
         setRows(d.history || []);
         setEvidence(d.evidence || {});
         setCadence(d.cadence || null);
+        setPeriods(d.periods || []);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [accountId]);
+  }, [accountId, year]);
 
   useEffect(load, [load]);
 
@@ -2496,6 +2502,21 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
     } catch { showToast("Could not remove", "error"); }
   };
 
+  // Record a call straight into a period row — the common path now that the
+  // grid shows every slot. The header form stays for back-filling odd cases.
+  const logForPeriod = async (slot: any, date: string) => {
+    if (date > today) { showToast("The call date cannot be in the future", "error"); return; }
+    try {
+      const res = await fetch(`/api/accounts/${accountId}/courtesy-calls`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callDate: date }),
+      });
+      if (res.ok) { showToast(`Logged for ${slot.display}`); load(); }
+      else showToast((await res.json())?.error || "Could not log the call", "error");
+    } catch { showToast("Could not log the call", "error"); }
+  };
+
   const setMom = async (callId: string, value: string) => {
     try {
       const res = await fetch(`/api/accounts/${accountId}/courtesy-calls`, {
@@ -2578,14 +2599,31 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
         </div>
       </div>
 
-      {/* History */}
+      {/* Periods — the slot grid the metrics count against */}
       <div className="border border-border-default rounded-lg bg-white overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-border-default text-[11px] uppercase tracking-wide text-text-muted font-medium">
-          History · {rows.length}
+        <div className="px-4 py-2.5 border-b border-border-default flex items-center justify-between gap-3">
+          <span className="text-[11px] uppercase tracking-wide text-text-muted font-medium">
+            {cadence?.label && cadence.label !== "—" ? `${cadence.label} periods` : "History"} · {year}
+          </span>
+          <span className="flex items-center gap-2">
+            {/* Planned vs completed for the year, the two numbers the metrics
+                sheet asks for per account. */}
+            {periods.length > 0 && (
+              <span className="text-[11px] text-text-secondary">
+                {periods.filter(p => p.callDate).length} of {periods.length} completed
+              </span>
+            )}
+            <button onClick={() => setYear(y => y - 1)}
+              className="text-[11px] text-primary hover:underline">&larr; {year - 1}</button>
+            <button onClick={() => setYear(y => y + 1)}
+              className="text-[11px] text-primary hover:underline">{year + 1} &rarr;</button>
+          </span>
         </div>
-        {rows.length === 0 ? (
+        {periods.length === 0 ? (
           <div className="p-6 text-[13px] text-text-secondary">
-            No courtesy calls logged yet for this account.
+            {cadence?.label === "—" || !cadence?.label
+              ? "This account has no tier or frequency set, so there are no courtesy-call periods to track. Set a tier on the account, or a frequency override, and the periods will appear here."
+              : "No periods to show for this year."}
           </div>
         ) : (
           <table className="w-full text-[13px]">
@@ -2601,78 +2639,89 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map(r => {
-                const st = ccStatusLabel(r);
-                const ev = evidence[r.id] || [];
+              {periods.map(p => {
+                const ev = p.callId ? (evidence[p.callId] || []) : [];
+                const isFuture = p.start > today;
                 return (
-                  <tr key={r.id} className="border-b border-border-default last:border-0 align-top">
+                  <tr key={p.label}
+                    className={`border-b border-border-default last:border-0 align-top ${isFuture ? "opacity-60" : ""}`}>
                     <td className="px-4 py-2.5 whitespace-nowrap">
-                      {r.periodLabel || "—"}
-                      {r.plannedEnd && (
-                        <div className="text-[11px] text-text-muted">due {r.plannedEnd}</div>
+                      <div className="font-medium">{p.display}</div>
+                      <div className="text-[11px] text-text-muted">due by {p.end}</div>
+                    </td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      {p.callDate || (
+                        <input type="date" min={p.start} max={today < p.end ? today : p.end}
+                          onChange={e => e.target.value && logForPeriod(p, e.target.value)}
+                          className="border border-border-default rounded px-1.5 py-1 text-[12px]"
+                          title={`Record the call for ${p.display}`} />
                       )}
                     </td>
-                    <td className="px-4 py-2.5 whitespace-nowrap">{r.callDate || "—"}</td>
                     <td className="px-4 py-2.5 whitespace-nowrap">
-                      {r.momSentDate || (
-                        <input type="date" max={today} onChange={e => e.target.value && setMom(r.id, e.target.value)}
+                      {p.momSentDate || (p.callId ? (
+                        <input type="date" max={today}
+                          onChange={e => e.target.value && setMom(p.callId, e.target.value)}
                           className="border border-border-default rounded px-1.5 py-1 text-[12px]"
                           title="Record the date the minutes were sent" />
-                      )}
+                      ) : <span className="text-text-muted">—</span>)}
                     </td>
                     <td className="px-4 py-2.5 whitespace-nowrap">
-                      <span className={`inline-block border rounded-full px-2 py-0.5 text-[11px] font-medium ${CC_STATUS_STYLES[st.key]}`}>
-                        {st.text}
+                      <span className={`inline-block border rounded-full px-2 py-0.5 text-[11px] font-medium ${CC_STATUS_STYLES[p.status] || CC_STATUS_STYLES.pending}`}>
+                        {p.status === "compliant" ? "Compliant"
+                          : p.status === "late" ? "Late"
+                          : p.status === "incomplete" ? "MOM not sent"
+                          : p.status === "missed" ? "Missed"
+                          : isFuture ? "Upcoming" : "Due"}
                       </span>
                     </td>
                     <td className="px-4 py-2.5">
-                      <div className="flex flex-col gap-1 items-start">
-                        {ev.map(x => (
-                          <span key={x.id} className="flex items-center gap-1.5">
-                            <a href={x.link} target="_blank" rel="noreferrer"
-                              className="text-primary hover:underline text-[12px]"
-                              title={x.fileName || undefined}>
-                              {x.kind === "invitation" ? "Invitation" : x.kind === "mom" ? "MOM" : "Evidence"}
-                            </a>
-                            <button onClick={() => removeEvidence(x.id)}
-                              className="text-text-muted hover:text-red-600 text-[11px]"
-                              title="Remove this link">&times;</button>
-                          </span>
-                        ))}
-                        {uploading === r.id ? (
-                          <span className="text-[11px] text-text-secondary">Filing to Drive…</span>
-                        ) : pasteTarget === r.id ? (
-                          <span className="text-[11px] text-primary font-medium">
-                            Press &#8984;V to paste the {kindFor(r.id) === "mom" ? "MOM" : kindFor(r.id) === "other" ? "file" : "invitation"} &middot; Esc to cancel
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1.5">
-                            {/* Pick the kind BEFORE pasting — several invitations
-                                and a MOM screenshot can all sit on one call. */}
-                            <select
-                              value={kindFor(r.id)}
-                              onChange={e => setEvKind(k => ({ ...k, [r.id]: e.target.value }))}
-                              className="border border-border-default rounded px-1 py-0.5 text-[11px] bg-white"
-                              title="What kind of evidence is this?">
-                              <option value="invitation">Invitation</option>
-                              <option value="mom">MOM</option>
-                              <option value="other">Other</option>
-                            </select>
-                            <button onClick={() => setPasteTarget(r.id)}
-                              className="text-[11px] text-primary hover:underline"
-                              title="Arm this row, then paste a screenshot">Paste</button>
-                            <label className="text-[11px] text-primary hover:underline cursor-pointer">
-                              Upload
-                              <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf"
-                                className="hidden"
-                                onChange={e => { const f = e.target.files?.[0]; if (f) uploadEvidence(r.id, f, kindFor(r.id)); e.target.value = ""; }} />
-                            </label>
-                          </span>
-                        )}
-                      </div>
+                      {!p.callId ? (
+                        <span className="text-text-muted text-[12px]">—</span>
+                      ) : (
+                        <div className="flex flex-col gap-1 items-start">
+                          {ev.map((x: any) => (
+                            <span key={x.id} className="flex items-center gap-1.5">
+                              <a href={x.link} target="_blank" rel="noreferrer"
+                                className="text-primary hover:underline text-[12px]"
+                                title={x.fileName || undefined}>
+                                {x.kind === "invitation" ? "Invitation" : x.kind === "mom" ? "MOM" : "Evidence"}
+                              </a>
+                              <button onClick={() => removeEvidence(x.id)}
+                                className="text-text-muted hover:text-red-600 text-[11px]"
+                                title="Remove this link">&times;</button>
+                            </span>
+                          ))}
+                          {uploading === p.callId ? (
+                            <span className="text-[11px] text-text-secondary">Filing to Drive…</span>
+                          ) : pasteTarget === p.callId ? (
+                            <span className="text-[11px] text-primary font-medium">
+                              Press &#8984;V to paste the {kindFor(p.callId) === "mom" ? "MOM" : kindFor(p.callId) === "other" ? "file" : "invitation"} &middot; Esc to cancel
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1.5">
+                              <select value={kindFor(p.callId)}
+                                onChange={e => setEvKind(k => ({ ...k, [p.callId]: e.target.value }))}
+                                className="border border-border-default rounded px-1 py-0.5 text-[11px] bg-white"
+                                title="What kind of evidence is this?">
+                                <option value="invitation">Invitation</option>
+                                <option value="mom">MOM</option>
+                                <option value="other">Other</option>
+                              </select>
+                              <button onClick={() => setPasteTarget(p.callId)}
+                                className="text-[11px] text-primary hover:underline">Paste</button>
+                              <label className="text-[11px] text-primary hover:underline cursor-pointer">
+                                Upload
+                                <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf"
+                                  className="hidden"
+                                  onChange={e => { const f = e.target.files?.[0]; if (f) uploadEvidence(p.callId, f, kindFor(p.callId)); e.target.value = ""; }} />
+                              </label>
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
-                    <td className="px-4 py-2.5 whitespace-nowrap text-text-secondary">{r.loggedByName || "—"}</td>
-                    <td className="px-4 py-2.5 text-text-secondary">{r.notes || "—"}</td>
+                    <td className="px-4 py-2.5 whitespace-nowrap text-text-secondary">{p.loggedByName || "—"}</td>
+                    <td className="px-4 py-2.5 text-text-secondary">{p.notes || "—"}</td>
                   </tr>
                 );
               })}
