@@ -2438,14 +2438,20 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
   // nothing to set up beforehand. Only the returned LINK is stored.
   const [pasteTarget, setPasteTarget] = useState<string | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
+  // What KIND of evidence the next paste/upload on a row represents. Evidence is
+  // not always an invitation — the MOM itself is often screenshotted too — so the
+  // RM picks per file rather than the code assuming. Multiple files of the same
+  // kind are allowed (several invitations across a thread is normal).
+  const [evKind, setEvKind] = useState<Record<string, string>>({});
+  const kindFor = (callId: string) => evKind[callId] || "invitation";
 
-  const uploadEvidence = useCallback(async (callId: string, file: File) => {
+  const uploadEvidence = useCallback(async (callId: string, file: File, kind: string) => {
     setUploading(callId);
     try {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("callId", callId);
-      fd.append("kind", "invitation");
+      fd.append("kind", kind);
       const res = await fetch(`/api/accounts/${accountId}/courtesy-calls/evidence`, {
         method: "POST", body: fd,
       });
@@ -2469,7 +2475,7 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
     if (!pasteTarget) return;
     const onPaste = (e: ClipboardEvent) => {
       const f = Array.from(e.clipboardData?.files || [])[0];
-      if (f) { e.preventDefault(); uploadEvidence(pasteTarget, f); }
+      if (f) { e.preventDefault(); uploadEvidence(pasteTarget, f, kindFor(pasteTarget)); }
       else showToast("No image found on the clipboard", "error");
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPasteTarget(null); };
@@ -2479,7 +2485,7 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
       document.removeEventListener("paste", onPaste);
       document.removeEventListener("keydown", onKey);
     };
-  }, [pasteTarget, uploadEvidence, showToast]);
+  }, [pasteTarget, uploadEvidence, showToast, evKind]);
 
   const removeEvidence = async (evidenceId: string) => {
     try {
@@ -2637,10 +2643,21 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
                           <span className="text-[11px] text-text-secondary">Filing to Drive…</span>
                         ) : pasteTarget === r.id ? (
                           <span className="text-[11px] text-primary font-medium">
-                            Press &#8984;V to paste &middot; Esc to cancel
+                            Press &#8984;V to paste the {kindFor(r.id) === "mom" ? "MOM" : kindFor(r.id) === "other" ? "file" : "invitation"} &middot; Esc to cancel
                           </span>
                         ) : (
-                          <span className="flex items-center gap-2">
+                          <span className="flex items-center gap-1.5">
+                            {/* Pick the kind BEFORE pasting — several invitations
+                                and a MOM screenshot can all sit on one call. */}
+                            <select
+                              value={kindFor(r.id)}
+                              onChange={e => setEvKind(k => ({ ...k, [r.id]: e.target.value }))}
+                              className="border border-border-default rounded px-1 py-0.5 text-[11px] bg-white"
+                              title="What kind of evidence is this?">
+                              <option value="invitation">Invitation</option>
+                              <option value="mom">MOM</option>
+                              <option value="other">Other</option>
+                            </select>
                             <button onClick={() => setPasteTarget(r.id)}
                               className="text-[11px] text-primary hover:underline"
                               title="Arm this row, then paste a screenshot">Paste</button>
@@ -2648,7 +2665,7 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
                               Upload
                               <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf"
                                 className="hidden"
-                                onChange={e => { const f = e.target.files?.[0]; if (f) uploadEvidence(r.id, f); e.target.value = ""; }} />
+                                onChange={e => { const f = e.target.files?.[0]; if (f) uploadEvidence(r.id, f, kindFor(r.id)); e.target.value = ""; }} />
                             </label>
                           </span>
                         )}

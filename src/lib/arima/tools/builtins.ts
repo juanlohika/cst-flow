@@ -1092,3 +1092,119 @@ registerTool({
     };
   },
 });
+
+registerTool({
+  name: "file_courtesy_call_evidence",
+  category: "write",
+  description:
+    "Files a screenshot the user has just SENT IN THIS CHAT as evidence against a courtesy call — the RM's invitation (email/chat) or the minutes-of-meeting. Use only when the most recent message actually carried an image; if the user asks to file evidence but sent no image, ask them to send it rather than calling this. State which kind it is: 'invitation' or 'mom'. The image is filed into the account's Drive folder (created automatically on first use) and only the resulting link is stored — never the image itself.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      kind: {
+        type: "string",
+        enum: ["invitation", "mom", "other"],
+        description: "What the screenshot shows. 'invitation' = the RM's meeting invite; 'mom' = the minutes that were sent.",
+      },
+      call_date: {
+        type: "string",
+        description: "Optional. The YYYY-MM-DD courtesy call this belongs to. Defaults to the most recent logged call for the account.",
+      },
+    },
+    required: ["kind"],
+  },
+  defaultEnabled: true,
+  defaultAutonomy: "auto",
+  handler: async (input: any, ctx: ToolContext) => {
+    const c = await loadCurrentClient(ctx);
+    if (!c) return noClientResult();
+
+    const kind = ["invitation", "mom", "other"].includes(input?.kind) ? input.kind : "invitation";
+    const { courtesyCallHistory, courtesyCallEvidence, arimaMessages } = await import("@/db/schema");
+    const { isNotNull } = await import("drizzle-orm");
+
+    // Pick the call: the stated date, else the latest logged one.
+    const wanted = String(input?.call_date ?? "").trim();
+    const calls = await db.select()
+      .from(courtesyCallHistory)
+      .where(eq(courtesyCallHistory.clientProfileId, c.id))
+      .orderBy(desc(courtesyCallHistory.callDate))
+      .limit(25);
+    const call = wanted ? calls.find(x => x.callDate === wanted) : calls[0];
+    if (!call) {
+      return {
+        ok: false as const,
+        error: wanted
+          ? `No courtesy call logged on ${wanted} for this account. Log the call first, then send the screenshot.`
+          : "No courtesy call is logged for this account yet. Log the call first, then send the screenshot.",
+      };
+    }
+
+    // The webhook already downloaded the Telegram photo and persisted it on the
+    // message as base64, so we read it from there rather than calling Telegram
+    // again. Newest message first — the image the user just sent.
+    const msgs = await db.select({ attachments: arimaMessages.attachments, createdAt: arimaMessages.createdAt })
+      .from(arimaMessages)
+      .where(and(
+        eq(arimaMessages.conversationId, ctx.conversationId),
+        isNotNull(arimaMessages.attachments),
+      ))
+      .orderBy(desc(arimaMessages.createdAt))
+      .limit(5);
+
+    let img: { base64: string; mime: string } | null = null;
+    for (const m of msgs) {
+      try {
+        const arr = JSON.parse(m.attachments || "[]");
+        const hit = (Array.isArray(arr) ? arr : []).find(
+          (a: any) => a?.type === "image" && typeof a?.base64 === "string" && a.base64.length > 0);
+        if (hit) { img = { base64: hit.base64, mime: hit.mime || "image/png" }; break; }
+      } catch { /* skip malformed */ }
+    }
+    if (!img) {
+      return {
+        ok: false as const,
+        error: "I can't see an image in the recent messages. Send the screenshot in this chat, then ask me to file it.",
+      };
+    }
+
+    try {
+      const { ensureAccountEvidenceFolder, uploadEvidence, evidenceFileName } =
+        await import("@/lib/courtesy/drive");
+      const accountName = c.clientShortName || c.companyName || "Account";
+      const folder = await ensureAccountEvidenceFolder({ accountName, accountId: c.id });
+      const filename = evidenceFileName({
+        date: call.callDate || new Date().toISOString().slice(0, 10),
+        kind, accountName, mimeType: img.mime,
+      });
+      const up = await uploadEvidence({
+        folderId: folder.folderId,
+        buffer: Buffer.from(img.base64, "base64"),
+        filename,
+        mimeType: img.mime,
+      });
+
+      await db.insert(courtesyCallEvidence).values({
+        id: `cce_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+        courtesyCallId: call.id,
+        kind,
+        driveFileId: up.fileId,
+        driveWebViewLink: up.webViewLink,
+        fileName: filename,
+        uploadedVia: "telegram",
+        uploadedByUserId: ctx.channel === "portal" ? null : ctx.userId,
+        createdAt: new Date().toISOString(),
+      } as any);
+
+      const label = kind === "mom" ? "MOM" : kind === "other" ? "file" : "invitation";
+      return {
+        ok: true as const,
+        link: up.webViewLink,
+        file_name: filename,
+        summary: `Filed the ${label} for the ${call.callDate} courtesy call as "${filename}"${folder.created ? " (created the account's Drive folder)" : ""}. Link: ${up.webViewLink}`,
+      };
+    } catch (e: any) {
+      return { ok: false as const, error: `Could not file it to Drive: ${e?.message || e}` };
+    }
+  },
+});
