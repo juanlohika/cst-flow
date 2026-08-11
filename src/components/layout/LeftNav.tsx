@@ -6,8 +6,7 @@ import ForceLink from "@/components/ui/ForceLink";
 import {
   ChevronLeft, ChevronRight, ChevronDown, MonitorPlay,
   Compass, Zap, Building2, Sparkles, LayoutDashboard, Heart,
-  Workflow, ClipboardList, Clock, Paintbrush, Users, MapPin
-} from "lucide-react";
+  Workflow, ClipboardList, Clock, Paintbrush, Users, MapPin, Gauge } from "lucide-react";
 
 const ICON_MAP: Record<string, React.ReactNode> = {
   Sparkles: <Sparkles size={14} />,
@@ -111,6 +110,9 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
             </ForceLink>
             <ForceLink href="/account-health" className={`left-nav-item ${isActive("/account-health") ? "active" : ""}`}>
               <Heart size={14} /> <span>Account Health</span>
+            </ForceLink>
+            <ForceLink href="/metrics" className={`left-nav-item ${isActive("/metrics") ? "active" : ""}`}>
+              <Gauge size={14} /> <span>Metrics</span>
             </ForceLink>
 
             <div className="mt-1">
@@ -224,6 +226,7 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
             <ForceLink href="/" className={`p-2.5 rounded-xl ${isActive("/") ? "bg-primary text-white" : "text-slate-400 hover:bg-slate-100"}`} title="Explore"><Compass size={20}/></ForceLink>
             <ForceLink href="/accounts" className={`p-2.5 rounded-xl ${isActive("/accounts") ? "bg-primary text-white" : "text-slate-400 hover:bg-slate-100"}`} title="Accounts"><Building2 size={20}/></ForceLink>
             <ForceLink href="/account-health" className={`p-2.5 rounded-xl ${isActive("/account-health") ? "bg-primary text-white" : "text-slate-400 hover:bg-slate-100"}`} title="Account Health"><Heart size={20}/></ForceLink>
+            <ForceLink href="/metrics" className={`p-2.5 rounded-xl ${isActive("/metrics") ? "bg-primary text-white" : "text-slate-400 hover:bg-slate-100"}`} title="Metrics"><Gauge size={20}/></ForceLink>
             <button onClick={() => { setIsCollapsed(false); setAiAppsOpen(true); }} className={`p-2.5 rounded-xl ${isInsideAiApp ? "bg-primary text-white" : "text-slate-400 hover:bg-slate-100"}`} title="AI Intelligence"><Sparkles size={20}/></button>
             <ForceLink href="/tasks" className={`p-2.5 rounded-xl ${isActive("/tasks") ? "bg-primary text-white" : "text-slate-400 hover:bg-slate-100"}`} title="Tasks"><Zap size={20}/></ForceLink>
             {user.role === "admin" && (
