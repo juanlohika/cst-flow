@@ -5,10 +5,11 @@ import {
   runCcStatus,
   runHypercareOverdueSweep,
 } from "@/lib/arima/proactive-portfolio";
+import { runRmNudgeSweep } from "@/lib/arima/rm-nudge";
 
 export const dynamic = "force-dynamic";
 
-type Job = "maintenance" | "cc-status" | "hypercare" | "all";
+type Job = "maintenance" | "cc-status" | "hypercare" | "rm-nudge" | "all";
 
 /**
  * POST /api/cron/portfolio-updates?job=<maintenance|cc-status|hypercare|all>
@@ -21,6 +22,11 @@ type Job = "maintenance" | "cc-status" | "hypercare" | "all";
  *   - Bi-weekly maintenance: job=maintenance, Mondays 09:00 PHT, every 2 weeks
  *   - Monthly CC status:     job=cc-status, last day of month 17:00 PHT
  *   - Daily hypercare sweep: job=hypercare, every morning 08:00 PHT
+ *   - RM nudges:             job=rm-nudge, weekday mornings 08:30 PHT
+ *       Posts each RM's own overdue courtesy calls + timeline tasks into their
+ *       rm-team room. Silent for an RM with nothing due, and rate-limited to
+ *       one message per RM per 20h so a misfiring schedule cannot spam.
+ *       Pass &force=1 to bypass the cooldown when testing.
  */
 export async function POST(req: Request) {
   try {
@@ -47,6 +53,11 @@ export async function POST(req: Request) {
     }
     if (job === "hypercare" || job === "all") {
       results.hypercare = await runHypercareOverdueSweep();
+    }
+    if (job === "rm-nudge" || job === "all") {
+      results.rmNudge = await runRmNudgeSweep({
+        force: url.searchParams.get("force") === "1",
+      });
     }
     return NextResponse.json({ ok: true, job, results });
   } catch (error: any) {
