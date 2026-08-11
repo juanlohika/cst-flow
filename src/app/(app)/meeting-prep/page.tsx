@@ -2391,6 +2391,10 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
   // the "planned vs completed" shape the personnel metrics will aggregate.
   const [periods, setPeriods] = useState<any[]>([]);
   const [year, setYear] = useState<number>(new Date().getFullYear());
+  // Tier drives the cadence, so when a score looks wrong the first question is
+  // "what tier was this account then?". Surface the log next to the cadence.
+  const [tierLog, setTierLog] = useState<any[]>([]);
+  const [showTierLog, setShowTierLog] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [callDate, setCallDate] = useState("");
@@ -2415,6 +2419,13 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
   }, [accountId, year]);
 
   useEffect(load, [load]);
+
+  useEffect(() => {
+    fetch(`/api/accounts/${accountId}/tier-history`)
+      .then(r => (r.ok ? r.json() : { intervals: [] }))
+      .then(d => setTierLog(d.intervals || []))
+      .catch(() => {});
+  }, [accountId]);
 
   const add = async () => {
     if (!callDate) { showToast("Pick the date the call happened", "error"); return; }
@@ -2443,6 +2454,7 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
   // step. The per-account Drive folder is created on first upload, so there is
   // nothing to set up beforehand. Only the returned LINK is stored.
   const [pasteTarget, setPasteTarget] = useState<string | null>(null);
+  const [pasteSlot, setPasteSlot] = useState<any>(null);
   const [uploading, setUploading] = useState<string | null>(null);
   // What KIND of evidence the next paste/upload on a row represents. Evidence is
   // not always an invitation — the MOM itself is often screenshotted too — so the
@@ -2451,12 +2463,21 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
   const [evKind, setEvKind] = useState<Record<string, string>>({});
   const kindFor = (callId: string) => evKind[callId] || "invitation";
 
-  const uploadEvidence = useCallback(async (callId: string, file: File, kind: string) => {
-    setUploading(callId);
+  // `target` is a callId when the period already has a call row, otherwise the
+  // period itself — an invitation exists BEFORE the call, so evidence cannot
+  // require a call record to attach to.
+  const uploadEvidence = useCallback(async (target: string, file: File, kind: string, slot?: any) => {
+    setUploading(target);
     try {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("callId", callId);
+      if (slot && !slot.callId) {
+        fd.append("periodLabel", slot.label);
+        fd.append("plannedStart", slot.start);
+        fd.append("plannedEnd", slot.end);
+      } else {
+        fd.append("callId", target);
+      }
       fd.append("kind", kind);
       const res = await fetch(`/api/accounts/${accountId}/courtesy-calls/evidence`, {
         method: "POST", body: fd,
@@ -2473,6 +2494,7 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
     }
     setUploading(null);
     setPasteTarget(null);
+    setPasteSlot(null);
   }, [accountId, load, showToast]);
 
   // Paste anywhere on the page while a row is armed. Listening on the document
@@ -2481,7 +2503,7 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
     if (!pasteTarget) return;
     const onPaste = (e: ClipboardEvent) => {
       const f = Array.from(e.clipboardData?.files || [])[0];
-      if (f) { e.preventDefault(); uploadEvidence(pasteTarget, f, kindFor(pasteTarget)); }
+      if (f) { e.preventDefault(); uploadEvidence(pasteTarget, f, kindFor(pasteTarget), pasteSlot); }
       else showToast("No image found on the clipboard", "error");
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPasteTarget(null); };
@@ -2491,7 +2513,7 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
       document.removeEventListener("paste", onPaste);
       document.removeEventListener("keydown", onKey);
     };
-  }, [pasteTarget, uploadEvidence, showToast, evKind]);
+  }, [pasteTarget, pasteSlot, uploadEvidence, showToast, evKind]);
 
   const removeEvidence = async (evidenceId: string) => {
     try {
@@ -2549,6 +2571,12 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
               <span className="ml-2 text-[10px] uppercase tracking-wide text-amber-700">override</span>
             )}
           </div>
+          {tierLog.length > 0 && (
+            <button onClick={() => setShowTierLog(v => !v)}
+              className="text-[11px] text-primary hover:underline mt-1">
+              {showTierLog ? "Hide" : "Tier history"} ({tierLog.length})
+            </button>
+          )}
         </div>
         <div className="border border-border-default rounded-lg px-4 py-3 bg-white">
           <div className="text-[10px] uppercase tracking-wide text-text-muted font-medium">Last call</div>
@@ -2567,6 +2595,40 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
           </div>
         )}
       </div>
+
+      {showTierLog && tierLog.length > 0 && (
+        <div className="border border-border-default rounded-lg bg-white overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-border-default text-[11px] uppercase tracking-wide text-text-muted font-medium">
+            Tier history
+          </div>
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-text-muted border-b border-border-default">
+                <th className="px-4 py-2 font-medium">Tier</th>
+                <th className="px-4 py-2 font-medium">Cadence applied</th>
+                <th className="px-4 py-2 font-medium">From</th>
+                <th className="px-4 py-2 font-medium">Until</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tierLog.map((iv, i) => (
+                <tr key={i} className="border-b border-border-default last:border-0">
+                  <td className="px-4 py-2.5 font-medium">{iv.tier}</td>
+                  <td className="px-4 py-2.5 text-text-secondary">{iv.cadence}</td>
+                  <td className="px-4 py-2.5">{iv.effectiveFrom}</td>
+                  <td className="px-4 py-2.5">
+                    {iv.effectiveTo || <span className="text-green-700 font-medium">current</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="px-4 py-2.5 border-t border-border-default text-[11px] text-text-muted">
+            Periods are scored against the cadence that applied at the time, so a promotion
+            does not change past compliance.
+          </div>
+        </div>
+      )}
 
       {/* New entry */}
       <div className="border border-border-default rounded-lg bg-white">
@@ -2675,9 +2737,11 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
                       </span>
                     </td>
                     <td className="px-4 py-2.5">
-                      {!p.callId ? (
-                        <span className="text-text-muted text-[12px]">—</span>
-                      ) : (
+                      {(() => {
+                        // Key the controls on the PERIOD, not the call, so an
+                        // invitation can be filed for a month with no call yet.
+                        const key = p.callId || p.label;
+                        return (
                         <div className="flex flex-col gap-1 items-start">
                           {ev.map((x: any) => (
                             <span key={x.id} className="flex items-center gap-1.5">
@@ -2691,34 +2755,34 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
                                 title="Remove this link">&times;</button>
                             </span>
                           ))}
-                          {uploading === p.callId ? (
+                          {uploading === key ? (
                             <span className="text-[11px] text-text-secondary">Filing to Drive…</span>
-                          ) : pasteTarget === p.callId ? (
+                          ) : pasteTarget === key ? (
                             <span className="text-[11px] text-primary font-medium">
-                              Press &#8984;V to paste the {kindFor(p.callId) === "mom" ? "MOM" : kindFor(p.callId) === "other" ? "file" : "invitation"} &middot; Esc to cancel
+                              Press &#8984;V to paste the {kindFor(key) === "mom" ? "MOM" : kindFor(key) === "other" ? "file" : "invitation"} &middot; Esc to cancel
                             </span>
                           ) : (
                             <span className="flex items-center gap-1.5">
-                              <select value={kindFor(p.callId)}
-                                onChange={e => setEvKind(k => ({ ...k, [p.callId]: e.target.value }))}
+                              <select value={kindFor(key)}
+                                onChange={e => setEvKind(k => ({ ...k, [key]: e.target.value }))}
                                 className="border border-border-default rounded px-1 py-0.5 text-[11px] bg-white"
                                 title="What kind of evidence is this?">
                                 <option value="invitation">Invitation</option>
                                 <option value="mom">MOM</option>
                                 <option value="other">Other</option>
                               </select>
-                              <button onClick={() => setPasteTarget(p.callId)}
+                              <button onClick={() => { setPasteTarget(key); setPasteSlot(p); }}
                                 className="text-[11px] text-primary hover:underline">Paste</button>
                               <label className="text-[11px] text-primary hover:underline cursor-pointer">
                                 Upload
                                 <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf"
                                   className="hidden"
-                                  onChange={e => { const f = e.target.files?.[0]; if (f) uploadEvidence(p.callId, f, kindFor(p.callId)); e.target.value = ""; }} />
+                                  onChange={e => { const f = e.target.files?.[0]; if (f) uploadEvidence(key, f, kindFor(key), p); e.target.value = ""; }} />
                               </label>
                             </span>
                           )}
                         </div>
-                      )}
+                        ); })()}
                     </td>
                     <td className="px-4 py-2.5 whitespace-nowrap text-text-secondary">{p.loggedByName || "—"}</td>
                     <td className="px-4 py-2.5 text-text-secondary">{p.notes || "—"}</td>

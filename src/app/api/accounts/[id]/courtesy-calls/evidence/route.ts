@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/db";
 import { courtesyCallHistory, courtesyCallEvidence, clientProfiles } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { canAccessClient, ensureAccessSchema } from "@/lib/access/accounts";
 import {
   ensureAccountEvidenceFolder, uploadEvidence, evidenceFileName,
@@ -38,8 +38,17 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const callId = String(form.get("callId") || "").trim();
     const kind = String(form.get("kind") || "invitation").trim();
 
+    // A periodLabel may be sent INSTEAD of a callId: an invitation exists before
+    // the call happens, so evidence must be attachable to a period that has no
+    // call record yet. We create the placeholder row on demand.
+    const periodLabel = String(form.get("periodLabel") || "").trim();
+    const plannedStart = String(form.get("plannedStart") || "").trim();
+    const plannedEnd = String(form.get("plannedEnd") || "").trim();
+
     if (!(file instanceof File)) return NextResponse.json({ error: "No file supplied" }, { status: 400 });
-    if (!callId) return NextResponse.json({ error: "callId is required" }, { status: 400 });
+    if (!callId && !periodLabel) {
+      return NextResponse.json({ error: "Either callId or periodLabel is required" }, { status: 400 });
+    }
     if (!OK_MIME.has(file.type)) {
       return NextResponse.json({ error: `Unsupported file type ${file.type || "unknown"}. Use PNG, JPEG, WebP or PDF.` }, { status: 400 });
     }
@@ -47,12 +56,45 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       return NextResponse.json({ error: `File is ${(file.size / 1048576).toFixed(1)} MB — the limit is 8 MB.` }, { status: 400 });
     }
 
-    // Scope the call to THIS account so a callId from elsewhere can't be attached to.
-    const rows = await db.select().from(courtesyCallHistory)
-      .where(eq(courtesyCallHistory.id, callId)).limit(1);
-    const call = rows[0];
-    if (!call || call.clientProfileId !== params.id) {
-      return NextResponse.json({ error: "Call not found on this account" }, { status: 404 });
+    // Resolve the call row. When only a period was given, find or create it —
+    // callDate stays NULL, so the period is still correctly "not yet called"
+    // while carrying the invitation that was already sent.
+    let call: any = null;
+    if (callId) {
+      // Scope to THIS account so a callId from elsewhere can't be attached to.
+      const rows = await db.select().from(courtesyCallHistory)
+        .where(eq(courtesyCallHistory.id, callId)).limit(1);
+      call = rows[0];
+      if (!call || call.clientProfileId !== params.id) {
+        return NextResponse.json({ error: "Call not found on this account" }, { status: 404 });
+      }
+    } else {
+      const existing = await db.select().from(courtesyCallHistory)
+        .where(and(
+          eq(courtesyCallHistory.clientProfileId, params.id),
+          eq(courtesyCallHistory.periodLabel, periodLabel),
+        )).limit(1);
+      call = existing[0] || null;
+      if (!call) {
+        const newId = `cc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+        const now = new Date().toISOString();
+        await db.insert(courtesyCallHistory).values({
+          id: newId,
+          clientProfileId: params.id,
+          periodLabel,
+          plannedStart: plannedStart || null,
+          plannedEnd: plannedEnd || null,
+          callDate: null,             // nothing has happened yet — only the invite exists
+          momSentDate: null,
+          complianceStatus: "pending",
+          loggedByUserId: session.user.id,
+          rmUserId: session.user.id,
+          createdAt: now, updatedAt: now,
+        } as any);
+        const back = await db.select().from(courtesyCallHistory)
+          .where(eq(courtesyCallHistory.id, newId)).limit(1);
+        call = back[0];
+      }
     }
 
     const prof = await db.select({ name: clientProfiles.companyName, short: clientProfiles.clientShortName })
@@ -61,7 +103,9 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
     const folder = await ensureAccountEvidenceFolder({ accountName, accountId: params.id });
     const filename = evidenceFileName({
-      date: call.callDate || new Date().toISOString().slice(0, 10),
+      // Prefer the call date; else the period's start, so a pre-call invitation
+      // is still named for the period it belongs to rather than 'today'.
+      date: call.callDate || call.plannedStart || new Date().toISOString().slice(0, 10),
       kind, accountName, mimeType: file.type,
     });
 
