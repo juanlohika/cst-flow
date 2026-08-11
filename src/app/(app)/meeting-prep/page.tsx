@@ -2432,6 +2432,64 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
     setSaving(false);
   };
 
+  // ── Evidence: paste or pick ──────────────────────────────────────────
+  // A screenshot goes straight from the clipboard to Drive — no save-to-desktop
+  // step. The per-account Drive folder is created on first upload, so there is
+  // nothing to set up beforehand. Only the returned LINK is stored.
+  const [pasteTarget, setPasteTarget] = useState<string | null>(null);
+  const [uploading, setUploading] = useState<string | null>(null);
+
+  const uploadEvidence = useCallback(async (callId: string, file: File) => {
+    setUploading(callId);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("callId", callId);
+      fd.append("kind", "invitation");
+      const res = await fetch(`/api/accounts/${accountId}/courtesy-calls/evidence`, {
+        method: "POST", body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showToast(data.folderCreated ? "Filed — account folder created in Drive" : "Evidence filed to Drive");
+        load();
+      } else {
+        showToast(data?.error || "Could not file the evidence", "error");
+      }
+    } catch {
+      showToast("Could not file the evidence", "error");
+    }
+    setUploading(null);
+    setPasteTarget(null);
+  }, [accountId, load, showToast]);
+
+  // Paste anywhere on the page while a row is armed. Listening on the document
+  // is deliberate: a table cell cannot reliably hold focus for a paste event.
+  useEffect(() => {
+    if (!pasteTarget) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const f = Array.from(e.clipboardData?.files || [])[0];
+      if (f) { e.preventDefault(); uploadEvidence(pasteTarget, f); }
+      else showToast("No image found on the clipboard", "error");
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPasteTarget(null); };
+    document.addEventListener("paste", onPaste);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("paste", onPaste);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [pasteTarget, uploadEvidence, showToast]);
+
+  const removeEvidence = async (evidenceId: string) => {
+    try {
+      const res = await fetch(`/api/accounts/${accountId}/courtesy-calls/evidence?evidenceId=${evidenceId}`,
+        { method: "DELETE" });
+      if (res.ok) { showToast("Evidence link removed"); load(); }
+      else showToast("Could not remove", "error");
+    } catch { showToast("Could not remove", "error"); }
+  };
+
   const setMom = async (callId: string, value: string) => {
     try {
       const res = await fetch(`/api/accounts/${accountId}/courtesy-calls`, {
@@ -2562,18 +2620,39 @@ export function CourtesyCallsTab({ accountId }: { accountId: string }) {
                       </span>
                     </td>
                     <td className="px-4 py-2.5">
-                      {ev.length === 0 ? (
-                        <span className="text-text-muted text-[12px]">—</span>
-                      ) : (
-                        <div className="flex flex-col gap-0.5">
-                          {ev.map(x => (
-                            <a key={x.id} href={x.link} target="_blank" rel="noreferrer"
-                              className="text-primary hover:underline text-[12px]">
-                              {x.kind === "invitation" ? "Invitation" : x.kind}
+                      <div className="flex flex-col gap-1 items-start">
+                        {ev.map(x => (
+                          <span key={x.id} className="flex items-center gap-1.5">
+                            <a href={x.link} target="_blank" rel="noreferrer"
+                              className="text-primary hover:underline text-[12px]"
+                              title={x.fileName || undefined}>
+                              {x.kind === "invitation" ? "Invitation" : x.kind === "mom" ? "MOM" : "Evidence"}
                             </a>
-                          ))}
-                        </div>
-                      )}
+                            <button onClick={() => removeEvidence(x.id)}
+                              className="text-text-muted hover:text-red-600 text-[11px]"
+                              title="Remove this link">&times;</button>
+                          </span>
+                        ))}
+                        {uploading === r.id ? (
+                          <span className="text-[11px] text-text-secondary">Filing to Drive…</span>
+                        ) : pasteTarget === r.id ? (
+                          <span className="text-[11px] text-primary font-medium">
+                            Press &#8984;V to paste &middot; Esc to cancel
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-2">
+                            <button onClick={() => setPasteTarget(r.id)}
+                              className="text-[11px] text-primary hover:underline"
+                              title="Arm this row, then paste a screenshot">Paste</button>
+                            <label className="text-[11px] text-primary hover:underline cursor-pointer">
+                              Upload
+                              <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf"
+                                className="hidden"
+                                onChange={e => { const f = e.target.files?.[0]; if (f) uploadEvidence(r.id, f); e.target.value = ""; }} />
+                            </label>
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-2.5 whitespace-nowrap text-text-secondary">{r.loggedByName || "—"}</td>
                     <td className="px-4 py-2.5 text-text-secondary">{r.notes || "—"}</td>
