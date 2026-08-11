@@ -1356,3 +1356,79 @@ registerTool({
     };
   },
 });
+
+// ─── Account intelligence write-back (Phase 4) ─────────────────────────
+//
+// Intelligence is the corpus every other Arima answer is grounded in, and some
+// accounts hold 15k+ characters of hand-curated context. So this tool is
+// deliberately APPEND-ONLY and approval-gated: it adds a dated note under a
+// "Field notes" heading and can never rewrite or delete what a human wrote.
+// Replacing the dossier stays a human action in the Intelligence tab.
+
+registerTool({
+  name: "add_account_intelligence_note",
+  category: "write",
+  description:
+    "Appends a dated note to the current client account's intelligence dossier — use when someone tells you a durable fact about the account worth remembering (a policy, a constraint, a preference, a decision, a change of contact). Do NOT use it for transient chatter, for things already in the dossier, or to restate what you were just asked. It can only ADD; it cannot edit or remove existing content. Summarise the fact in your own words, one or two sentences, written so it still makes sense read months later without the surrounding conversation.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      note: {
+        type: "string",
+        description: "The durable fact, 1–2 sentences, self-contained. No greetings, no 'the user said'.",
+      },
+      category: {
+        type: "string",
+        description: "Optional short grouping label, e.g. 'Policy', 'Contact', 'Constraint', 'Decision'.",
+      },
+    },
+    required: ["note"],
+  },
+  defaultEnabled: true,
+  defaultAutonomy: "approval",   // mutates the corpus everything else reads
+  handler: async (input: any, ctx: ToolContext) => {
+    const c = await loadCurrentClient(ctx);
+    if (!c) return noClientResult();
+
+    const note = String(input?.note ?? "").trim();
+    if (note.length < 12) {
+      return { ok: false as const, error: "That note is too short to be useful later. Give me one or two full sentences." };
+    }
+    if (note.length > 1200) {
+      return { ok: false as const, error: "That is too long for a note — summarise it to a couple of sentences, or have a human add it to the Intelligence tab directly." };
+    }
+
+    const existing = (c as any).intelligenceContent || "";
+
+    // Cheap duplicate guard: if the same sentence is already there, adding it
+    // again only makes the dossier noisier.
+    const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+    if (norm(existing).includes(norm(note))) {
+      return { ok: true as const, added: false, summary: "That is already in the dossier — nothing added." };
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const who = ctx.speakerName ? ` — via ${ctx.speakerName}` : "";
+    const cat = String(input?.category ?? "").trim();
+    const line = `- **${today}**${cat ? ` · ${cat}` : ""}: ${note}${who}`;
+
+    const HEADING = "## Field notes (added via Arima)";
+    let updated: string;
+    if (existing.includes(HEADING)) {
+      // Insert directly under the heading so the newest note reads first.
+      updated = existing.replace(HEADING, `${HEADING}\n${line}`);
+    } else {
+      updated = `${existing.trimEnd()}\n\n${HEADING}\n${line}\n`;
+    }
+
+    await db.update(clientProfilesTable)
+      .set({ intelligenceContent: updated, updatedAt: new Date().toISOString() } as any)
+      .where(eq(clientProfilesTable.id, c.id));
+
+    return {
+      ok: true as const,
+      added: true,
+      summary: `Added to ${c.clientShortName || c.companyName}'s intelligence under "Field notes": ${note.slice(0, 140)}${note.length > 140 ? "…" : ""}`,
+    };
+  },
+});
