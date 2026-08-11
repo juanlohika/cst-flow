@@ -10,7 +10,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
-import { Phone, AlertCircle, ChevronRight } from "lucide-react";
+import { Phone, AlertCircle, ChevronRight, Upload } from "lucide-react";
 
 type Period = {
   label: string; display: string; start: string; end: string;
@@ -72,6 +72,8 @@ export default function MetricsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [pushing, setPushing] = useState(false);
+  const [pushed, setPushed] = useState<{ url: string; tab: string } | null>(null);
 
   useEffect(() => { if (me && !userId) setUserId(me); }, [me, userId]);
 
@@ -104,6 +106,20 @@ export default function MetricsPage() {
 
   const cc = data?.courtesyCalls;
 
+  // Month-end often cannot wait for the weekly cron, so the same push is
+  // available on demand. One-way by design: the Sheet is a report, not a source.
+  const pushNow = async () => {
+    if (!userId) return;
+    setPushing(true); setPushed(null);
+    try {
+      const r = await fetch(`/api/metrics/${userId}/push?month=${month}`, { method: "POST" });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) setPushed({ url: j.sheetUrl, tab: j.tab });
+      else setError(j?.error || "Push failed");
+    } catch (e: any) { setError(e.message); }
+    setPushing(false);
+  };
+
   return (
     <div className="flex flex-col h-full bg-white overflow-auto">
       <div className="px-6 py-4 border-b border-border-default flex items-center justify-between gap-4 flex-wrap">
@@ -120,6 +136,12 @@ export default function MetricsPage() {
               {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           )}
+          <button onClick={pushNow} disabled={pushing || !userId}
+            className="flex items-center gap-1.5 border border-border-default rounded-md px-3 py-1.5 text-[13px] hover:bg-surface-muted disabled:opacity-40"
+            title="Render this month into the Google Sheet">
+            <Upload className="w-3.5 h-3.5" />
+            {pushing ? "Pushing…" : "Push to Sheet"}
+          </button>
           <div className="flex items-center gap-1">
             <button onClick={() => setMonth(m => monthShift(m, -1))}
               className="border border-border-default rounded-md px-2 py-1.5 text-[13px] hover:bg-surface-muted">&larr;</button>
@@ -129,6 +151,13 @@ export default function MetricsPage() {
           </div>
         </div>
       </div>
+
+      {pushed && (
+        <div className="mx-6 mt-4 border border-green-200 bg-green-50 rounded-lg px-4 py-2.5 text-[12px] text-green-900">
+          Pushed to the <span className="font-medium">{pushed.tab}</span> tab.{" "}
+          <a href={pushed.url} target="_blank" rel="noreferrer" className="underline">Open the Sheet &rarr;</a>
+        </div>
+      )}
 
       {loading ? (
         <div className="p-6 text-[13px] text-text-secondary">Loading…</div>

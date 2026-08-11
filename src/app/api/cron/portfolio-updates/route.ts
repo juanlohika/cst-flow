@@ -6,10 +6,11 @@ import {
   runHypercareOverdueSweep,
 } from "@/lib/arima/proactive-portfolio";
 import { runRmNudgeSweep } from "@/lib/arima/rm-nudge";
+import { pushAllMetrics } from "@/lib/metrics/sheets-push";
 
 export const dynamic = "force-dynamic";
 
-type Job = "maintenance" | "cc-status" | "hypercare" | "rm-nudge" | "all";
+type Job = "maintenance" | "cc-status" | "hypercare" | "rm-nudge" | "metrics-sheets" | "all";
 
 /**
  * POST /api/cron/portfolio-updates?job=<maintenance|cc-status|hypercare|all>
@@ -27,6 +28,11 @@ type Job = "maintenance" | "cc-status" | "hypercare" | "rm-nudge" | "all";
  *       rm-team room. Silent for an RM with nothing due, and rate-limited to
  *       one message per RM per 20h so a misfiring schedule cannot spam.
  *       Pass &force=1 to bypass the cooldown when testing.
+ *   - Metrics -> Sheets:     job=metrics-sheets, weekly (Mondays 07:00 PHT)
+ *       Renders each RM's courtesy-call numbers into their own Google Sheet, one
+ *       tab per month. One-way: CST OS is the source of truth and the Sheet is a
+ *       report, so a pushed cell that someone edits is overwritten next run.
+ *       Pass &month=YYYY-MM to target a specific month (defaults to today's).
  */
 export async function POST(req: Request) {
   try {
@@ -53,6 +59,10 @@ export async function POST(req: Request) {
     }
     if (job === "hypercare" || job === "all") {
       results.hypercare = await runHypercareOverdueSweep();
+    }
+    if (job === "metrics-sheets" || job === "all") {
+      const month = url.searchParams.get("month") || new Date().toISOString().slice(0, 7);
+      results.metricsSheets = await pushAllMetrics(month);
     }
     if (job === "rm-nudge" || job === "all") {
       results.rmNudge = await runRmNudgeSweep({
