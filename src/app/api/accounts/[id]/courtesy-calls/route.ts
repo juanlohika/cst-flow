@@ -33,13 +33,57 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
         loggedByName: usersTable.name,
         notes: courtesyCallHistory.notes,
         createdAt: courtesyCallHistory.createdAt,
+        momSentDate: courtesyCallHistory.momSentDate,
+        periodLabel: courtesyCallHistory.periodLabel,
+        plannedStart: courtesyCallHistory.plannedStart,
+        plannedEnd: courtesyCallHistory.plannedEnd,
+        complianceStatus: courtesyCallHistory.complianceStatus,
+        rmUserId: courtesyCallHistory.rmUserId,
       })
       .from(courtesyCallHistory)
       .leftJoin(usersTable, eq(usersTable.id, courtesyCallHistory.loggedByUserId))
       .where(eq(courtesyCallHistory.clientProfileId, params.id))
       .orderBy(desc(courtesyCallHistory.callDate));
 
-    return NextResponse.json({ history: rows });
+    // Resolve the account's expected cadence from tier / frequencyOverride so
+    // the UI does not re-implement the policy. Reuses the same helper the
+    // executive summary and Arima already use, so the three cannot disagree.
+    const prof = await db
+      .select({ tier: clientProfiles.tier, frequencyOverride: clientProfiles.frequencyOverride })
+      .from(clientProfiles).where(eq(clientProfiles.id, params.id)).limit(1);
+
+    let cadence: { label: string; days: number | null; source: string } = { label: "—", days: null, source: "unknown" };
+    try {
+      const { loadTierFrequencyMap, resolveAccountFrequency } = await import("@/lib/accounts/tier-frequency");
+      const tierMap = await loadTierFrequencyMap();
+      cadence = resolveAccountFrequency({
+        tier: prof[0]?.tier, frequencyOverride: prof[0]?.frequencyOverride, tierMap,
+      });
+    } catch (e) {
+      console.error("[courtesy-calls GET] cadence resolve failed", e);
+    }
+
+    // Evidence links, grouped by call. Only links are stored — never images.
+    let evidence: Record<string, any[]> = {};
+    try {
+      const { courtesyCallEvidence } = await import("@/db/schema");
+      const ids = rows.map(r => r.id);
+      if (ids.length) {
+        const { inArray } = await import("drizzle-orm");
+        const ev = await db.select().from(courtesyCallEvidence)
+          .where(inArray(courtesyCallEvidence.courtesyCallId, ids));
+        for (const e of ev) {
+          (evidence[e.courtesyCallId] ||= []).push({
+            id: e.id, kind: e.kind, link: e.driveWebViewLink,
+            fileName: e.fileName, uploadedVia: e.uploadedVia,
+          });
+        }
+      }
+    } catch (e) {
+      console.error("[courtesy-calls GET] evidence load failed", e);
+    }
+
+    return NextResponse.json({ history: rows, cadence, evidence });
   } catch (error: any) {
     console.error("[courtesy-calls GET]", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -65,14 +109,25 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const id = `cc_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
     const now = new Date().toISOString();
 
+    const momSentDate = typeof body?.momSentDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.momSentDate)
+      ? body.momSentDate : null;
+    if (momSentDate && momSentDate < callDate) {
+      return NextResponse.json({ error: "The MOM date cannot be before the call date." }, { status: 400 });
+    }
+
     await db.insert(courtesyCallHistory).values({
       id,
       clientProfileId: params.id,
       callDate,
+      momSentDate,
+      // A period is only compliant once BOTH the call and its MOM are recorded.
+      complianceStatus: momSentDate ? "compliant" : "incomplete",
       loggedByUserId: session.user.id,
+      rmUserId: session.user.id,
       notes: typeof body?.notes === "string" ? body.notes.trim() || null : null,
       createdAt: now,
-    });
+      updatedAt: now,
+    } as any);
 
     // Update clientProfiles.lastCourtesyCall ONLY if this is newer than what's there
     const profile = await db
@@ -90,6 +145,70 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     return NextResponse.json({ ok: true, id });
   } catch (error: any) {
     console.error("[courtesy-calls POST]", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+/**
+ * PATCH /api/accounts/[id]/courtesy-calls
+ *   body: { callId: string, momSentDate?: 'YYYY-MM-DD'|null, notes?: string }
+ * Updates one logged call — used by the Courtesy Calls tab to record the MOM
+ * after the fact, which is the common case (the call is logged on the day, the
+ * minutes go out later).
+ */
+export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    await ensureAccessSchema();
+
+    const isAdmin = (session.user as any).role === "admin";
+    const allowed = await canAccessClient({ userId: session.user.id, isAdmin }, params.id);
+    if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+    const body = await req.json();
+    const callId = String(body?.callId || "").trim();
+    if (!callId) return NextResponse.json({ error: "callId is required" }, { status: 400 });
+
+    // Scope the lookup to this account so a callId from another account cannot
+    // be edited by someone who merely has access to this one.
+    const existing = await db.select()
+      .from(courtesyCallHistory)
+      .where(eq(courtesyCallHistory.id, callId))
+      .limit(1);
+    const row = existing[0];
+    if (!row || row.clientProfileId !== params.id) {
+      return NextResponse.json({ error: "Call not found on this account" }, { status: 404 });
+    }
+
+    const patch: Record<string, any> = { updatedAt: new Date().toISOString() };
+
+    if ("momSentDate" in body) {
+      const v = body.momSentDate;
+      if (v === null || v === "") {
+        patch.momSentDate = null;
+        patch.complianceStatus = "incomplete";
+      } else if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+        if (row.callDate && v < row.callDate) {
+          return NextResponse.json({ error: "The MOM date cannot be before the call date." }, { status: 400 });
+        }
+        patch.momSentDate = v;
+        // Late if the call itself missed its planned window, otherwise compliant.
+        patch.complianceStatus = row.plannedEnd && row.callDate && row.callDate > row.plannedEnd
+          ? "late" : "compliant";
+      } else {
+        return NextResponse.json({ error: "momSentDate must be YYYY-MM-DD or null" }, { status: 400 });
+      }
+    }
+
+    if (typeof body?.notes === "string") patch.notes = body.notes.trim() || null;
+
+    await db.update(courtesyCallHistory).set(patch as any)
+      .where(eq(courtesyCallHistory.id, callId));
+
+    return NextResponse.json({ ok: true, id: callId, ...patch });
+  } catch (error: any) {
+    console.error("[courtesy-calls PATCH]", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

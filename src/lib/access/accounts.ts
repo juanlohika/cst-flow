@@ -17,6 +17,14 @@ import crypto from "crypto";
 // In-memory flag so we only attempt the schema work once per process (per
 // serverless instance). Each invocation does no-op ALTERs if columns exist.
 let _schemaEnsuredAt = 0;
+// Set once every expected column is present, so the check is skipped entirely
+// for the remaining process lifetime rather than retried every 60s.
+let _schemaFullySynced = false;
+
+// Bump this whenever ensureAccessSchema gains new CREATE/ALTER work, so already
+// migrated databases skip the whole body instead of re-issuing every statement.
+const ACCESS_SCHEMA_VERSION_KEY = "ACCESS_SCHEMA_VERSION";
+const ACCESS_SCHEMA_VERSION = "2026-08-11-courtesy";
 
 /**
  * Phase E.9 — SQLite can't ALTER a column to remove NOT NULL. To relax
@@ -51,8 +59,69 @@ async function rebuildIfNotNull(
 }
 
 export async function ensureAccessSchema(): Promise<void> {
-  // Re-attempt at most every 60s in case a previous attempt failed and we want to retry
+  // PERF: this used to fire ~44 `ALTER TABLE ... ADD COLUMN` statements on every
+  // cold request, each one a separate round trip to Turso that FAILED because
+  // the column already existed (~90ms each against ap-northeast, so ~4s of dead
+  // latency on the Accounts page). Now we read the existing columns once with
+  // PRAGMA and skip the ALTERs that are already satisfied — a handful of cheap
+  // reads instead of dozens of failing writes.
+  //
+  // Once every column is present the whole body is skipped for the rest of the
+  // process lifetime, not just 60s.
+  if (_schemaFullySynced) return;
   if (Date.now() - _schemaEnsuredAt < 60_000) return;
+
+  // One cheap read decides whether any of the ~65 CREATE + 77 ALTER statements
+  // below need to run at all. Each statement is a separate ~88ms round trip to
+  // Turso (ap-northeast-1), so a fully-migrated database was paying ~6s of pure
+  // latency on every cold serverless instance. The marker is bumped whenever
+  // this function gains new schema work.
+  try {
+    const marker: any = await db.all(sql.raw(
+      `SELECT value FROM GlobalSetting WHERE key = '${ACCESS_SCHEMA_VERSION_KEY}' LIMIT 1`));
+    if (marker?.[0]?.value === ACCESS_SCHEMA_VERSION) {
+      _schemaFullySynced = true;
+      _schemaEnsuredAt = Date.now();
+      return;
+    }
+  } catch { /* GlobalSetting missing on a fresh DB — fall through and migrate */ }
+
+  // Snapshot the live columns per table so the ALTERs below can be skipped.
+  // The PRAGMAs are issued in PARALLEL — 12 sequential round trips to Turso is
+  // most of the remaining cold-start cost, and they are independent reads.
+  const existing: Record<string, Set<string>> = {};
+  const PRAGMA_TABLES = [
+    "ClientProfile", "AccountMembership", "ArimaMessage", "ArimaConversation",
+    "ClientBindKey", "ArimaChannelBinding", "AccountUploadBatch", "ClientContact",
+    "CourtesyCallHistory", "TimelineItem", "Project", "User",
+  ];
+  await Promise.all(PRAGMA_TABLES.map(async (t) => {
+    try {
+      const rows: any = await db.all(sql.raw(`PRAGMA table_info(${t})`));
+      existing[t] = new Set((rows || []).map((r: any) => String(r.name)));
+    } catch { existing[t] = new Set(); }
+  }));
+
+  async function columnsOf(table: string): Promise<Set<string>> {
+    if (existing[table]) return existing[table];
+    try {
+      const rows: any = await db.all(sql.raw(`PRAGMA table_info(${table})`));
+      existing[table] = new Set((rows || []).map((r: any) => String(r.name)));
+    } catch {
+      existing[table] = new Set();
+    }
+    return existing[table];
+  }
+  /** Adds a column only when PRAGMA says it is missing. */
+  async function addColumn(table: string, column: string, type: string) {
+    const cols = await columnsOf(table);
+    if (cols.size === 0 || cols.has(column)) return;   // table absent, or already there
+    try {
+      await db.run(sql.raw(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`));
+      cols.add(column);
+    } catch { /* raced with another instance — harmless */ }
+  }
+
   try {
     // Create AccountMembership table if missing
     await db.run(sql`CREATE TABLE IF NOT EXISTS AccountMembership (
@@ -67,34 +136,34 @@ export async function ensureAccessSchema(): Promise<void> {
 
     // Add clientCode + accessToken to ClientProfile if missing.
     // ALTER ... ADD COLUMN throws if the column already exists, so each is wrapped.
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN clientCode TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN accessToken TEXT`); } catch {}
+    await addColumn("ClientProfile", "clientCode", "TEXT");
+    await addColumn("ClientProfile", "accessToken", "TEXT");
     // Phase 12: typed internal-role + primary flag on AccountMembership
-    try { await db.run(sql`ALTER TABLE AccountMembership ADD COLUMN internalRole TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE AccountMembership ADD COLUMN isPrimary INTEGER DEFAULT 0 NOT NULL`); } catch {}
+    await addColumn("AccountMembership", "internalRole", "TEXT");
+    await addColumn("AccountMembership", "isPrimary", "INTEGER DEFAULT 0 NOT NULL");
     // Phase 13: sender attribution + attachments + mentions on every message
-    try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN senderType TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN senderUserId TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN senderName TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN senderChannel TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN mentions TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaMessage ADD COLUMN attachments TEXT`); } catch {}
+    await addColumn("ArimaMessage", "senderType", "TEXT");
+    await addColumn("ArimaMessage", "senderUserId", "TEXT");
+    await addColumn("ArimaMessage", "senderName", "TEXT");
+    await addColumn("ArimaMessage", "senderChannel", "TEXT");
+    await addColumn("ArimaMessage", "mentions", "TEXT");
+    await addColumn("ArimaMessage", "attachments", "TEXT");
     // Phase 20: agentMode on bindings — which agent leads this room (arima or eliana)
-    try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN agentMode TEXT DEFAULT 'arima' NOT NULL`); } catch {}
+    await addColumn("ArimaChannelBinding", "agentMode", "TEXT DEFAULT 'arima' NOT NULL");
     // Phase 22: Eliana BRD documents — full polished BRD as markdown + Google Doc link
-    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdDocument TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdGeneratedAt TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdGoogleDocId TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdGoogleDocUrl TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdGoogleDocSyncedAt TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdStatus TEXT DEFAULT 'captured' NOT NULL`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdError TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdExportLog TEXT`); } catch {}
+    await addColumn("ArimaRequest", "brdDocument", "TEXT");
+    await addColumn("ArimaRequest", "brdGeneratedAt", "TEXT");
+    await addColumn("ArimaRequest", "brdGoogleDocId", "TEXT");
+    await addColumn("ArimaRequest", "brdGoogleDocUrl", "TEXT");
+    await addColumn("ArimaRequest", "brdGoogleDocSyncedAt", "TEXT");
+    await addColumn("ArimaRequest", "brdStatus", "TEXT DEFAULT 'captured' NOT NULL");
+    await addColumn("ArimaRequest", "brdError", "TEXT");
+    await addColumn("ArimaRequest", "brdExportLog", "TEXT");
     // Phase 22.3: dual Word/PDF Drive output
-    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdDocxFileId TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdDocxUrl TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdPdfFileId TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaRequest ADD COLUMN brdPdfUrl TEXT`); } catch {}
+    await addColumn("ArimaRequest", "brdDocxFileId", "TEXT");
+    await addColumn("ArimaRequest", "brdDocxUrl", "TEXT");
+    await addColumn("ArimaRequest", "brdPdfFileId", "TEXT");
+    await addColumn("ArimaRequest", "brdPdfUrl", "TEXT");
 
     // Phase A: account bulk-import audit table
     await db.run(sql`CREATE TABLE IF NOT EXISTS AccountUploadBatch (
@@ -110,23 +179,23 @@ export async function ensureAccessSchema(): Promise<void> {
     )`);
 
     // Phase E: ClientProfile CRM fields (idempotent ALTERs)
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN clientShortName TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN clientLongName TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN groupName TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN tier TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN groupTier TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN frequencyOverride TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN pmEmail TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN baEmail TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN rmEmail TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN assignedOnMonth TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN lastCourtesyCall TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN lastF2FVisit TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN f2fFrequencyOverride TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientProfile ADD COLUMN goLiveDate TEXT`); } catch {}
+    await addColumn("ClientProfile", "clientShortName", "TEXT");
+    await addColumn("ClientProfile", "clientLongName", "TEXT");
+    await addColumn("ClientProfile", "groupName", "TEXT");
+    await addColumn("ClientProfile", "tier", "TEXT");
+    await addColumn("ClientProfile", "groupTier", "TEXT");
+    await addColumn("ClientProfile", "frequencyOverride", "TEXT");
+    await addColumn("ClientProfile", "pmEmail", "TEXT");
+    await addColumn("ClientProfile", "baEmail", "TEXT");
+    await addColumn("ClientProfile", "rmEmail", "TEXT");
+    await addColumn("ClientProfile", "assignedOnMonth", "TEXT");
+    await addColumn("ClientProfile", "lastCourtesyCall", "TEXT");
+    await addColumn("ClientProfile", "lastF2FVisit", "TEXT");
+    await addColumn("ClientProfile", "f2fFrequencyOverride", "TEXT");
+    await addColumn("ClientProfile", "goLiveDate", "TEXT");
 
     // Phase E.7: user-level Account Health module access flag
-    try { await db.run(sql`ALTER TABLE User ADD COLUMN canAccessAccountHealth INTEGER DEFAULT 0 NOT NULL`); } catch {}
+    await addColumn("User", "canAccessAccountHealth", "INTEGER DEFAULT 0 NOT NULL");
 
     // Phase E.8: multiple labeled bind keys per account
     await db.run(sql`CREATE TABLE IF NOT EXISTS ClientBindKey (
@@ -141,7 +210,7 @@ export async function ensureAccessSchema(): Promise<void> {
       FOREIGN KEY (clientProfileId) REFERENCES ClientProfile(id) ON DELETE CASCADE
     )`);
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS ClientBindKey_clientProfile_idx ON ClientBindKey(clientProfileId)`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN bindKeyId TEXT`); } catch {}
+    await addColumn("ArimaChannelBinding", "bindKeyId", "TEXT");
 
     // Backfill: every existing account with an accessToken gets a "Primary" key
     // mirroring that token. Active bindings get pinned to that key. Idempotent —
@@ -179,13 +248,13 @@ export async function ensureAccessSchema(): Promise<void> {
 
     // Phase E.9: scopeType + scopeRef on both ClientBindKey and ArimaChannelBinding.
     // Team-room rows store scopeType='rm-team' + scopeRef=userId (no clientProfileId).
-    try { await db.run(sql`ALTER TABLE ClientBindKey ADD COLUMN scopeType TEXT NOT NULL DEFAULT 'client'`); } catch {}
-    try { await db.run(sql`ALTER TABLE ClientBindKey ADD COLUMN scopeRef TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN scopeType TEXT NOT NULL DEFAULT 'client'`); } catch {}
-    try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN scopeRef TEXT`); } catch {}
+    await addColumn("ClientBindKey", "scopeType", "TEXT NOT NULL DEFAULT 'client'");
+    await addColumn("ClientBindKey", "scopeRef", "TEXT");
+    await addColumn("ArimaChannelBinding", "scopeType", "TEXT NOT NULL DEFAULT 'client'");
+    await addColumn("ArimaChannelBinding", "scopeRef", "TEXT");
     // Assignee to @tag on every broadcast from this GC. Nullable; set via
     // in-chat `/tagbroadcast @user` (internal channels only).
-    try { await db.run(sql`ALTER TABLE ArimaChannelBinding ADD COLUMN broadcastAssignee TEXT`); } catch {}
+    await addColumn("ArimaChannelBinding", "broadcastAssignee", "TEXT");
     // Backfill scopeRef for the existing client rows so the column is queryable
     // uniformly going forward.
     try {
@@ -250,8 +319,8 @@ export async function ensureAccessSchema(): Promise<void> {
       updatedBy TEXT,
       updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
-    try { await db.run(sql`ALTER TABLE ProposalSettings ADD COLUMN templateDriveFileId TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE ProposalSettings ADD COLUMN templateDriveFileName TEXT`); } catch {}
+    await addColumn("ProposalSettings", "templateDriveFileId", "TEXT");
+    await addColumn("ProposalSettings", "templateDriveFileName", "TEXT");
     await db.run(sql`CREATE TABLE IF NOT EXISTS Proposal (
       id TEXT PRIMARY KEY,
       clientProfileId TEXT NOT NULL,
@@ -270,7 +339,7 @@ export async function ensureAccessSchema(): Promise<void> {
       errorMessage TEXT,
       FOREIGN KEY (clientProfileId) REFERENCES ClientProfile(id) ON DELETE CASCADE
     )`);
-    try { await db.run(sql`ALTER TABLE Proposal ADD COLUMN messages TEXT`); } catch {}
+    await addColumn("Proposal", "messages", "TEXT");
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS Proposal_clientProfile_idx ON Proposal(clientProfileId)`); } catch {}
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS Proposal_generatedAt_idx ON Proposal(generatedAt)`); } catch {}
     // If a ProposalTemplate row exists from earlier scaffolding, migrate its
@@ -326,17 +395,17 @@ export async function ensureAccessSchema(): Promise<void> {
       updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
     // Phase G.2 — render-state columns (idempotent ALTERs)
-    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN renderJobId TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN renderStatus TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN renderError TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN renderStartedAt TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN finalMp4DriveFileId TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN finalMp4DriveUrl TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN finalMp4RenderedAt TEXT`); } catch {}
+    await addColumn("TrainingVideo", "renderJobId", "TEXT");
+    await addColumn("TrainingVideo", "renderStatus", "TEXT");
+    await addColumn("TrainingVideo", "renderError", "TEXT");
+    await addColumn("TrainingVideo", "renderStartedAt", "TEXT");
+    await addColumn("TrainingVideo", "finalMp4DriveFileId", "TEXT");
+    await addColumn("TrainingVideo", "finalMp4DriveUrl", "TEXT");
+    await addColumn("TrainingVideo", "finalMp4RenderedAt", "TEXT");
     // Phase G.3 — TTS progress tracking + stage-machine columns
-    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN ttsProgress TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN errorStage TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE TrainingVideo ADD COLUMN extractedContent TEXT`); } catch {}
+    await addColumn("TrainingVideo", "ttsProgress", "TEXT");
+    await addColumn("TrainingVideo", "errorStage", "TEXT");
+    await addColumn("TrainingVideo", "extractedContent", "TEXT");
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS TrainingVideo_generatedAt_idx ON TrainingVideo(generatedAt)`); } catch {}
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS TrainingVideo_status_idx ON TrainingVideo(status)`); } catch {}
 
@@ -891,18 +960,18 @@ export async function ensureAccessSchema(): Promise<void> {
     // Additive migration — internalBetaRequired was added after initial ship.
     // Existing rows default to 1 (true) so pre-migration pilots keep the
     // Screen C/D flow they were already using.
-    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN internalBetaRequired INTEGER DEFAULT 1 NOT NULL`); } catch {}
+    await addColumn("PilotProject", "internalBetaRequired", "INTEGER DEFAULT 1 NOT NULL");
     // Roster Google Sheet — external-admin data collection window.
     // Pre-existing projects default to "collecting" but have no sheet;
     // rosterSheetId IS NULL is the "not provisioned yet" signal.
-    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN rosterSheetId TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN rosterSheetUrl TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN rosterSheetState TEXT DEFAULT 'collecting' NOT NULL`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN rosterSheetLockedAt TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN rosterSheetLockedBy TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN rosterSheetSyncedAt TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN custom1Label TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotProject ADD COLUMN custom2Label TEXT`); } catch {}
+    await addColumn("PilotProject", "rosterSheetId", "TEXT");
+    await addColumn("PilotProject", "rosterSheetUrl", "TEXT");
+    await addColumn("PilotProject", "rosterSheetState", "TEXT DEFAULT 'collecting' NOT NULL");
+    await addColumn("PilotProject", "rosterSheetLockedAt", "TEXT");
+    await addColumn("PilotProject", "rosterSheetLockedBy", "TEXT");
+    await addColumn("PilotProject", "rosterSheetSyncedAt", "TEXT");
+    await addColumn("PilotProject", "custom1Label", "TEXT");
+    await addColumn("PilotProject", "custom2Label", "TEXT");
 
     await db.run(sql`CREATE TABLE IF NOT EXISTS PilotParticipant (
       id TEXT PRIMARY KEY,
@@ -947,24 +1016,24 @@ export async function ensureAccessSchema(): Promise<void> {
     try { await db.run(sql`CREATE INDEX IF NOT EXISTS PilotParticipant_issueFlag_idx ON PilotParticipant(issueFlag)`); } catch {}
     // Additive migration — Stage 5 reachable via one-tap confirmation, not
     // only by uploading a screenshot. Existing rows default to 0 (false).
-    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN versionConfirmedByUser INTEGER DEFAULT 0 NOT NULL`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN versionConfirmedByUserAt TEXT`); } catch {}
+    await addColumn("PilotParticipant", "versionConfirmedByUser", "INTEGER DEFAULT 0 NOT NULL");
+    await addColumn("PilotParticipant", "versionConfirmedByUserAt", "TEXT");
     // Additive migration — split work email from Play Store email. Existing
     // rows keep whatever playstoreEmail they had (Screen B still captures
     // that). Work email starts null; Screen 4's work-email confirm only
     // renders when a value is set (usually by the XLSX import).
-    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN workEmail TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN workEmailConfirmed INTEGER DEFAULT 0 NOT NULL`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN workEmailConfirmedAt TEXT`); } catch {}
+    await addColumn("PilotParticipant", "workEmail", "TEXT");
+    await addColumn("PilotParticipant", "workEmailConfirmed", "INTEGER DEFAULT 0 NOT NULL");
+    await addColumn("PilotParticipant", "workEmailConfirmedAt", "TEXT");
     // CST-side resolution markers for portal-driven corrections.
-    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN contactCorrectionResolvedAt TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN contactCorrectionResolvedBy TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN emailCorrectionResolvedAt TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN emailCorrectionResolvedBy TEXT`); } catch {}
+    await addColumn("PilotParticipant", "contactCorrectionResolvedAt", "TEXT");
+    await addColumn("PilotParticipant", "contactCorrectionResolvedBy", "TEXT");
+    await addColumn("PilotParticipant", "emailCorrectionResolvedAt", "TEXT");
+    await addColumn("PilotParticipant", "emailCorrectionResolvedBy", "TEXT");
     // Client-admin-owned organizational tags (e.g. Branch / Area), set via
     // the roster Sheet. Labels live on PilotProject.custom1Label/2Label.
-    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN custom1 TEXT`); } catch {}
-    try { await db.run(sql`ALTER TABLE PilotParticipant ADD COLUMN custom2 TEXT`); } catch {}
+    await addColumn("PilotParticipant", "custom1", "TEXT");
+    await addColumn("PilotParticipant", "custom2", "TEXT");
 
     await db.run(sql`CREATE TABLE IF NOT EXISTS PilotChangeLog (
       id TEXT PRIMARY KEY,
@@ -995,6 +1064,17 @@ export async function ensureAccessSchema(): Promise<void> {
     )`);
 
     _schemaEnsuredAt = Date.now();
+    // Everything the function knows how to add is now present — skip entirely
+    // on subsequent calls, and record it so future cold instances skip too.
+    _schemaFullySynced = true;
+    try {
+      await db.run(sql.raw(
+        `INSERT INTO GlobalSetting (id, key, value) VALUES
+           ('gs_${ACCESS_SCHEMA_VERSION_KEY}', '${ACCESS_SCHEMA_VERSION_KEY}', '${ACCESS_SCHEMA_VERSION}')
+         ON CONFLICT(key) DO UPDATE SET value = '${ACCESS_SCHEMA_VERSION}'`));
+    } catch (e) {
+      console.warn("[ensureAccessSchema] could not persist schema version marker", e);
+    }
   } catch (e) {
     console.warn("[access] ensureAccessSchema warning:", e);
   }

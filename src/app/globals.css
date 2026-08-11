@@ -56,3 +56,37 @@
     @apply w-full px-4 py-3 border border-slate-200 rounded-xl text-[14px] focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-500 bg-white placeholder:text-slate-300;
   }
 }
+
+/* ── Account hub tab strip ─────────────────────────────────────────────
+   The tab list outgrew the 40px bar, so it scrolls horizontally. A native
+   scrollbar under the tabs looked like a stray grey slab, but simply hiding
+   it removes the only cue that more tabs exist off-screen. So: hide the bar,
+   and mark the overflowing edge with a soft fade instead. The fade is painted
+   on a wrapper, not the scroller, so it stays put while the tabs move. */
+.hub-tabstrip {
+  scrollbar-width: none;              /* Firefox */
+  -ms-overflow-style: none;           /* old Edge */
+  scroll-behavior: smooth;
+  overscroll-behavior-x: contain;     /* don't trigger back-swipe navigation */
+}
+.hub-tabstrip::-webkit-scrollbar { height: 0; display: none; }
+
+.hub-tabwrap { position: relative; min-width: 0; flex: 1 1 auto; }
+/* right-edge fade — only visible while there is more to scroll to */
+.hub-tabwrap::after {
+  content: "";
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: 34px; pointer-events: none;
+  background: linear-gradient(to right, rgba(255,255,255,0), #fff 72%);
+  opacity: 0; transition: opacity .15s ease;
+}
+.hub-tabwrap[data-overflow-right="true"]::after { opacity: 1; }
+/* mirror on the left once the user has scrolled away from the start */
+.hub-tabwrap::before {
+  content: "";
+  position: absolute; top: 0; left: 0; bottom: 0;
+  width: 26px; pointer-events: none; z-index: 1;
+  background: linear-gradient(to left, rgba(255,255,255,0), #fff 72%);
+  opacity: 0; transition: opacity .15s ease;
+}
+.hub-tabwrap[data-overflow-left="true"]::before { opacity: 1; }

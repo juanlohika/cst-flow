@@ -1067,13 +1067,62 @@ export function AccountHub({ profile, onEdit, onBack }: {
   const modules: string[] = (() => { try { return JSON.parse(profile.modulesAvailed || "[]"); } catch { return []; } })();
   const [activeTab, setActiveTab] = useState<HubTab>(initialTab);
 
+  // ── Tab strip overflow affordance ──────────────────────────────────────
+  // The native scrollbar is hidden in CSS (it read as a stray grey slab), so
+  // the only cue that tabs continue off-screen is a fade on the overflowing
+  // edge. Recompute on scroll, on resize, and when the active tab changes.
+  const tabWrapRef = React.useRef<HTMLDivElement | null>(null);
+  const tabStripRef = React.useRef<HTMLDivElement | null>(null);
+
+  const updateTabFades = useCallback(() => {
+    const el = tabStripRef.current, wrap = tabWrapRef.current;
+    if (!el || !wrap) return;
+    const maxScroll = el.scrollWidth - el.clientWidth;
+    wrap.dataset.overflowLeft = String(el.scrollLeft > 4);
+    wrap.dataset.overflowRight = String(el.scrollLeft < maxScroll - 4);
+  }, []);
+
+  // Vertical wheel/trackpad gestures scroll the strip horizontally — a mouse
+  // user with no horizontal wheel could otherwise never reach the far tabs.
+  const onTabWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    const el = tabStripRef.current;
+    if (!el) return;
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      el.scrollLeft += e.deltaY;
+      e.preventDefault();
+    }
+  }, []);
+
+  useEffect(() => {
+    updateTabFades();
+    const onResize = () => updateTabFades();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [updateTabFades]);
+
+  // Keep the active tab in view (e.g. when arrived at via a deep link).
+  useEffect(() => {
+    const el = tabStripRef.current;
+    if (!el) return;
+    el.querySelector<HTMLElement>("[data-tab-active='true']")
+      ?.scrollIntoView({ inline: "nearest", block: "nearest", behavior: "smooth" });
+    updateTabFades();
+  }, [activeTab, updateTabFades]);
+
   return (
     <div className="flex flex-col h-full bg-white overflow-hidden">
       {/* ── Tabs Bar (40px) ────────────────────────────────────────────────── */}
       <div className="h-[40px] flex-shrink-0 flex items-center justify-between border-b border-border-default px-4 bg-white">
-        {/* min-w-0 + overflow-x-auto: the tab list outgrew the bar, and with the
-            parent set to overflow-hidden the right-most tabs became unreachable. */}
-        <div className="flex items-end h-full gap-5 min-w-0 overflow-x-auto hub-tabstrip">
+        {/* The tab list outgrew the bar. It scrolls horizontally with the native
+            scrollbar hidden (it read as a stray grey slab); the wrapper paints a
+            soft fade on whichever edge still has tabs off-screen, so the
+            affordance survives. Wheel/trackpad and arrow keys both work. */}
+        <div className="hub-tabwrap flex items-end h-full" ref={tabWrapRef}>
+        <div
+          ref={tabStripRef}
+          onScroll={updateTabFades}
+          onWheel={onTabWheel}
+          className="flex items-end h-full gap-5 min-w-0 overflow-x-auto hub-tabstrip">
           <button onClick={onBack} className="h-full flex items-center pr-2 text-text-muted hover:text-primary transition-colors">
             <ArrowLeft className="w-4 h-4" />
           </button>
@@ -1084,6 +1133,7 @@ export function AccountHub({ profile, onEdit, onBack }: {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
+                data-tab-active={active ? "true" : "false"}
                 className={`flex items-center gap-2 px-1 h-full text-[12px] whitespace-nowrap flex-shrink-0 transition-colors relative ${
                   active
                     ? "text-primary font-medium"
@@ -1096,6 +1146,7 @@ export function AccountHub({ profile, onEdit, onBack }: {
               </button>
             );
           })}
+        </div>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[11px] font-bold text-text-muted uppercase tracking-widest bg-surface-muted px-2 py-0.5 rounded">
@@ -1116,6 +1167,7 @@ export function AccountHub({ profile, onEdit, onBack }: {
           {activeTab === "profile" && <ProfileTab profile={profile} modules={modules} />}
           {activeTab === "contacts" && <ContactsTab accountId={profile.id} companyName={profile.companyName} />}
           {activeTab === "intelligence" && <IntelligenceTab accountId={profile.id} />}
+          {activeTab === "courtesyCalls" && <CourtesyCallsTab accountId={profile.id} />}
           {activeTab === "presentations" && <PresentationsTab accountId={profile.id} />}
           {activeTab === "meetings" && <MeetingsTab accountId={profile.id} companyName={profile.companyName} />}
           {activeTab === "brd" && <BRDTab accountId={profile.id} companyName={profile.companyName} />}
@@ -2291,6 +2343,247 @@ function MarkdownContent({ content }: { content: string }) {
           </p>
         );
       })}
+    </div>
+  );
+}
+
+// ─── Courtesy Calls Tab ──────────────────────────────────────────────────────
+// An entry table, not a form: the RM records the actual call date and the date
+// the minutes went out, and the row's compliance follows from those two plus
+// the tier-derived window. Evidence (the invitation screenshot) is shown as a
+// Drive LINK only — Arima files the image and stores the link, so no image
+// bytes ever land in this database.
+
+type CCRow = {
+  id: string;
+  callDate: string | null;
+  momSentDate: string | null;
+  periodLabel: string | null;
+  plannedStart: string | null;
+  plannedEnd: string | null;
+  complianceStatus: string | null;
+  loggedByName: string | null;
+  notes: string | null;
+};
+
+const CC_STATUS_STYLES: Record<string, string> = {
+  compliant:  "bg-green-50 text-green-700 border-green-200",
+  late:       "bg-amber-50 text-amber-700 border-amber-200",
+  incomplete: "bg-amber-50 text-amber-700 border-amber-200",
+  missed:     "bg-red-50 text-red-600 border-red-200",
+  pending:    "bg-surface-muted text-text-secondary border-border-default",
+};
+
+/** What the row is actually waiting on, in plain words. */
+function ccStatusLabel(r: CCRow): { key: string; text: string } {
+  if (!r.callDate) return { key: "pending", text: "Not yet called" };
+  if (!r.momSentDate) return { key: "incomplete", text: "MOM not sent" };
+  if (r.plannedEnd && r.callDate > r.plannedEnd) return { key: "late", text: "Late" };
+  return { key: "compliant", text: "Compliant" };
+}
+
+export function CourtesyCallsTab({ accountId }: { accountId: string }) {
+  const [rows, setRows] = useState<CCRow[]>([]);
+  const [evidence, setEvidence] = useState<Record<string, any[]>>({});
+  const [cadence, setCadence] = useState<{ label: string; days: number | null; source: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [callDate, setCallDate] = useState("");
+  const [momDate, setMomDate] = useState("");
+  const [notes, setNotes] = useState("");
+  const { showToast } = useToast();
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    fetch(`/api/accounts/${accountId}/courtesy-calls`)
+      .then(r => (r.ok ? r.json() : { history: [] }))
+      .then(d => {
+        setRows(d.history || []);
+        setEvidence(d.evidence || {});
+        setCadence(d.cadence || null);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [accountId]);
+
+  useEffect(load, [load]);
+
+  const add = async () => {
+    if (!callDate) { showToast("Pick the date the call happened", "error"); return; }
+    if (callDate > today) { showToast("The call date cannot be in the future", "error"); return; }
+    if (momDate && momDate < callDate) { showToast("The MOM date cannot be before the call", "error"); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/accounts/${accountId}/courtesy-calls`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callDate, momSentDate: momDate || undefined, notes }),
+      });
+      if (res.ok) {
+        showToast("Courtesy call logged");
+        setCallDate(""); setMomDate(""); setNotes("");
+        load();
+      } else {
+        showToast((await res.json())?.error || "Could not log the call", "error");
+      }
+    } catch { showToast("Could not log the call", "error"); }
+    setSaving(false);
+  };
+
+  const setMom = async (callId: string, value: string) => {
+    try {
+      const res = await fetch(`/api/accounts/${accountId}/courtesy-calls`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callId, momSentDate: value || null }),
+      });
+      if (res.ok) { showToast(value ? "MOM date recorded" : "MOM date cleared"); load(); }
+      else showToast((await res.json())?.error || "Could not update", "error");
+    } catch { showToast("Could not update", "error"); }
+  };
+
+  // The latest call is derived from the history, never from a stored field, so
+  // this and the account profile can never disagree.
+  const latest = rows.map(r => r.callDate).filter(Boolean).sort().pop() || null;
+  const daysSince = latest ? Math.round((Date.parse(today) - Date.parse(latest)) / 86400000) : null;
+  const overdue = cadence?.days != null && daysSince != null && daysSince > cadence.days;
+
+  if (loading) return <div className="p-6 text-[13px] text-text-secondary">Loading courtesy calls…</div>;
+
+  return (
+    <div className="p-6 max-w-[1100px] mx-auto space-y-5">
+      {/* Cadence + standing */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="border border-border-default rounded-lg px-4 py-3 bg-white">
+          <div className="text-[10px] uppercase tracking-wide text-text-muted font-medium">Required cadence</div>
+          <div className="text-[15px] font-medium mt-0.5">
+            {cadence?.label || "—"}
+            {cadence?.source === "override" && (
+              <span className="ml-2 text-[10px] uppercase tracking-wide text-amber-700">override</span>
+            )}
+          </div>
+        </div>
+        <div className="border border-border-default rounded-lg px-4 py-3 bg-white">
+          <div className="text-[10px] uppercase tracking-wide text-text-muted font-medium">Last call</div>
+          <div className="text-[15px] font-medium mt-0.5">
+            {latest || "None logged"}
+            {daysSince != null && (
+              <span className={`ml-2 text-[11px] ${overdue ? "text-red-600" : "text-text-secondary"}`}>
+                {daysSince}d ago
+              </span>
+            )}
+          </div>
+        </div>
+        {overdue && (
+          <div className="text-[12px] text-red-600 font-medium">
+            Overdue — the {cadence?.label} cadence allows {cadence?.days} days.
+          </div>
+        )}
+      </div>
+
+      {/* New entry */}
+      <div className="border border-border-default rounded-lg bg-white">
+        <div className="px-4 py-2.5 border-b border-border-default text-[11px] uppercase tracking-wide text-text-muted font-medium">
+          Log a courtesy call
+        </div>
+        <div className="p-4 flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-text-secondary">Actual call date</span>
+            <input type="date" value={callDate} max={today} onChange={e => setCallDate(e.target.value)}
+              className="border border-border-default rounded-md px-2.5 py-1.5 text-[13px]" />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-text-secondary">MOM sent <span className="text-text-muted">(optional)</span></span>
+            <input type="date" value={momDate} max={today} onChange={e => setMomDate(e.target.value)}
+              className="border border-border-default rounded-md px-2.5 py-1.5 text-[13px]" />
+          </label>
+          <label className="flex flex-col gap-1 flex-1 min-w-[220px]">
+            <span className="text-[11px] text-text-secondary">Notes</span>
+            <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="What was discussed"
+              className="border border-border-default rounded-md px-2.5 py-1.5 text-[13px] w-full" />
+          </label>
+          <button onClick={add} disabled={saving || !callDate}
+            className="bg-primary text-white rounded-md px-4 py-1.5 text-[13px] font-medium disabled:opacity-40">
+            {saving ? "Saving…" : "Log call"}
+          </button>
+        </div>
+        <div className="px-4 pb-3 text-[11px] text-text-muted">
+          A period counts as compliant only once both the call and its minutes are recorded.
+        </div>
+      </div>
+
+      {/* History */}
+      <div className="border border-border-default rounded-lg bg-white overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-border-default text-[11px] uppercase tracking-wide text-text-muted font-medium">
+          History · {rows.length}
+        </div>
+        {rows.length === 0 ? (
+          <div className="p-6 text-[13px] text-text-secondary">
+            No courtesy calls logged yet for this account.
+          </div>
+        ) : (
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-text-muted border-b border-border-default">
+                <th className="px-4 py-2 font-medium">Period</th>
+                <th className="px-4 py-2 font-medium">Actual call</th>
+                <th className="px-4 py-2 font-medium">MOM sent</th>
+                <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-2 font-medium">Evidence</th>
+                <th className="px-4 py-2 font-medium">Logged by</th>
+                <th className="px-4 py-2 font-medium">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => {
+                const st = ccStatusLabel(r);
+                const ev = evidence[r.id] || [];
+                return (
+                  <tr key={r.id} className="border-b border-border-default last:border-0 align-top">
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      {r.periodLabel || "—"}
+                      {r.plannedEnd && (
+                        <div className="text-[11px] text-text-muted">due {r.plannedEnd}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">{r.callDate || "—"}</td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      {r.momSentDate || (
+                        <input type="date" max={today} onChange={e => e.target.value && setMom(r.id, e.target.value)}
+                          className="border border-border-default rounded px-1.5 py-1 text-[12px]"
+                          title="Record the date the minutes were sent" />
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <span className={`inline-block border rounded-full px-2 py-0.5 text-[11px] font-medium ${CC_STATUS_STYLES[st.key]}`}>
+                        {st.text}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {ev.length === 0 ? (
+                        <span className="text-text-muted text-[12px]">—</span>
+                      ) : (
+                        <div className="flex flex-col gap-0.5">
+                          {ev.map(x => (
+                            <a key={x.id} href={x.link} target="_blank" rel="noreferrer"
+                              className="text-primary hover:underline text-[12px]">
+                              {x.kind === "invitation" ? "Invitation" : x.kind}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 whitespace-nowrap text-text-secondary">{r.loggedByName || "—"}</td>
+                    <td className="px-4 py-2.5 text-text-secondary">{r.notes || "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }
