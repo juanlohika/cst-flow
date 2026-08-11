@@ -157,6 +157,33 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       } as any)
       .where(eq(clientProfilesTable.id, params.id));
 
+    // Tier drives the courtesy-call cadence, so a change is recorded as a dated
+    // INTERVAL rather than only overwriting the field. Without this, promoting an
+    // account re-judges its PAST periods against the new tier and historical RM
+    // scores move retroactively. Defaults to the start of the current quarter,
+    // matching how tiers are actually reviewed.
+    if (tier !== undefined && tier !== null && String(tier).trim() !== "") {
+      try {
+        const { tierOn, recordTierChange } = await import("@/lib/courtesy/tier-history");
+        const cur = await tierOn(params.id, new Date().toISOString().slice(0, 10));
+        if (cur.tier !== String(tier)) {
+          const d = new Date();
+          const qMonth = Math.floor(d.getUTCMonth() / 3) * 3 + 1;
+          const quarterStart = `${d.getUTCFullYear()}-${String(qMonth).padStart(2, "0")}-01`;
+          await recordTierChange({
+            accountId: params.id,
+            tier: String(tier),
+            frequencyOverride: frequencyOverride !== undefined ? frequencyOverride : undefined,
+            effectiveFrom: (body as any)?.tierEffectiveFrom || quarterStart,
+            reason: (body as any)?.tierChangeReason || "Changed from the account profile",
+            changedByUserId: session.user.id,
+          });
+        }
+      } catch (e) {
+        console.error("[profiles PATCH] tier history write failed", e);
+      }
+    }
+
     // Read back
     const updated = await db.select()
       .from(clientProfilesTable)

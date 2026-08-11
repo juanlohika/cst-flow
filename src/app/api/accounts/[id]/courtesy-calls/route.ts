@@ -53,9 +53,10 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
       .from(clientProfiles).where(eq(clientProfiles.id, params.id)).limit(1);
 
     let cadence: { label: string; days: number | null; source: string } = { label: "—", days: null, source: "unknown" };
+    let tierMap: any = {};
     try {
       const { loadTierFrequencyMap, resolveAccountFrequency } = await import("@/lib/accounts/tier-frequency");
-      const tierMap = await loadTierFrequencyMap();
+      tierMap = await loadTierFrequencyMap();
       cadence = resolveAccountFrequency({
         tier: prof[0]?.tier, frequencyOverride: prof[0]?.frequencyOverride, tierMap,
       });
@@ -91,7 +92,37 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
     let periods: any[] = [];
     try {
       const { periodsForYear, periodCompliance } = await import("@/lib/courtesy/periods");
-      const slots = periodsForYear(year, cadence.label);
+      const { tierIntervals } = await import("@/lib/courtesy/tier-history");
+      const { resolveAccountFrequency: resolveFreq } = await import("@/lib/accounts/tier-frequency");
+
+      // Tier moves (reviewed quarterly), and tier drives cadence — so a year can
+      // contain more than one cadence. Build the slots for each interval that
+      // overlaps this year and judge each period against the cadence that was
+      // actually in force, otherwise a promotion silently rewrites past scores.
+      const intervals = await tierIntervals(params.id);
+      const yStart = `${year}-01-01`, yEnd = `${year}-12-31`;
+      const overlapping = intervals.filter(iv =>
+        iv.effectiveFrom <= yEnd && (!iv.effectiveTo || iv.effectiveTo >= yStart));
+
+      let slots: any[] = [];
+      if (overlapping.length <= 1) {
+        slots = periodsForYear(year, cadence.label);
+      } else {
+        const seen = new Set<string>();
+        for (const iv of overlapping) {
+          const ivCad = resolveFreq({ tier: iv.tier, frequencyOverride: iv.frequencyOverride, tierMap });
+          for (const sl of periodsForYear(year, ivCad.label)) {
+            // A slot belongs to the interval its window opens inside.
+            const from = iv.effectiveFrom > yStart ? iv.effectiveFrom : yStart;
+            const to = iv.effectiveTo && iv.effectiveTo < yEnd ? iv.effectiveTo : yEnd;
+            if (sl.start >= from && sl.start <= to && !seen.has(sl.label)) {
+              seen.add(sl.label);
+              slots.push({ ...sl, tierAtTime: iv.tier, cadenceAtTime: ivCad.label });
+            }
+          }
+        }
+        slots.sort((a, b) => a.start.localeCompare(b.start));
+      }
       const byPeriod = new Map(rows.filter(r => r.periodLabel).map(r => [r.periodLabel, r]));
       // Calls logged before periods existed have no label — attach them to the
       // slot their date falls in so history is not orphaned.

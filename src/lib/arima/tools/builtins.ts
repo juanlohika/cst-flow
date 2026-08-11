@@ -1208,3 +1208,151 @@ registerTool({
     }
   },
 });
+
+// ─── Tier movements & backfill (Phase 2b) ──────────────────────────────
+// Tier drives courtesy-call cadence, and tiers are reviewed quarterly, so a
+// promotion must NOT silently rewrite past periods. record_tier_change closes
+// the current interval and opens a new one from an effective date, leaving the
+// tier that applied to any past period knowable.
+
+registerTool({
+  name: "record_tier_change",
+  category: "write",
+  description:
+    "Records that the current client account MOVED TIER from a given effective date — e.g. 'Accutech is Tier 1 from July 1'. Tier drives the courtesy-call cadence, so this keeps past periods judged against the tier that actually applied instead of retroactively rewriting them. Use when told an account was promoted or demoted. Ask for the effective date if it is not stated; do not assume today, because tier reviews are usually backdated to the start of a quarter.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      tier: { type: "string", enum: ["VIP", "1", "2", "3", "4", "5"], description: "The NEW tier." },
+      effective_from: { type: "string", description: "YYYY-MM-DD the new tier takes effect — usually the 1st of a quarter." },
+      reason: { type: "string", description: "Optional note, e.g. 'Q3 2026 tier review'." },
+    },
+    required: ["tier", "effective_from"],
+  },
+  defaultEnabled: true,
+  defaultAutonomy: "approval",   // rewrites how compliance is scored — confirm first
+  handler: async (input: any, ctx: ToolContext) => {
+    const c = await loadCurrentClient(ctx);
+    if (!c) return noClientResult();
+
+    const d = String(input?.effective_from ?? "").trim();
+    if (!YMD.test(d)) return { ok: false as const, error: "effective_from must be a date in YYYY-MM-DD format." };
+    const tier = String(input?.tier ?? "").trim();
+    if (!["VIP", "1", "2", "3", "4", "5"].includes(tier)) {
+      return { ok: false as const, error: "tier must be one of VIP, 1, 2, 3, 4, 5." };
+    }
+
+    const { recordTierChange, tierOn } = await import("@/lib/courtesy/tier-history");
+    const before = await tierOn(c.id, d);
+    const res = await recordTierChange({
+      accountId: c.id, tier, effectiveFrom: d,
+      reason: input?.reason || null,
+      changedByUserId: ctx.channel === "portal" ? null : ctx.userId,
+    });
+    if (!res.ok) return { ok: false as const, error: res.note || "Could not record the tier change." };
+
+    const label = c.clientShortName || c.companyName;
+    if (!res.changed) return { ok: true as const, changed: false, summary: `${label} is already Tier ${tier} — nothing recorded.` };
+    return {
+      ok: true as const,
+      changed: true,
+      summary: `Recorded — ${label} moves from Tier ${before.tier ?? "unset"} to Tier ${tier}, effective ${d}. Periods before ${d} keep the old cadence, so past compliance is unchanged.`,
+    };
+  },
+});
+
+registerTool({
+  name: "backfill_courtesy_calls",
+  category: "write",
+  description:
+    "Records SEVERAL past courtesy calls for the current client account in one go. Use when the RM pastes historical compliance data — e.g. rows copied out of a metrics spreadsheet listing months and whether the call and minutes were done. Each entry needs the call date; the minutes date is optional. Dates must be YYYY-MM-DD and not in the future. Existing periods are not overwritten: an entry landing in a period that already has a call is reported as skipped rather than duplicated.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      entries: {
+        type: "array",
+        description: "One item per past call.",
+        items: {
+          type: "object",
+          properties: {
+            call_date: { type: "string", description: "YYYY-MM-DD when the call happened." },
+            mom_sent_date: { type: "string", description: "Optional YYYY-MM-DD when the minutes went out." },
+            notes: { type: "string" },
+          },
+          required: ["call_date"],
+        },
+      },
+    },
+    required: ["entries"],
+  },
+  defaultEnabled: true,
+  defaultAutonomy: "approval",   // bulk history write — show the plan first
+  handler: async (input: any, ctx: ToolContext) => {
+    const c = await loadCurrentClient(ctx);
+    if (!c) return noClientResult();
+
+    const entries = Array.isArray(input?.entries) ? input.entries : [];
+    if (entries.length === 0) return { ok: false as const, error: "No entries supplied." };
+    if (entries.length > 60) return { ok: false as const, error: `That is ${entries.length} entries — send at most 60 at a time.` };
+
+    const { courtesyCallHistory } = await import("@/db/schema");
+    const { tierOn } = await import("@/lib/courtesy/tier-history");
+    const { loadTierFrequencyMap, resolveAccountFrequency } = await import("@/lib/accounts/tier-frequency");
+    const { periodForDate } = await import("@/lib/courtesy/periods");
+    const tierMap = await loadTierFrequencyMap();
+
+    const existing = await db.select({ periodLabel: courtesyCallHistory.periodLabel, callDate: courtesyCallHistory.callDate })
+      .from(courtesyCallHistory)
+      .where(eq(courtesyCallHistory.clientProfileId, c.id));
+    const takenPeriods = new Set(existing.map(e => e.periodLabel).filter(Boolean) as string[]);
+
+    const added: string[] = [], skipped: string[] = [], failed: string[] = [];
+
+    for (const e of entries) {
+      const call = checkPastDate(e?.call_date, "call_date");
+      if ("error" in call) { failed.push(`${e?.call_date ?? "?"}: ${call.error}`); continue; }
+
+      let mom: string | null = null;
+      if (e?.mom_sent_date) {
+        const m = checkPastDate(e.mom_sent_date, "mom_sent_date");
+        if ("error" in m) { failed.push(`${call.date}: ${m.error}`); continue; }
+        if (m.date < call.date) { failed.push(`${call.date}: minutes date precedes the call`); continue; }
+        mom = m.date;
+      }
+
+      // Use the tier that applied ON THAT DATE, not today's tier.
+      const t = await tierOn(c.id, call.date);
+      const cad = resolveAccountFrequency({ tier: t.tier, frequencyOverride: t.frequencyOverride, tierMap });
+      const slot = periodForDate(call.date, cad.label);
+      if (slot && takenPeriods.has(slot.label)) { skipped.push(`${slot.label} already recorded`); continue; }
+
+      const now = new Date().toISOString();
+      await db.insert(courtesyCallHistory).values({
+        id: `cc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+        clientProfileId: c.id,
+        periodLabel: slot?.label ?? null,
+        plannedStart: slot?.start ?? null,
+        plannedEnd: slot?.end ?? null,
+        callDate: call.date,
+        momSentDate: mom,
+        complianceStatus: mom ? (slot && call.date > slot.end ? "late" : "compliant") : "incomplete",
+        loggedByUserId: ctx.channel === "portal" ? "portal-contact" : ctx.userId,
+        rmUserId: ctx.channel === "portal" ? null : ctx.userId,
+        notes: typeof e?.notes === "string" ? e.notes.trim() || null : null,
+        createdAt: now, updatedAt: now,
+      } as any);
+      if (slot) takenPeriods.add(slot.label);
+      added.push(`${slot?.label ?? call.date}${mom ? "" : " (no MOM)"}`);
+    }
+
+    const label = c.clientShortName || c.companyName;
+    const parts = [`${added.length} recorded for ${label}`];
+    if (skipped.length) parts.push(`${skipped.length} skipped (already present)`);
+    if (failed.length) parts.push(`${failed.length} rejected`);
+    return {
+      ok: true as const,
+      added, skipped, failed,
+      summary: `${parts.join(", ")}.${added.length ? ` Periods: ${added.slice(0, 12).join(", ")}${added.length > 12 ? "…" : ""}.` : ""}${failed.length ? ` Problems: ${failed.slice(0, 4).join("; ")}` : ""}`,
+    };
+  },
+});

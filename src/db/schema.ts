@@ -341,6 +341,26 @@ export const courtesyCallHistory = sqliteTable("CourtesyCallHistory", {
 // (email or chat). Only the Drive LINK is stored, never the image bytes:
 // Arima receives the file in Telegram, files it into the account's Drive
 // folder, and records the link here.
+// Tier movements over time. Tier drives courtesy-call frequency, so a single
+// mutable ClientProfile.tier silently rewrites HISTORY: promote an account from
+// 3 to 1 and last quarter retroactively becomes "should have been monthly",
+// which would corrupt an RM's past metrics. Each row is a closed-or-open
+// interval, so the tier that APPLIED during any past period stays knowable.
+//
+// One row per account is seeded from its current tier; a change closes the open
+// row (effectiveTo = day before) and opens a new one.
+export const accountTierHistory = sqliteTable("AccountTierHistory", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  clientProfileId:   text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
+  tier:              text("tier").notNull(),              // VIP | 1..5
+  frequencyOverride: text("frequencyOverride"),           // override in force during this interval
+  effectiveFrom:     text("effectiveFrom").notNull(),     // YYYY-MM-DD inclusive
+  effectiveTo:       text("effectiveTo"),                 // YYYY-MM-DD inclusive; null = still current
+  reason:            text("reason"),
+  changedByUserId:   text("changedByUserId"),
+  createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
+
 export const courtesyCallEvidence = sqliteTable("CourtesyCallEvidence", {
   id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   courtesyCallId:    text("courtesyCallId").notNull().references(() => courtesyCallHistory.id, { onDelete: "cascade" }),
