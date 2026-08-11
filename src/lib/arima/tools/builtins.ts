@@ -793,3 +793,302 @@ registerTool({
     };
   },
 });
+
+// ─── Courtesy calls & timeline (Phase 1 write tools) ───────────────────
+//
+// These let an RM tell ARIMA "done — we called them today" in chat instead of
+// opening the console. They are deliberately narrow: each one writes a single
+// record scoped to ctx.clientProfileId, and none can reach another account.
+//
+// Date handling: the AI resolves natural language ("today", "last Tuesday") to
+// an absolute YYYY-MM-DD before calling. We validate the format and refuse a
+// future date rather than silently recording something impossible.
+
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+function todayYMD() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** Validates a YYYY-MM-DD date that must not be in the future. */
+function checkPastDate(value: unknown, label: string): { date: string } | { error: string } {
+  const d = String(value ?? "").trim();
+  if (!YMD.test(d)) return { error: `${label} must be a date in YYYY-MM-DD format.` };
+  if (d > todayYMD()) return { error: `${label} (${d}) is in the future — record it once it has happened.` };
+  return { date: d };
+}
+
+registerTool({
+  name: "log_courtesy_call",
+  category: "write",
+  description:
+    "Records that a courtesy call HAPPENED for the current client account. Use when the RM says the call is done — e.g. 'we did the courtesy call today', 'called them last Tuesday'. Resolve relative dates to an absolute YYYY-MM-DD yourself before calling. Optionally records the date the minutes of meeting (MOM) were sent; if the RM has not mentioned the MOM, leave it out and ask them separately rather than guessing. This also refreshes the account's last-courtesy-call date used for compliance.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      call_date: { type: "string", description: "Date the call took place, YYYY-MM-DD. Never a future date." },
+      mom_sent_date: { type: "string", description: "Optional. Date the minutes of meeting were sent, YYYY-MM-DD." },
+      notes: { type: "string", description: "Optional one-line note about what was discussed." },
+    },
+    required: ["call_date"],
+  },
+  defaultEnabled: true,
+  defaultAutonomy: "auto",
+  handler: async (input: any, ctx: ToolContext) => {
+    const c = await loadCurrentClient(ctx);
+    if (!c) return noClientResult();
+
+    const call = checkPastDate(input?.call_date, "call_date");
+    if ("error" in call) return { ok: false as const, error: call.error };
+
+    let mom: string | null = null;
+    if (input?.mom_sent_date) {
+      const m = checkPastDate(input.mom_sent_date, "mom_sent_date");
+      if ("error" in m) return { ok: false as const, error: m.error };
+      if (m.date < call.date) {
+        return { ok: false as const, error: `The MOM date (${m.date}) is before the call itself (${call.date}). Please confirm both dates.` };
+      }
+      mom = m.date;
+    }
+
+    const now = new Date().toISOString();
+    const id = `cc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+    const { courtesyCallHistory } = await import("@/db/schema");
+
+    await db.insert(courtesyCallHistory).values({
+      id,
+      clientProfileId: c.id,
+      callDate: call.date,
+      momSentDate: mom,
+      complianceStatus: mom ? "compliant" : "incomplete",
+      // The live column is NOT NULL, so it always gets a value. ctx.userId is a
+      // ClientContact id on portal calls, so we mark those explicitly rather
+      // than passing a contact id off as a CST OS user.
+      loggedByUserId: ctx.channel === "portal" ? "portal-contact" : ctx.userId,
+      // rmUserId IS nullable — left null when we cannot attribute to a real RM.
+      rmUserId: ctx.channel === "portal" ? null : ctx.userId,
+      notes: typeof input?.notes === "string" ? input.notes.trim() || null : null,
+      createdAt: now,
+      updatedAt: now,
+    } as any);
+
+    // ClientProfile.lastCourtesyCall is a read cache that existing screens and
+    // get_client_profile already read. CourtesyCallHistory stays the source of
+    // truth — MAX(callDate) — so we only ever move the cache FORWARD. An RM
+    // back-filling an older call must not overwrite a more recent one.
+    if (!c.lastCourtesyCall || call.date > c.lastCourtesyCall) {
+      await db.update(clientProfilesTable)
+        .set({ lastCourtesyCall: call.date, updatedAt: now } as any)
+        .where(eq(clientProfilesTable.id, c.id));
+    }
+
+    const label = c.clientShortName || c.companyName;
+    return {
+      ok: true as const,
+      call_date: call.date,
+      mom_sent_date: mom,
+      summary: mom
+        ? `Logged — courtesy call for ${label} on ${call.date}, MOM sent ${mom}. This period is compliant.`
+        : `Logged — courtesy call for ${label} on ${call.date}. The MOM is not recorded yet, so this period is not compliant until it is sent.`,
+    };
+  },
+});
+
+registerTool({
+  name: "log_mom_sent",
+  category: "write",
+  description:
+    "Records the date the minutes of meeting (MOM) were sent for a courtesy call that is ALREADY logged. Use when the RM says the MOM has gone out but the call was recorded earlier. Updates the most recent courtesy call for this account that has no MOM date yet.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      mom_sent_date: { type: "string", description: "Date the MOM was sent, YYYY-MM-DD." },
+    },
+    required: ["mom_sent_date"],
+  },
+  defaultEnabled: true,
+  defaultAutonomy: "auto",
+  handler: async (input: any, ctx: ToolContext) => {
+    const c = await loadCurrentClient(ctx);
+    if (!c) return noClientResult();
+
+    const m = checkPastDate(input?.mom_sent_date, "mom_sent_date");
+    if ("error" in m) return { ok: false as const, error: m.error };
+
+    const { courtesyCallHistory } = await import("@/db/schema");
+    const { isNull } = await import("drizzle-orm");
+
+    const open = await db.select()
+      .from(courtesyCallHistory)
+      .where(and(
+        eq(courtesyCallHistory.clientProfileId, c.id),
+        isNull(courtesyCallHistory.momSentDate),
+      ))
+      .orderBy(desc(courtesyCallHistory.callDate))
+      .limit(1);
+
+    const row = open[0];
+    if (!row) {
+      return {
+        ok: false as const,
+        error: "There is no logged courtesy call for this account that is still waiting on a MOM. If the call itself has not been recorded, log the call first.",
+      };
+    }
+    if (m.date < row.callDate!) {
+      return { ok: false as const, error: `The MOM date (${m.date}) is before the call it belongs to (${row.callDate}). Please confirm both dates.` };
+    }
+
+    await db.update(courtesyCallHistory)
+      .set({ momSentDate: m.date, complianceStatus: "compliant", updatedAt: new Date().toISOString() } as any)
+      .where(eq(courtesyCallHistory.id, row.id));
+
+    return {
+      ok: true as const,
+      call_date: row.callDate,
+      mom_sent_date: m.date,
+      summary: `Recorded — MOM for the ${row.callDate} courtesy call was sent on ${m.date}. That period is now compliant.`,
+    };
+  },
+});
+
+registerTool({
+  name: "list_due_timeline_tasks",
+  category: "read",
+  description:
+    "Lists the current client account's implementation timeline tasks that are due or overdue and not yet completed. Use before asking an RM for a status update, so you name specific tasks rather than asking vaguely. Returns each task's code, subject, planned dates, owner and how many days overdue it is.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      include_upcoming_days: {
+        type: "number",
+        description: "Optional. Also include tasks due within this many days ahead (default 0 = only due/overdue).",
+      },
+    },
+  },
+  defaultEnabled: true,
+  defaultAutonomy: "auto",
+  handler: async (input: any, ctx: ToolContext) => {
+    const c = await loadCurrentClient(ctx);
+    if (!c) return noClientResult();
+
+    const { timelineItems } = await import("@/db/schema");
+    const { ne, or, isNull: dIsNull } = await import("drizzle-orm");
+
+    const ahead = Math.max(0, Math.min(90, Number(input?.include_upcoming_days) || 0));
+    const cutoff = new Date(Date.now() + ahead * 86400000).toISOString().slice(0, 10);
+    const today = todayYMD();
+
+    const rows = await db.select({
+      id: timelineItems.id,
+      taskCode: timelineItems.taskCode,
+      subject: timelineItems.subject,
+      plannedStart: timelineItems.plannedStart,
+      plannedEnd: timelineItems.plannedEnd,
+      owner: timelineItems.owner,
+      status: timelineItems.status,
+      actualEnd: timelineItems.actualEnd,
+    })
+      .from(timelineItems)
+      .where(and(
+        eq(timelineItems.clientProfileId, c.id),
+        ne(timelineItems.status, "completed"),
+        or(dIsNull(timelineItems.actualEnd), eq(timelineItems.actualEnd, "")),
+      ))
+      .orderBy(timelineItems.plannedEnd);
+
+    const due = rows
+      .filter(r => (r.plannedEnd || "") <= cutoff)
+      .map(r => {
+        const end = r.plannedEnd || "";
+        const overdueDays = end && end < today
+          ? Math.round((Date.parse(today) - Date.parse(end)) / 86400000)
+          : 0;
+        return { ...r, overdue_days: overdueDays };
+      });
+
+    if (due.length === 0) {
+      return { ok: true as const, tasks: [], summary: `Nothing is due or overdue on ${c.clientShortName || c.companyName}'s timeline right now.` };
+    }
+
+    const worst = due[0];
+    return {
+      ok: true as const,
+      tasks: due,
+      summary: `${due.length} task${due.length === 1 ? "" : "s"} due or overdue on ${c.clientShortName || c.companyName}. Oldest: ${worst.taskCode} — ${worst.subject}${worst.overdue_days ? ` (${worst.overdue_days} day${worst.overdue_days === 1 ? "" : "s"} overdue)` : ""}.`,
+    };
+  },
+});
+
+registerTool({
+  name: "mark_timeline_task_done",
+  category: "write",
+  description:
+    "Marks one implementation timeline task as completed for the current client account. Use when the RM or PM confirms a specific task is finished. Identify the task by its task code (preferred) or an exact subject. Resolve relative dates to YYYY-MM-DD yourself; if the completion date is not stated, ask rather than assuming today.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      task_code: { type: "string", description: "The task's code, e.g. 'T-12'. Preferred identifier." },
+      subject: { type: "string", description: "Alternative to task_code — the task's exact subject line." },
+      completed_date: { type: "string", description: "Date the task was actually finished, YYYY-MM-DD. Never a future date." },
+    },
+    required: ["completed_date"],
+  },
+  defaultEnabled: true,
+  defaultAutonomy: "auto",
+  handler: async (input: any, ctx: ToolContext) => {
+    const c = await loadCurrentClient(ctx);
+    if (!c) return noClientResult();
+
+    const done = checkPastDate(input?.completed_date, "completed_date");
+    if ("error" in done) return { ok: false as const, error: done.error };
+
+    const code = String(input?.task_code ?? "").trim();
+    const subject = String(input?.subject ?? "").trim();
+    if (!code && !subject) {
+      return { ok: false as const, error: "Tell me which task — give its task code, or its exact subject." };
+    }
+
+    const { timelineItems } = await import("@/db/schema");
+    const rows = await db.select()
+      .from(timelineItems)
+      .where(and(
+        eq(timelineItems.clientProfileId, c.id),
+        code ? eq(timelineItems.taskCode, code) : eq(timelineItems.subject, subject),
+      ))
+      .limit(2);
+
+    if (rows.length === 0) {
+      return { ok: false as const, error: `No timeline task on this account matches ${code ? `code "${code}"` : `subject "${subject}"`}. Use list_due_timeline_tasks to see what exists.` };
+    }
+    if (rows.length > 1) {
+      return { ok: false as const, error: `More than one task matches that. Use the task code to be specific.` };
+    }
+
+    const t = rows[0];
+    if (t.status === "completed" && t.actualEnd) {
+      return { ok: true as const, already: true, summary: `${t.taskCode} — ${t.subject} was already marked complete on ${t.actualEnd}. Nothing changed.` };
+    }
+
+    await db.update(timelineItems)
+      .set({
+        status: "completed",
+        actualEnd: done.date,
+        // only set a start if none was recorded, so real effort data is kept
+        actualStart: t.actualStart || done.date,
+        updatedAt: new Date().toISOString(),
+      } as any)
+      .where(eq(timelineItems.id, t.id));
+
+    const late = t.plannedEnd && done.date > t.plannedEnd
+      ? Math.round((Date.parse(done.date) - Date.parse(t.plannedEnd)) / 86400000)
+      : 0;
+
+    return {
+      ok: true as const,
+      task_code: t.taskCode,
+      completed_date: done.date,
+      days_late: late,
+      summary: `Marked done — ${t.taskCode} "${t.subject}" completed ${done.date}${late ? `, ${late} day${late === 1 ? "" : "s"} after the planned ${t.plannedEnd}` : " (on or before plan)"}.`,
+    };
+  },
+});

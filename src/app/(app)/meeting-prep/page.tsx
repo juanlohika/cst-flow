@@ -9,8 +9,7 @@ import {
   FileText, ClipboardList, Search, Pencil, ChevronLeft,
   ChevronDown, ChevronUp, User, BarChart2, GitBranch,
   FolderOpen, ExternalLink, Clock, Users, Paintbrush, Download,
-  Brain, MonitorPlay, Save, MapPin, Rocket
-} from "lucide-react";
+  Brain, MonitorPlay, Save, MapPin, Rocket, PhoneCall } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -1028,7 +1027,7 @@ function HealthFilterPill({ color, label, count, active, onClick }: {
 
 // ─── Account Hub (5-Tab) ───────────────────────────────────────────────────────
 
-type HubTab = "profile" | "contacts" | "meetings" | "brd" | "flows" | "projects" | "mockups" | "intelligence" | "presentations" | "pinValidator" | "pilotTracker";
+type HubTab = "profile" | "contacts" | "meetings" | "brd" | "flows" | "projects" | "mockups" | "intelligence" | "presentations" | "pinValidator" | "pilotTracker" | "courtesyCalls";
 
 const HUB_TABS: { id: HubTab; label: string; icon: React.ElementType }[] = [
   { id: "profile", label: "Profile", icon: User },
@@ -1041,6 +1040,7 @@ const HUB_TABS: { id: HubTab; label: string; icon: React.ElementType }[] = [
   { id: "projects", label: "Projects & Tasks", icon: FolderOpen },
   { id: "mockups", label: "Mockups", icon: Paintbrush },
   { id: "pinValidator", label: "Pin Validator", icon: MapPin },
+  { id: "courtesyCalls", label: "Courtesy Calls", icon: PhoneCall },
   { id: "pilotTracker", label: "Pilot Tracker", icon: Rocket },
 ];
 
@@ -1071,7 +1071,9 @@ export function AccountHub({ profile, onEdit, onBack }: {
     <div className="flex flex-col h-full bg-white overflow-hidden">
       {/* ── Tabs Bar (40px) ────────────────────────────────────────────────── */}
       <div className="h-[40px] flex-shrink-0 flex items-center justify-between border-b border-border-default px-4 bg-white">
-        <div className="flex items-end h-full gap-5">
+        {/* min-w-0 + overflow-x-auto: the tab list outgrew the bar, and with the
+            parent set to overflow-hidden the right-most tabs became unreachable. */}
+        <div className="flex items-end h-full gap-5 min-w-0 overflow-x-auto hub-tabstrip">
           <button onClick={onBack} className="h-full flex items-center pr-2 text-text-muted hover:text-primary transition-colors">
             <ArrowLeft className="w-4 h-4" />
           </button>
@@ -1082,7 +1084,7 @@ export function AccountHub({ profile, onEdit, onBack }: {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-1 h-full text-[12px] transition-colors relative ${
+                className={`flex items-center gap-2 px-1 h-full text-[12px] whitespace-nowrap flex-shrink-0 transition-colors relative ${
                   active
                     ? "text-primary font-medium"
                     : "text-text-secondary hover:text-text-primary font-regular"

@@ -310,9 +310,46 @@ export const accountModules = sqliteTable("AccountModule", {
 export const courtesyCallHistory = sqliteTable("CourtesyCallHistory", {
   id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   clientProfileId:   text("clientProfileId").notNull().references(() => clientProfiles.id, { onDelete: "cascade" }),
-  callDate:          text("callDate").notNull(),         // YYYY-MM-DD
-  loggedByUserId:    text("loggedByUserId").notNull(),   // who recorded this
-  notes:             text("notes"),                      // optional one-liner
+  // ── Plan ────────────────────────────────────────────────────────────────
+  // The window the call was DUE in, derived from tier (VIP/1/2 = monthly,
+  // 3/4 = quarterly, 5 = yearly) or from clientProfiles.frequencyOverride.
+  // Stored as a period label + a window so "was this on time?" is answerable
+  // without re-deriving the cadence at read time.
+  periodLabel:       text("periodLabel"),                // e.g. "2026-08" | "2026-Q3" | "2026"
+  plannedStart:      text("plannedStart"),               // YYYY-MM-DD — first day the call may count
+  plannedEnd:        text("plannedEnd"),                 // YYYY-MM-DD — last day before it is late
+  // ── Actuals ─────────────────────────────────────────────────────────────
+  callDate:          text("callDate").notNull(),         // YYYY-MM-DD. Still NOT NULL on the live table, so planned-only
+                                                         // rows are not possible yet — that needs a table rebuild.
+  momSentDate:       text("momSentDate"),                // YYYY-MM-DD — minutes of meeting sent
+  // ── Compliance ──────────────────────────────────────────────────────────
+  // Derived, but stored so the personnel-metrics page can aggregate cheaply.
+  // compliant  = callDate AND momSentDate both present, callDate <= plannedEnd
+  // late       = both present but callDate > plannedEnd
+  // incomplete = call happened, MOM not sent
+  // missed     = window closed with no callDate
+  // pending    = window still open, no callDate yet
+  complianceStatus:  text("complianceStatus").default("pending").notNull(),
+  loggedByUserId:    text("loggedByUserId").notNull(),   // NOT NULL on the live table — always supply a value
+  rmUserId:          text("rmUserId"),                   // the RM accountable for this period
+  notes:             text("notes"),
+  createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
+  updatedAt:         text("updatedAt").default(sql`(datetime('now'))`).notNull(),
+});
+
+// Supporting evidence for a courtesy call — the RM's invitation screenshot
+// (email or chat). Only the Drive LINK is stored, never the image bytes:
+// Arima receives the file in Telegram, files it into the account's Drive
+// folder, and records the link here.
+export const courtesyCallEvidence = sqliteTable("CourtesyCallEvidence", {
+  id:                text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  courtesyCallId:    text("courtesyCallId").notNull().references(() => courtesyCallHistory.id, { onDelete: "cascade" }),
+  kind:              text("kind").default("invitation").notNull(), // invitation | mom | other
+  driveFileId:       text("driveFileId"),
+  driveWebViewLink:  text("driveWebViewLink").notNull(),
+  fileName:          text("fileName"),                   // YYYY-MM-DD Invitation - <Account>.png
+  uploadedVia:       text("uploadedVia").default("telegram").notNull(), // telegram | web
+  uploadedByUserId:  text("uploadedByUserId"),
   createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
 });
 

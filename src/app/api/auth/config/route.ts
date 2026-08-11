@@ -66,6 +66,15 @@ export async function GET() {
       `CREATE TABLE IF NOT EXISTS ArimaCheckIn (id TEXT PRIMARY KEY, scheduleId TEXT, clientProfileId TEXT NOT NULL, contactId TEXT, channel TEXT NOT NULL, messageContent TEXT, conversationId TEXT, status TEXT DEFAULT 'scheduled' NOT NULL, scheduledAt TEXT DEFAULT (datetime('now')) NOT NULL, sentAt TEXT, respondedAt TEXT, escalatedAt TEXT, errorMessage TEXT, triggeredByUserId TEXT, createdAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS ArimaScheduleRule (id TEXT PRIMARY KEY, name TEXT NOT NULL, cadence TEXT DEFAULT 'monthly' NOT NULL, customIntervalDays INTEGER, matchEngagementStatus TEXT, priority INTEGER DEFAULT 0 NOT NULL, enabled INTEGER DEFAULT 1 NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS ArimaGuardrail (id TEXT PRIMARY KEY, type TEXT NOT NULL, label TEXT NOT NULL, pattern TEXT NOT NULL, description TEXT, enabled INTEGER DEFAULT 1 NOT NULL, isBuiltIn INTEGER DEFAULT 0 NOT NULL, priority INTEGER DEFAULT 0 NOT NULL, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
+      // Courtesy calls: one row per call, plus the plan window and compliance
+      // state the personnel-metrics page aggregates on. callDate is nullable so
+      // a PLANNED row can exist before the call happens.
+      `CREATE TABLE IF NOT EXISTS CourtesyCallHistory (id TEXT PRIMARY KEY, clientProfileId TEXT NOT NULL REFERENCES ClientProfile(id) ON DELETE CASCADE, periodLabel TEXT, plannedStart TEXT, plannedEnd TEXT, callDate TEXT, momSentDate TEXT, complianceStatus TEXT DEFAULT 'pending' NOT NULL, loggedByUserId TEXT, rmUserId TEXT, notes TEXT, createdAt TEXT DEFAULT (datetime('now')) NOT NULL, updatedAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS CourtesyCallHistory_client_idx ON CourtesyCallHistory(clientProfileId, callDate)`,
+      // Evidence for a courtesy call (the RM's invitation screenshot). Only the
+      // Drive LINK is stored — never the image bytes.
+      `CREATE TABLE IF NOT EXISTS CourtesyCallEvidence (id TEXT PRIMARY KEY, courtesyCallId TEXT NOT NULL REFERENCES CourtesyCallHistory(id) ON DELETE CASCADE, kind TEXT DEFAULT 'invitation' NOT NULL, driveFileId TEXT, driveWebViewLink TEXT NOT NULL, fileName TEXT, uploadedVia TEXT DEFAULT 'telegram' NOT NULL, uploadedByUserId TEXT, createdAt TEXT DEFAULT (datetime('now')) NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS CourtesyCallEvidence_call_idx ON CourtesyCallEvidence(courtesyCallId)`,
     ];
 
     for (const q of bootstrapQueries) {
