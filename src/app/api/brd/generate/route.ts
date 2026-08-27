@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getClaudeModel, getModelForApp, generateWithRetry } from "@/lib/ai";
+import { getClaudeModel, getModelForApp, generateWithRetry, getGroqModel,
+         readAIConfig, GROQ_MODELS } from "@/lib/ai";
 import { db } from "@/db";
 import { skills as skillsTable } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
@@ -34,7 +35,8 @@ interface Attachment {
  */
 export async function POST(req: Request) {
   try {
-    const { prompt, messages, systemInstruction, attachments } = await req.json();
+    const { prompt, messages, systemInstruction, attachments, model: modelOverride } =
+      await req.json();
     const currentDate = new Date().toLocaleDateString("en-US", {
       day: "numeric",
       month: "long",
@@ -47,10 +49,18 @@ export async function POST(req: Request) {
 
     // Use the app's configured provider (set in Admin → Apps → BRD Maker)
     // Falls back to global primary provider if no app-specific override
-    const model = await getModelForApp("brd").catch(async (e) => {
-      console.warn("[brd/generate] getModelForApp failed, trying Claude directly:", e.message);
-      return getClaudeModel();
-    });
+    // A model picked in the BRD Maker UI wins over the app/global default.
+    // Only Groq ids are accepted, so the picker cannot select a paid provider.
+    const model = await (async () => {
+      if (modelOverride && GROQ_MODELS.some((m) => m.id === modelOverride)) {
+        const cfg = await readAIConfig();
+        if (cfg.groqApiKey) return getGroqModel(cfg.groqApiKey, modelOverride);
+      }
+      return getModelForApp("brd").catch(async (e) => {
+        console.warn("[brd/generate] getModelForApp failed, trying Claude directly:", e.message);
+        return getClaudeModel();
+      });
+    })();
 
     // Load ALL active BRD skills, concatenated in priority order.
     // Lower sortOrder = appears first (= higher priority in the prompt).
@@ -140,7 +150,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       content: result.response.text(),
-      meta: { skillsLoaded: skillCount },
+      meta: { skillsLoaded: skillCount, model: (model as any).modelId ?? null },
     });
   } catch (error: any) {
     console.error("BRD Generation error:", error);

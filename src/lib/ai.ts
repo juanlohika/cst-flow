@@ -6,6 +6,49 @@ import path from "path";
 
 const SETTINGS_FILE = path.join(process.cwd(), "config.json");
 
+/**
+ * Groq model catalogue.
+ *
+ * `llama-3.3-70b-versatile` was decommissioned on 2026-08-16, which broke every
+ * Groq-routed feature. The model is a SETTING now, not a constant, so the next
+ * decommission is a config change rather than a code deploy.
+ *
+ * Verified against the live Groq model list on 2026-08-27.
+ */
+export const GROQ_MODELS = [
+  {
+    id: "openai/gpt-oss-120b",
+    label: "GPT-OSS 120B",
+    note: "text only — best reasoning",
+    vision: false,
+    contextWindow: 131072,
+  },
+  {
+    id: "qwen/qwen3.8-27b",
+    label: "Qwen3.8 27B",
+    note: "reads images",
+    vision: true,
+    contextWindow: 131072,
+  },
+  {
+    id: "openai/gpt-oss-20b",
+    label: "GPT-OSS 20B",
+    note: "text only — fastest",
+    vision: false,
+    contextWindow: 131072,
+  },
+] as const;
+
+/** Default for every feature. Text-only: strongest reasoning of the free models. */
+export const GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b";
+
+/** The free model that accepts images. Used when a caller passes one. */
+export const GROQ_VISION_MODEL = "qwen/qwen3.8-27b";
+
+export function groqModelSupportsVision(id: string): boolean {
+  return GROQ_MODELS.some((m) => m.id === id && m.vision);
+}
+
 // ─── Config types ─────────────────────────────────────────────────────────────
 
 export interface AIConfig {
@@ -13,6 +56,7 @@ export interface AIConfig {
   ollamaEndpoint: string;
   ollamaModel: string;
   groqApiKey: string;
+  groqModel: string;
   geminiApiKey: string;
   anthropicApiKey: string;
   // legacy single-key field (kept for backwards compat)
@@ -26,6 +70,7 @@ export async function readAIConfig(): Promise<AIConfig> {
     ollamaEndpoint: process.env.OLLAMA_ENDPOINT || "http://localhost:11434",
     ollamaModel: process.env.OLLAMA_MODEL || "llama3.2",
     groqApiKey: process.env.GROQ_API_KEY || "",
+    groqModel: process.env.GROQ_MODEL || GROQ_DEFAULT_MODEL,
     geminiApiKey: process.env.GEMINI_API_KEY || "",
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
   };
@@ -43,6 +88,7 @@ export async function readAIConfig(): Promise<AIConfig> {
     if (raw.ollamaEndpoint) config.ollamaEndpoint = raw.ollamaEndpoint;
     if (raw.ollamaModel)    config.ollamaModel = raw.ollamaModel;
     if (raw.groqApiKey)     config.groqApiKey = raw.groqApiKey;
+    if (raw.groqModel)      config.groqModel = raw.groqModel;
     if (raw.geminiApiKey)   config.geminiApiKey = raw.geminiApiKey;
     if (raw.anthropicApiKey) config.anthropicApiKey = raw.anthropicApiKey;
     
@@ -92,7 +138,7 @@ export async function getGeminiModel(apiKeyOverride?: string): Promise<AIModel> 
       return buildOllamaAdapter(config.ollamaEndpoint, config.ollamaModel);
     case "groq":
       if (!config.groqApiKey) throw new Error("Groq API key not set. Go to Admin → Settings.");
-      return buildGroqAdapter(config.groqApiKey);
+      return buildGroqAdapter(config.groqApiKey, config.groqModel);
     case "claude":
       if (!config.anthropicApiKey) throw new Error("Anthropic API key not set. Go to Admin → Settings.");
       return buildClaudeAdapter(config.anthropicApiKey);
@@ -155,7 +201,7 @@ export async function getModelForApp(slug: string) {
       return buildGeminiAdapter(config.geminiApiKey);
     case "groq":
       if (!config.groqApiKey) throw new Error(`Groq API key not set. Go to Admin → Settings.`);
-      return buildGroqAdapter(config.groqApiKey);
+      return buildGroqAdapter(config.groqApiKey, config.groqModel);
     case "ollama":
       return buildOllamaAdapter(config.ollamaEndpoint, config.ollamaModel);
     default:
@@ -211,14 +257,34 @@ function buildOllamaAdapter(endpoint: string, model: string) {
 
 // ─── Groq adapter ─────────────────────────────────────────────────────────────
 
-function buildGroqAdapter(apiKey: string) {
+/** Groq adapter with an explicit model. Used by UIs that let users choose. */
+export function getGroqModel(apiKey: string, modelId?: string) {
+  return buildGroqAdapter(apiKey, modelId);
+}
+
+function buildGroqAdapter(apiKey: string, modelId?: string) {
   const groq = new Groq({ apiKey });
-  const MODEL = "llama-3.3-70b-versatile";
+  const MODEL = modelId || GROQ_DEFAULT_MODEL;
   console.log(`[AI] Provider: Groq  Model: ${MODEL}`);
 
   return {
+    modelId: MODEL,
     generateContent: async (input: string | any) => {
       const messages: Groq.Chat.ChatCompletionMessageParam[] = [];
+
+      // Images may arrive as inlineData parts (the Gemini shape this codebase
+      // uses). Collect them so we can send them to a vision-capable model.
+      const images: { mimeType: string; data: string }[] = [];
+      if (input && typeof input !== "string") {
+        const scan = (parts: any[]) => {
+          for (const p of parts || []) {
+            const d = p?.inlineData || p?.inline_data;
+            if (d?.data) images.push({ mimeType: d.mimeType || d.mime_type || "image/jpeg", data: d.data });
+          }
+        };
+        if (Array.isArray(input.contents)) input.contents.forEach((c: any) => scan(c.parts));
+        if (Array.isArray(input.parts)) scan(input.parts);
+      }
 
       if (typeof input === "string") {
         messages.push({ role: "user", content: input });
@@ -238,13 +304,35 @@ function buildGroqAdapter(apiKey: string) {
         }
       }
 
+      // A text-only model cannot read an attachment. Rather than fail, or
+      // silently drop the image, switch to the free vision model for this call.
+      let useModel = MODEL;
+      if (images.length && !groqModelSupportsVision(MODEL)) {
+        useModel = GROQ_VISION_MODEL;
+        console.log(`[AI] ${MODEL} is text-only and ${images.length} image(s) were attached — using ${useModel} for this request.`);
+      }
+
+      if (images.length) {
+        // Re-shape the final user turn into multimodal content parts.
+        const lastUser = [...messages].reverse().find((m) => m.role === "user");
+        const text = typeof lastUser?.content === "string" ? lastUser.content : "";
+        const parts: any[] = [{ type: "text", text }];
+        for (const img of images) {
+          parts.push({ type: "image_url",
+            image_url: { url: `data:${img.mimeType};base64,${img.data}` } });
+        }
+        if (lastUser) (lastUser as any).content = parts;
+      }
+
       const completion = await groq.chat.completions.create({
-        model: MODEL,
+        model: useModel,
         messages,
         temperature: input?.generationConfig?.temperature ?? 0.7,
       });
 
-      const content = completion.choices[0]?.message?.content ?? "";
+      let content = completion.choices[0]?.message?.content ?? "";
+      // Qwen models can emit a <think> block; never surface it to the user.
+      content = content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
       return { response: { text: () => content } };
     },
     transcribeAudio: async (audioBuffer: Buffer, mimeType: string) => {

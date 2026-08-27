@@ -91,7 +91,7 @@
 - `src/lib/ai.ts` — unified `generateContent()` adapter for all three providers
 - `config.json` — stores keys + `primaryProvider` setting (gitignored)
 - Admin → Settings UI manages all provider keys
-- Default: **Groq** (`llama-3.3-70b-versatile`) — free tier
+- Default: **Groq** (`openai/gpt-oss-120b`) — free tier, text only. `qwen/qwen3.8-27b` reads images and is used automatically when one is attached. Model is set in `GlobalSetting.groqModel`, not hardcoded (`llama-3.3-70b-versatile` was decommissioned 2026-08-16).
 - Ollama support: `http://localhost:11434`, model `llama3.2`
 - API keys are **global** (server-side `config.json`) — all team members share the same key; no per-user setup needed
 

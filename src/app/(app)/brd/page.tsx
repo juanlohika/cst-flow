@@ -7,6 +7,17 @@ import SmartMic from "@/components/ui/SmartMic";
 import { ArrowUp, Loader2, Download, Copy, Check, Save, FileText, Paperclip, X, MessageSquare, Send, Sparkles, FileDown } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 
+/**
+ * Free Groq models offered in the picker. Mirrors GROQ_MODELS in src/lib/ai.ts;
+ * the server validates the id, so an unknown value falls back to the default.
+ */
+const BRD_MODELS = [
+  { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B", note: "text only", vision: false },
+  { id: "qwen/qwen3.8-27b",    label: "Qwen3.8 27B",  note: "reads images", vision: true },
+  { id: "openai/gpt-oss-20b",  label: "GPT-OSS 20B",  note: "text only, fastest", vision: false },
+] as const;
+const VISION_MODEL_ID = "qwen/qwen3.8-27b";
+
 export default function BRDPage() {
   return (
     <AuthGuard>
@@ -20,6 +31,7 @@ export default function BRDPage() {
 function BRDContent() {
   const { data: session } = useSession();
   const searchParams = useSearchParams();
+  const [modelId, setModelId] = useState<string>(BRD_MODELS[0].id);
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<{ role: "user" | "model", content: string, attachmentNames?: string[] }[]>([]);
   const [loading, setLoading] = useState(false);
@@ -139,6 +151,12 @@ function BRDContent() {
     
     setMessages(newMessages);
     const currentAttachments = [...pendingAttachments];
+    // A text-only model cannot read an image. Switch for this request rather
+    // than dropping the attachment silently.
+    const hasImage = currentAttachments.some((a) => a.mimeType.startsWith("image/"));
+    const chosen = BRD_MODELS.find((m) => m.id === modelId);
+    const effectiveModel = hasImage && !chosen?.vision ? VISION_MODEL_ID : modelId;
+    if (effectiveModel !== modelId) setModelId(effectiveModel);
     setPendingAttachments([]);
     setPrompt("");
 
@@ -150,7 +168,8 @@ function BRDContent() {
         body: JSON.stringify({ 
           prompt: userMessage, 
           messages: newMessages.map(m => ({ role: m.role, content: m.content })),
-          attachments: currentAttachments.map(({ name, mimeType, data }) => ({ name, mimeType, data }))
+          attachments: currentAttachments.map(({ name, mimeType, data }) => ({ name, mimeType, data })),
+          model: effectiveModel
         }),
       });
       const data = await res.json();
@@ -277,6 +296,29 @@ function BRDContent() {
               ))}
             </div>
           )}
+
+          <div className="flex items-center gap-2 mb-2">
+            <label htmlFor="brd-model" className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+              Model
+            </label>
+            <select
+              id="brd-model"
+              value={modelId}
+              onChange={(e) => setModelId(e.target.value)}
+              disabled={loading}
+              className="text-[11px] font-semibold rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-50"
+            >
+              {BRD_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>{m.label} — {m.note}</option>
+              ))}
+            </select>
+            {pendingAttachments.some((a) => a.mimeType.startsWith("image/")) &&
+             !BRD_MODELS.find((m) => m.id === modelId)?.vision && (
+              <span className="text-[10px] font-semibold text-amber-600">
+                Image attached — will use {BRD_MODELS.find((m) => m.id === VISION_MODEL_ID)?.label} to read it
+              </span>
+            )}
+          </div>
 
           <div className="relative group">
             <textarea
