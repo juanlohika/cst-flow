@@ -6,6 +6,13 @@ import { skills as skillsTable } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import mammoth from "mammoth";
 
+/**
+ * Skills that tell the assistant how to use a TOOL rather than how to write the
+ * document. Excluded from the generation prompt to keep the token budget for
+ * the BRD itself.
+ */
+const TOOL_ONLY_SKILLS = new Set(["skill-brd-share-pdf"]);
+
 interface Attachment {
   name: string;
   mimeType: string;
@@ -73,9 +80,14 @@ export async function POST(req: Request) {
         .where(and(eq(skillsTable.category, "brd"), eq(skillsTable.isActive, true)))
         .orderBy(asc(skillsTable.sortOrder), asc(skillsTable.name));
 
-      skillCount = rows.length;
-      if (rows.length > 0) {
-        baseInstruction = rows.map(s => s.content.trim()).join("\n\n---\n\n");
+      // Groq's free tier allows 8,000 tokens per MINUTE across prompt +
+      // completion. The BRD skills alone were ~3,900 tokens, which left too
+      // little for a full document and returned 413. Tool-usage skills do not
+      // shape the document, so they are excluded from the writing prompt.
+      const WRITING_SKILLS = rows.filter(s => !TOOL_ONLY_SKILLS.has(s.id));
+      skillCount = WRITING_SKILLS.length;
+      if (WRITING_SKILLS.length > 0) {
+        baseInstruction = WRITING_SKILLS.map(s => s.content.trim()).join("\n\n---\n\n");
       }
     } catch (dbErr: any) {
       console.error("[brd/generate] Failed to fetch BRD skills:", dbErr);
@@ -146,6 +158,9 @@ export async function POST(req: Request) {
     const result = await generateWithRetry(model, {
       contents: requestContents,
       systemInstruction: { role: "system", parts: [{ text: finalSystemInstruction }] },
+      // Enough for a full 15-section BRD (~3,200 tokens observed) while staying
+      // inside Groq's 8,000 tokens-per-minute free-tier allowance.
+      generationConfig: { maxOutputTokens: 4300 },
     });
 
     return NextResponse.json({

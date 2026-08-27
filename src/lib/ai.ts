@@ -324,10 +324,15 @@ function buildGroqAdapter(apiKey: string, modelId?: string) {
         if (lastUser) (lastUser as any).content = parts;
       }
 
+      // Groq's free tier caps prompt + completion at 8,000 tokens per minute.
+      // Honour a caller-supplied ceiling so a long system prompt plus a long
+      // document cannot exceed it and return 413.
+      const maxOut = input?.generationConfig?.maxOutputTokens;
       const completion = await groq.chat.completions.create({
         model: useModel,
         messages,
         temperature: input?.generationConfig?.temperature ?? 0.7,
+        ...(maxOut ? { max_tokens: Number(maxOut) } : {}),
       });
 
       let content = completion.choices[0]?.message?.content ?? "";

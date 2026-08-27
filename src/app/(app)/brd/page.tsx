@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, Suspense, useRef, useCallback } from "react";
+import { hasMermaid, extractMermaid, renderOne, inlineMermaidAsImages }
+  from "@/lib/brd/mermaid-render";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import SmartMic from "@/components/ui/SmartMic";
@@ -18,6 +20,29 @@ const BRD_MODELS = [
 ] as const;
 const VISION_MODEL_ID = "qwen/qwen3.8-27b";
 
+/**
+ * A document segment renders as plain text, except a ```mermaid fence, which
+ * renders as the diagram once it has been rasterised. Until then it shows a
+ * placeholder rather than the raw code, which no reader can use.
+ */
+function renderSegment(segment: string, diagrams: Record<string, string>) {
+  const m = /^```mermaid\s*\n([\s\S]*?)```\s*$/.exec(segment.trim());
+  if (!m) return segment;
+  const code = m[1].trim();
+  const png = diagrams[code];
+  if (png) {
+    return (
+      <img src={png} alt="Process flow diagram"
+           className="max-w-full h-auto my-4 rounded-lg border border-slate-200" />
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-400 italic">
+      Rendering process flow diagram&hellip;
+    </span>
+  );
+}
+
 export default function BRDPage() {
   return (
     <AuthGuard>
@@ -32,6 +57,9 @@ function BRDContent() {
   const { data: session } = useSession();
   const searchParams = useSearchParams();
   const [modelId, setModelId] = useState<string>(BRD_MODELS[0].id);
+  // Rendered process-flow diagrams, keyed by their mermaid source.
+  const [diagrams, setDiagrams] = useState<Record<string, string>>({});
+  const [renderingDiagrams, setRenderingDiagrams] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<{ role: "user" | "model", content: string, attachmentNames?: string[] }[]>([]);
   const [loading, setLoading] = useState(false);
@@ -208,10 +236,16 @@ function BRDContent() {
     if (!brdContent) return;
     setExportingToDocx(true);
     try {
+      // Replace mermaid source with rendered PNGs so Word shows pictures.
+      // A diagram that fails to render keeps its code rather than vanishing.
+      const { markdown: exportMarkdown, failed } = await inlineMermaidAsImages(brdContent);
+      if (failed > 0) {
+        console.warn(`[brd] ${failed} diagram(s) could not be rendered; exporting their source instead.`);
+      }
       const res = await fetch("/api/brd/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ markdown: brdContent, title: "Business_Requirements_Document", format: 'docx' }),
+        body: JSON.stringify({ markdown: exportMarkdown, title: "Business_Requirements_Document", format: 'docx' }),
       });
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
@@ -234,6 +268,30 @@ function BRDContent() {
   };
 
   // Split content into segments for interactive commenting
+  // Rasterise every ```mermaid block so the reader sees a diagram, not code,
+  // and so the DOCX/PDF export can embed it as a picture.
+  useEffect(() => {
+    if (!hasMermaid(brdContent)) return;
+    const blocks = extractMermaid(brdContent);
+    const missing = blocks.filter((b) => !(b in diagrams));
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      setRenderingDiagrams(true);
+      const next: Record<string, string> = {};
+      for (let i = 0; i < missing.length; i++) {
+        const r = await renderOne(missing[i], `brd-preview-${Date.now()}-${i}`);
+        if (r.png) next[missing[i]] = r.png;
+      }
+      if (!cancelled && Object.keys(next).length) {
+        setDiagrams((prev) => ({ ...prev, ...next }));
+      }
+      if (!cancelled) setRenderingDiagrams(false);
+    })();
+    return () => { cancelled = true; };
+  }, [brdContent]);
+
   const segments = brdContent.split("\n\n");
 
   return (
@@ -390,7 +448,7 @@ function BRDContent() {
                     onClick={() => setActiveCommentIndex(idx)}
                   >
                     <div className="brd-comment-marker"><MessageSquare size={14}/></div>
-                    {segment}
+                    {renderSegment(segment, diagrams)}
                     
                     {/* Inline Comment Box */}
                     {activeCommentIndex === idx && (
