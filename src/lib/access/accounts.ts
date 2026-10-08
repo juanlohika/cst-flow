@@ -24,7 +24,7 @@ let _schemaFullySynced = false;
 // Bump this whenever ensureAccessSchema gains new CREATE/ALTER work, so already
 // migrated databases skip the whole body instead of re-issuing every statement.
 const ACCESS_SCHEMA_VERSION_KEY = "ACCESS_SCHEMA_VERSION";
-const ACCESS_SCHEMA_VERSION = "2026-08-11-courtesy";
+const ACCESS_SCHEMA_VERSION = "2026-10-07-brd-usage-log";
 
 /**
  * Phase E.9 — SQLite can't ALTER a column to remove NOT NULL. To relax
@@ -903,6 +903,26 @@ export async function ensureAccessSchema(): Promise<void> {
       errorMessage TEXT,
       createdAt TEXT DEFAULT (datetime('now')) NOT NULL
     )`);
+
+    // Phase 21 — BRD Maker usage log. Metadata only: who generated a BRD and
+    // when, never the BRD body itself. Lets the team lead see adoption without
+    // reading anyone's draft.
+    await db.run(sql`CREATE TABLE IF NOT EXISTS BrdGenerationLog (
+      id TEXT PRIMARY KEY,
+      userId TEXT,
+      userName TEXT,
+      userEmail TEXT,
+      title TEXT,
+      isFirstDraft INTEGER DEFAULT 0 NOT NULL,
+      model TEXT,
+      messageCount INTEGER DEFAULT 0 NOT NULL,
+      contentLength INTEGER DEFAULT 0 NOT NULL,
+      durationMs INTEGER,
+      errorMessage TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+    await db.run(sql`CREATE INDEX IF NOT EXISTS BrdGenerationLog_createdAt_idx ON BrdGenerationLog (createdAt)`);
+    await db.run(sql`CREATE INDEX IF NOT EXISTS BrdGenerationLog_userId_idx ON BrdGenerationLog (userId)`);
     await db.run(sql`CREATE TABLE IF NOT EXISTS CoordinatorRelay (
       id TEXT PRIMARY KEY,
       conversationId TEXT NOT NULL,

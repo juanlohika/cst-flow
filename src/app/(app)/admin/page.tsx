@@ -1177,7 +1177,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                   <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                 </a>
 
-                <h3 className="font-semibold text-base flex items-center gap-2 border-b pb-4 text-slate-800">
+                                <h3 className="font-semibold text-base flex items-center gap-2 border-b pb-4 text-slate-800">
                   <Lock className="w-4 h-4 text-slate-500" strokeWidth={2} />
                   AI Provider Settings
                 </h3>

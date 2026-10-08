@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { getClaudeModel, getModelForApp, generateWithRetry, getGroqModel,
          readAIConfig, GROQ_MODELS } from "@/lib/ai";
 import { db } from "@/db";
-import { skills as skillsTable } from "@/db/schema";
+import { skills as skillsTable, brdGenerationLogs, users as usersTable } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import mammoth from "mammoth";
+import { auth } from "@/auth";
+import { ensureAccessSchema } from "@/lib/access/accounts";
 
 /**
  * Skills that tell the assistant how to use a TOOL rather than how to write the
@@ -40,10 +42,91 @@ interface Attachment {
  * The main playbook lives in `brd-default` at sortOrder 0 so it always
  * leads the prompt.
  */
-export async function POST(req: Request) {
+
+/**
+ * Pull a title out of the generated BRD. The playbook asks for a top-level
+ * heading, so take the first one; fall back to the first non-empty line that
+ * reads like a title. Returns null rather than guessing badly.
+ */
+function extractBrdTitle(markdown: string): string | null {
+  if (!markdown) return null;
+  const heading = markdown.match(/^\s{0,3}#{1,2}\s+(.+?)\s*$/m);
+  if (heading) {
+    const t = heading[1].replace(/[*_`#]/g, "").trim();
+    if (t) return t.slice(0, 200);
+  }
+  for (const raw of markdown.split("\n").slice(0, 10)) {
+    const line = raw.replace(/[*_`#|>-]/g, "").trim();
+    if (line.length >= 8 && line.length <= 200 && !line.endsWith(".")) return line;
+  }
+  return null;
+}
+
+/**
+ * Record that a BRD was generated. Metadata only — the document body is never
+ * stored. Deliberately swallows its own errors: a logging failure must not
+ * cost the user their BRD.
+ */
+async function logBrdGeneration(entry: {
+  session: any;
+  title: string | null;
+  isFirstDraft: boolean;
+  model: string | null;
+  messageCount: number;
+  contentLength: number;
+  durationMs: number;
+  errorMessage?: string | null;
+}) {
   try {
+    const userId = entry.session?.user?.id ?? null;
+    let userName = entry.session?.user?.name ?? null;
+    let userEmail = entry.session?.user?.email ?? null;
+
+    // The JWT stamps id and role but not reliably a name, so read it once when
+    // it is missing — the log is only useful if it says who.
+    if (userId && !userName) {
+      try {
+        const [row] = await db
+          .select({ name: usersTable.name, email: usersTable.email })
+          .from(usersTable)
+          .where(eq(usersTable.id, userId))
+          .limit(1);
+        if (row) { userName = row.name ?? userName; userEmail = row.email ?? userEmail; }
+      } catch { /* name lookup is a nicety, not a reason to drop the row */ }
+    }
+
+    await db.insert(brdGenerationLogs).values({
+      userId,
+      userName,
+      userEmail,
+      title: entry.title,
+      isFirstDraft: entry.isFirstDraft,
+      model: entry.model,
+      messageCount: entry.messageCount,
+      contentLength: entry.contentLength,
+      durationMs: entry.durationMs,
+      errorMessage: entry.errorMessage ?? null,
+    });
+  } catch (err) {
+    console.error("BRD usage log write failed:", err);
+  }
+}
+
+export async function POST(req: Request) {
+  const startedAt = Date.now();
+  // Usage logging needs to know who ran this. The route stays usable without a
+  // session (it never required one) — the row is simply written with no user.
+  const session = await auth().catch(() => null);
+  let logCtx = { messageCount: 0, isFirstDraft: true, modelId: null as string | null };
+
+  try {
+    await ensureAccessSchema();
     const { prompt, messages, systemInstruction, attachments, model: modelOverride } =
       await req.json();
+    logCtx.messageCount = Array.isArray(messages) ? messages.length : 0;
+    // A conversation that is only the opening turn is the first draft of a BRD;
+    // anything later is a refinement of one already on screen.
+    logCtx.isFirstDraft = logCtx.messageCount <= 1;
     const currentDate = new Date().toLocaleDateString("en-US", {
       day: "numeric",
       month: "long",
@@ -163,12 +246,36 @@ export async function POST(req: Request) {
       generationConfig: { maxOutputTokens: 4300 },
     });
 
+    const generated = result.response.text();
+    logCtx.modelId = (model as any).modelId ?? null;
+
+    await logBrdGeneration({
+      session,
+      title: extractBrdTitle(generated),
+      isFirstDraft: logCtx.isFirstDraft,
+      model: logCtx.modelId,
+      messageCount: logCtx.messageCount,
+      contentLength: generated.length,
+      durationMs: Date.now() - startedAt,
+    });
+
     return NextResponse.json({
-      content: result.response.text(),
-      meta: { skillsLoaded: skillCount, model: (model as any).modelId ?? null },
+      content: generated,
+      meta: { skillsLoaded: skillCount, model: logCtx.modelId },
     });
   } catch (error: any) {
     console.error("BRD Generation error:", error);
+    // Log failures too — a tool that errors for someone is worth seeing.
+    await logBrdGeneration({
+      session,
+      title: null,
+      isFirstDraft: logCtx.isFirstDraft,
+      model: logCtx.modelId,
+      messageCount: logCtx.messageCount,
+      contentLength: 0,
+      durationMs: Date.now() - startedAt,
+      errorMessage: String(error?.message ?? error).slice(0, 500),
+    });
     const isOverloaded = error?.status === 503 || error?.message?.toLowerCase().includes("overload");
     return NextResponse.json({ error: error.message }, { status: isOverloaded ? 503 : 500 });
   }

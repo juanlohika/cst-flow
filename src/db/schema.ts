@@ -1763,3 +1763,34 @@ export const arimaRunLogs = sqliteTable("ArimaRunLog", {
   errorMessage:      text("errorMessage"),
   createdAt:         text("createdAt").default(sql`(datetime('now'))`).notNull(),
 });
+
+// ─── BRD Maker usage log ─────────────────────────────────────────
+/**
+ * One row per generation call from the BRD Maker app — who ran it, when, and
+ * what came out. Deliberately metadata only: the BRD body is NOT stored here.
+ * Users save their own drafts through savedWorks; this table exists so the
+ * team lead can see whether the tool is being used at all.
+ */
+export const brdGenerationLogs = sqliteTable("BrdGenerationLog", {
+  id:           text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  /** Who generated it. Plain text, no FK — a deleted user must not erase history. */
+  userId:       text("userId"),
+  /** Snapshotted at write time so the log still reads correctly if the name changes. */
+  userName:     text("userName"),
+  userEmail:    text("userEmail"),
+  /** First heading parsed out of the generated BRD. Null if the model wrote none. */
+  title:        text("title"),
+  /** True for the first generation in a conversation — lets the log be read as
+   *  "BRDs drafted" as well as "total generations". */
+  isFirstDraft: integer("isFirstDraft", { mode: "boolean" }).default(false).notNull(),
+  /** Which model produced it, e.g. a Groq model id. */
+  model:        text("model"),
+  /** How many turns the conversation was at when this ran. */
+  messageCount: integer("messageCount").default(0).notNull(),
+  /** Characters of BRD returned — a cheap proxy for whether it produced anything real. */
+  contentLength: integer("contentLength").default(0).notNull(),
+  durationMs:   integer("durationMs"),
+  /** Set when the generation failed; title/contentLength will be empty. */
+  errorMessage: text("errorMessage"),
+  createdAt:    text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
