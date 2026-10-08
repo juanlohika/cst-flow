@@ -90,8 +90,25 @@ export interface ArimaRunArgs {
   senderUserId?: string | null;
   senderName?: string | null;
   senderChannel?: "telegram" | "portal" | "web";
-  /** Phase 13: image (and future file) attachments that should be fed to vision */
+  /**
+   * Phase 13: attachment metadata. PERSISTED to ArimaMessage.attachments, so
+   * callers must strip `base64` before passing it here — bytes in this field
+   * are what filled the database (an 8 MB photo becomes ~10.7 MB of base64 in
+   * one row). Pass the bytes in `visionAttachments` instead.
+   */
   attachments?: MessageAttachment[];
+  /**
+   * Attachments WITH bytes, for this turn's vision call only. Never persisted.
+   * Falls back to `attachments` when omitted, so existing callers that still
+   * pass base64 inline keep working.
+   */
+  visionAttachments?: MessageAttachment[];
+  /**
+   * Extra system-prompt text for this turn only. Used by gathering sessions to
+   * switch the agent into "collect a requirement" mode without a second prompt
+   * file. See src/lib/arima/gathering.ts.
+   */
+  extraInstructions?: string;
   /** Phase 13: parsed @mentions */
   mentions?: MentionRef[];
   /**
@@ -713,10 +730,18 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
       ? JSON.stringify(args.attachments.map(a => ({
           type: a.type, url: a.url || null, mime: a.mime,
           width: a.width || null, height: a.height || null, source: a.source,
-          // Persist the base64 bytes too so the portal can render Telegram-side
-          // photos (Telegram doesn't give us a public URL; we downloaded the
-          // bytes earlier and need them again when rendering).
-          base64: a.base64 || null,
+          // NO base64 HERE, EVER.
+          //
+          // This previously stored the downloaded bytes so the portal could
+          // render Telegram photos (Telegram gives no public URL). Base64
+          // inflates a file by a third, so an 8 MB photo became ~10.7 MB of
+          // text in this one row — roughly 840 photos against Turso's 9 GB,
+          // kept forever, while Drive sat unused.
+          //
+          // Bytes now go to Drive on receipt and ArimaEvidenceFile holds the
+          // link; the portal renders from that. Stripping here rather than
+          // only at the call site means a caller that forgets cannot refill
+          // the database. See src/lib/arima/evidence-drive.ts.
         })))
       : null,
     createdAt: now,
@@ -729,8 +754,17 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
 
   // Phase 13 silent-listener mode: persist the message and exit without calling the model.
   if (args.skipModelCall) {
-    // Still log the silent decision so diagnostics show why nothing happened
-    persistRunLog({
+    // Diagnostics for a silent turn are written ONLY when explicitly asked for.
+    //
+    // This path runs for every human-to-human message in every bound group. It
+    // used to write an ArimaRunLog row each time — a table whose rows carry the
+    // system prompt and model output truncated at 64,000 chars apiece. In a busy
+    // group that is continuous write traffic recording that nothing happened.
+    //
+    // Set ARIMA_LOG_SILENT_TURNS=1 to restore it while debugging a group where
+    // Arima is not waking when it should.
+    if (process.env.ARIMA_LOG_SILENT_TURNS === "1") {
+      persistRunLog({
       conversationId: args.conversationId,
       agentMode: args.agentMode || "arima",
       senderName: args.senderName || null,
@@ -751,7 +785,8 @@ export async function runArima(args: ArimaRunArgs): Promise<ArimaRunResult> {
       durationMs: null,
       toolIterations: 0,
       errorMessage: null,
-    }).catch(() => {});
+      }).catch(() => {});
+    }
     return {
       replyText: "",
       capturedRequestId: null,
@@ -954,7 +989,9 @@ Single-account data is fine to answer (you have get_client_profile and get_accou
   // Senders identify themselves so multi-speaker group context is readable to the model
   const speakerLabel = args.senderName ? `[${args.senderName}]: ` : "";
   newParts.push({ text: speakerLabel + (args.userMessage || "") });
-  for (const att of (args.attachments || [])) {
+  // Vision reads from `visionAttachments` (bytes, never persisted) and falls
+  // back to `attachments` for callers that still pass base64 inline.
+  for (const att of (args.visionAttachments || args.attachments || [])) {
     if (att.type !== "image") continue;
     if (att.base64) {
       newParts.push({ inlineData: { mimeType: att.mime, data: att.base64 } });
@@ -1130,7 +1167,11 @@ If you find yourself about to type a tool name in your reply, STOP and ask: "am 
     ? `\n\n---\n\n## OFF-HOURS NOTICE\n\nIt's currently outside business hours. Acknowledge the message and tell the user: "${inputCheck.offHoursReply}" — DO NOT promise immediate action. Capture any request via create_request so the team picks it up first thing.`
     : "";
 
-  const finalSystemInstruction = systemInstruction + offHoursNote;
+  // Gathering mode (and any future per-turn mode) appends here rather than
+  // replacing the prompt, so the agent keeps its identity, tools and guardrails
+  // while taking on a different job for the turn.
+  const finalSystemInstruction =
+    systemInstruction + offHoursNote + (args.extraInstructions || "");
 
   const baseInput: any = {
     contents,

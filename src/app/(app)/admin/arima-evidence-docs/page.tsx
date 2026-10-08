@@ -12,16 +12,17 @@
 import { useState } from "react";
 import {
   BookOpen, FolderTree, Gauge, HardDrive, MessageSquare,
-  Moon, ChevronRight, AlertTriangle, CheckCircle2, Image as ImageIcon,
+  Moon, ChevronRight, AlertTriangle, CheckCircle2, Image as ImageIcon, Trash2,
 } from "lucide-react";
 
-type Section = "flow" | "folders" | "storage" | "limits" | "troubleshoot";
+type Section = "flow" | "folders" | "storage" | "limits" | "retention" | "troubleshoot";
 
 const NAV: { id: Section; label: string; icon: any }[] = [
   { id: "flow",        label: "How a gathering works", icon: MessageSquare },
   { id: "folders",     label: "Where files are filed",  icon: FolderTree },
   { id: "storage",     label: "Why links, not bytes",   icon: HardDrive },
   { id: "limits",      label: "Rate limits",            icon: Gauge },
+  { id: "retention",   label: "Retention",              icon: Trash2 },
   { id: "troubleshoot",label: "Troubleshooting",        icon: AlertTriangle },
 ];
 
@@ -74,6 +75,7 @@ export default function ArimaEvidenceDocsPage() {
           {section === "folders" && <FoldersSection />}
           {section === "storage" && <StorageSection />}
           {section === "limits" && <LimitsSection />}
+          {section === "retention" && <RetentionSection />}
           {section === "troubleshoot" && <TroubleshootSection />}
         </div>
       </div>
@@ -384,6 +386,86 @@ function LimitsSection() {
           keeps its own count, and the provider&rsquo;s own headers are what keep the
           total honest.
         </Note>
+      </Card>
+    </>
+  );
+}
+
+function RetentionSection() {
+  return (
+    <>
+      <Card title="What gets cleared, and what never does" icon={Trash2}>
+        <p>
+          Four tables grow with use and have no natural end. A weekly sweep clears
+          what has aged out of usefulness.
+        </p>
+        <Note tone="good">
+          <strong>Nothing that records what was asked for is ever deleted.</strong>{" "}
+          Requests, evidence links, conversation messages and the BRD usage log all
+          stay. Clearing diagnostics is housekeeping; clearing the record would be
+          data loss.
+        </Note>
+      </Card>
+
+      <Card title="The policy">
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="text-left border-b border-slate-200">
+                <th className="py-2 pr-4 font-semibold text-slate-700">What</th>
+                <th className="py-2 pr-4 font-semibold text-slate-700">Kept for</th>
+                <th className="py-2 font-semibold text-slate-700">Why</th>
+              </tr>
+            </thead>
+            <tbody className="text-slate-600">
+              {[
+                ["Turn diagnostics", "60 days", "Debugging history. Each row can hold the full system prompt and model output."],
+                ["Tool-call audit", "180 days", "Answers “did Arima actually do that?” Pending approvals are never deleted."],
+                ["Finished gatherings", "90 days", "The session row only; its evidence links are kept."],
+                ["Knowledge doc versions", "last 10", "Each version stores a full copy of the document."],
+                ["Exported BRD blobs", "until exported", "Cleared once the Google Doc exists — the Doc is the real artifact, and the link is kept."],
+              ].map(([a, b, c]) => (
+                <tr key={a as string} className="border-b border-slate-100">
+                  <td className="py-2 pr-4 font-medium text-slate-800">{a}</td>
+                  <td className="py-2 pr-4 whitespace-nowrap">{b}</td>
+                  <td className="py-2">{c}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card title="Running it">
+        <p>
+          <Mono>POST /api/cron/retention</Mono> — admin session, or the{" "}
+          <Mono>x-cron-secret</Mono> header using the same secret as the portfolio
+          cron.
+        </p>
+        <p>
+          <strong>Run it with <Mono>?dry=1</Mono> first.</strong> That counts what
+          would be removed without deleting anything.
+        </p>
+        <p>
+          Suggested schedule: weekly, Sunday 03:00. There is no urgency — the point
+          is that growth stops being unbounded, not that it is trimmed daily. Each
+          run is capped at 5,000 rows per table so it cannot lock the database on a
+          large backlog; run it again to drain more.
+        </p>
+      </Card>
+
+      <Card title="Silent turns are no longer logged">
+        <p>
+          Arima used to write a diagnostic row for every message in every bound
+          group, including conversations it was not part of — recording, at length,
+          that nothing happened.
+        </p>
+        <p>
+          Now only turns where Arima is actually awake are logged. If you are
+          debugging a group where it is not waking when it should, set{" "}
+          <Mono>ARIMA_LOG_SILENT_TURNS=1</Mono> to bring the old behaviour back
+          temporarily.
+        </p>
       </Card>
     </>
   );

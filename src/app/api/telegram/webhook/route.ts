@@ -30,10 +30,16 @@ import {
 import { lookupKeyByToken, findActiveBindingForKey } from "@/lib/telegram/bind-keys";
 import { runArima, shouldArimaRespond, shouldElianaRespond, type MessageAttachment, type MentionRef } from "@/lib/arima/runtime";
 import { loadActiveSuperAdminContext, extendSuperAdminContext } from "@/lib/super-admin/context";
-import { superAdminContext as saCtxTable, superAdminUsers as saUsersTable } from "@/db/schema";
+import { superAdminContext as saCtxTable, superAdminUsers as saUsersTable, clientProfiles } from "@/db/schema";
 import { ensureAccessSchema } from "@/lib/access/accounts";
 import { resolveTelegramMentions } from "@/lib/arima/mentions";
 import { broadcastToClient } from "@/lib/portal/stream";
+import {
+  resolveWake, beginGathering, handleEvidence, finishGathering,
+  gatheringInstructions,
+} from "@/lib/arima/gathering";
+import { deriveRequestTitle } from "@/lib/arima/gathering-title";
+import type { GatherSession } from "@/lib/arima/session";
 
 export const dynamic = "force-dynamic";
 
@@ -252,7 +258,24 @@ export async function POST(req: Request) {
     const entities: any[] = Array.isArray(message.entities)
       ? message.entities
       : (Array.isArray(message.caption_entities) ? message.caption_entities : []);
-    if (!chat || !from || (!text && photos.length === 0)) {
+
+    // Non-photo media: video, documents, voice. We do not download these —
+    // video cannot be read by a vision model, and documents would need their own
+    // parsing path. But a message carrying one must not vanish: previously a
+    // document sent with no caption was dropped at the gate below with no trace,
+    // so a screen recording shared in a bound group simply never existed.
+    //
+    // We note the kind, let the message through, and tell the user what to do
+    // with it when Arima is gathering.
+    const otherMedia =
+      message.video ? "video" :
+      message.animation ? "animation" :
+      message.document ? "document" :
+      message.voice ? "voice note" :
+      message.audio ? "audio" :
+      message.video_note ? "video note" : null;
+
+    if (!chat || !from || (!text && photos.length === 0 && !otherMedia)) {
       return NextResponse.json({ ok: true, ignored: "no-content" });
     }
 
@@ -761,6 +784,7 @@ export async function POST(req: Request) {
             channel: "telegram",
             photos,
             entities,
+            otherMedia,
             isGroup: true,
           });
           return NextResponse.json({ ok: true });
@@ -787,8 +811,10 @@ export async function POST(req: Request) {
           channel: "telegram",
           photos,
           entities,
+          otherMedia,
           isGroup: true,
           rmTeamUserId: binding.scopeRef,
+          scopeType: "rm-team",
         });
         return NextResponse.json({ ok: true });
       }
@@ -808,7 +834,9 @@ export async function POST(req: Request) {
         channel: "telegram",
         photos,
         entities,
+        otherMedia,
         isGroup: true,
+        scopeType: binding.scopeType || "client",
       });
       return NextResponse.json({ ok: true });
     }
@@ -886,7 +914,25 @@ async function handleArimaChat(args: {
   isGroup: boolean;
   /** Phase E.9 — team-room scope. When set, ARIMA is scoped to this RM's primary accounts. */
   rmTeamUserId?: string | null;
+  /** Binding scope — decides which Drive folder gathered evidence files into. */
+  scopeType?: string | null;
+  /** Non-photo media kind on this message (video/document/voice), if any. */
+  otherMedia?: string | null;
 }) {
+  // Account name for the Drive folder path. Internal and team rooms have no
+  // single client, so they file under _Internal and this stays null.
+  let clientName: string | null = null;
+  if (args.clientProfileId) {
+    try {
+      const prof = await db
+        .select({ name: clientProfiles.companyName })
+        .from(clientProfiles)
+        .where(eq(clientProfiles.id, args.clientProfileId))
+        .limit(1);
+      clientName = prof[0]?.name || null;
+    } catch { /* name is cosmetic — the folder still files under the id */ }
+  }
+
   // Resolve the sender to a CST OS internal user if they've linked their Telegram.
   // Falls back to "external" attribution if no link exists (treats it as a client speaker).
   let senderCstUserId: string | null = null;
@@ -924,7 +970,15 @@ async function handleArimaChat(args: {
     : [];
 
   // Pull the largest photo (Telegram sends multiple sizes); download to bytes.
+  //
+  // The bytes are held HERE, in request memory, and handed to the Drive filer
+  // below. They are deliberately NOT put on the attachment we pass to runArima:
+  // that object is persisted to ArimaMessage.attachments, and base64 inflates a
+  // file by a third, so an 8 MB photo became ~10.7 MB of text in one SQLite row
+  // — about 840 photos against Turso's 9 GB. Drive holds the bytes now and the
+  // row holds a link. See src/lib/arima/evidence-drive.ts.
   const attachments: MessageAttachment[] = [];
+  const rawPhotos: { buffer: Buffer; mimeType: string; width: number; height: number }[] = [];
   if (args.photos?.length > 0) {
     const largest = [...args.photos].sort((a, b) =>
       (b.width * b.height) - (a.width * a.height)
@@ -932,12 +986,20 @@ async function handleArimaChat(args: {
     if (largest?.file_id) {
       const file = await tgFetchFile(args.botToken, largest.file_id).catch(() => null);
       if (file) {
+        rawPhotos.push({
+          buffer: file.buffer,
+          mimeType: file.mime,
+          width: largest.width,
+          height: largest.height,
+        });
         attachments.push({
           type: "image",
           mime: file.mime,
           width: largest.width,
           height: largest.height,
           source: "telegram",
+          // base64 is attached only for the turn the model needs to see it, and
+          // stripped before persistence (see the runArima call below).
           base64: file.buffer.toString("base64"),
         });
       }
@@ -1050,6 +1112,95 @@ async function handleArimaChat(args: {
     }
   }
 
+  // ── Gathering sessions: wake → gather → confirm → rest ───────────────────
+  //
+  // Arima is not a permanent listener. It wakes when tagged with something that
+  // reads like a requirement, stays awake through the clarification exchange,
+  // and rests on confirmation or after 15 idle minutes. While awake it reads
+  // every message in the thread, which is what makes follow-up screenshots work
+  // without re-tagging. See src/lib/arima/gathering.ts.
+  let wake: Awaited<ReturnType<typeof resolveWake>> | null = null;
+  let gatherSession: GatherSession | null = null;
+  let evidenceNote: string | null = null;
+
+  if (args.agentMode === "arima") {
+    try {
+      wake = await resolveWake({
+        conversationId: convoId,
+        isGroup: args.isGroup,
+        text: args.userMessage || "",
+        hasArimaMention,
+        hasAttachments: attachments.length > 0,
+      });
+
+      // A tag that reads like a requirement starts a session and its folder.
+      if (wake.reason === "tagged-gather") {
+        const started = await beginGathering({
+          conversationId: convoId,
+          chatId: String(args.chatId),
+          clientProfileId: args.clientProfileId,
+          scopeType: args.scopeType || "client",
+          accountName: clientName,
+          accountId: args.clientProfileId,
+          requestTitle: deriveRequestTitle(args.userMessage || ""),
+          wokenByUserId: senderCstUserId,
+          wokenByName: args.senderName,
+        });
+        gatherSession = started.session;
+        if (started.folderError) {
+          evidenceNote =
+            "Heads up — I can gather this, but the evidence Drive folder isn't " +
+            "configured, so I can't save screenshots. An admin can set it in " +
+            "Admin → Google Integration.";
+        }
+      } else {
+        gatherSession = wake.session;
+      }
+
+      // Any photo on this turn is filed to Drive while a session is live.
+      if (gatherSession && rawPhotos.length) {
+        const outcome = await handleEvidence({
+          session: gatherSession,
+          attachments: rawPhotos.map((p) => ({
+            buffer: p.buffer,
+            mimeType: p.mimeType,
+            kind: "screenshot" as const,
+            width: p.width,
+            height: p.height,
+            caption: args.userMessage || null,
+          })),
+          conversationId: convoId,
+          uploadedByName: args.senderName,
+          conversationContext: args.userMessage || null,
+          scopeType: args.scopeType || "client",
+          accountName: clientName,
+          accountId: args.clientProfileId,
+        });
+        if (outcome.note) evidenceNote = outcome.note;
+      }
+
+      // Someone shared a video or document. We cannot read either — a vision
+      // model takes stills, and documents have no parsing path here — so point
+      // them at the folder rather than letting the file disappear.
+      if (gatherSession && args.otherMedia) {
+        const where = gatherSession.driveFolderUrl
+          ? `\n${gatherSession.driveFolderUrl}`
+          : "";
+        evidenceNote =
+          args.otherMedia === "video" || args.otherMedia === "video note" || args.otherMedia === "animation"
+            ? `I can't read video. Please upload it to the evidence folder and I'll reference it in the handoff:${where}`
+            : `I can't open a ${args.otherMedia} here. Please upload it to the evidence folder:${where}`;
+      }
+
+      // The wake decision overrides the generic gate: it knows about sessions,
+      // which shouldArimaRespond() does not.
+      if (args.isGroup) shouldReply = wake.respond;
+    } catch (e: any) {
+      // Gathering must never take the conversation down with it.
+      console.warn("[telegram/webhook] gathering step failed (non-fatal):", e?.message);
+    }
+  }
+
   // Show "typing" only if we'll actually reply
   if (shouldReply) {
     try { await tgSendChatAction(args.botToken, args.chatId, "typing"); } catch {}
@@ -1060,16 +1211,32 @@ async function handleArimaChat(args: {
       conversationId: convoId,
       userId: conversationOwnerId,
       clientProfileId: args.clientProfileId,
-      userMessage: args.userMessage || (attachments.length > 0 ? "(photo)" : ""),
+      userMessage:
+        args.userMessage ||
+        (attachments.length > 0
+          ? "(photo)"
+          : args.otherMedia
+            ? `(shared a ${args.otherMedia})`
+            : ""),
       priorContents,
       senderType,
       senderUserId: senderCstUserId,
       senderName: args.senderName,
       senderChannel: "telegram",
-      attachments,
+      // Bytes are stripped before this reaches the DB. runArima persists
+      // `attachments` verbatim into ArimaMessage.attachments; keeping base64
+      // there is what filled the database. The model still sees the image this
+      // turn via `visionAttachments` below, which is never persisted.
+      attachments: attachments.map(({ base64: _drop, ...rest }) => rest),
+      visionAttachments: attachments,
       mentions,
       skipModelCall: !shouldReply,
       agentMode: args.agentMode,
+      // Only present while a gathering session is live; tells the model to
+      // collect rather than answer. See src/lib/arima/gathering.ts.
+      extraInstructions: gatherSession
+        ? gatheringInstructions(gatherSession, gatherSession.evidenceCount)
+        : undefined,
       // Phase 21: pass speaker context so send_telegram_dm can authority-check
       // and post permission-grant buttons back into the originating group.
       speakerTelegramUserId: args.senderTelegramId,
@@ -1098,7 +1265,34 @@ async function handleArimaChat(args: {
       );
       return;
     }
-    await safeReply(args.botToken, args.chatId, replyText, args.replyToMessageId);
+    // Evidence filing happens before the model runs, so its note is appended
+    // rather than replacing Arima's own words. One short line, not a receipt
+    // for every file — a busy group stays readable.
+    const outbound = evidenceNote ? `${replyText}\n\n_${evidenceNote}_` : replyText;
+    await safeReply(args.botToken, args.chatId, outbound, args.replyToMessageId);
+
+    // The user confirmed the summary (or said stop): write PROMPT.md into the
+    // evidence folder, post the folder link, and let Arima go back to sleep.
+    if (wake?.finishing && gatherSession) {
+      try {
+        const finished = await finishGathering({
+          session: gatherSession,
+          requirement: result.replyText || gatherSession.requestTitle || "(see conversation)",
+          participants: args.senderName ? [args.senderName] : [],
+          accountName: clientName,
+          reason: wake.reason === "session-rest" ? "explicit-rest" : "confirmed",
+        });
+        await safeReply(args.botToken, args.chatId, finished.message, args.replyToMessageId);
+      } catch (e: any) {
+        console.warn("[telegram/webhook] finishGathering failed:", e?.message);
+        await safeReply(
+          args.botToken,
+          args.chatId,
+          "I captured everything but couldn't write the handoff file. The screenshots are saved — an admin can check Admin → Google Integration.",
+          args.replyToMessageId
+        );
+      }
+    }
   } catch (e: any) {
     console.error("[telegram/webhook] ARIMA failed:", e);
     if (!shouldReply) return;

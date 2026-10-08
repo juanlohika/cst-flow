@@ -4,5 +4,6 @@
  */
 import "./builtins";
 import "./super-admin-tools";
+import "./gathering-tools";
 
 export * from "./registry";
