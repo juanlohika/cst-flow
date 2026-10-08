@@ -212,25 +212,32 @@ function FoldersSection() {
     <>
       <Card title="Folder convention" icon={FolderTree}>
         <p>
-          Evidence is filed under the Drive folder set in{" "}
-          <a href="/admin/google-integration" className="text-blue-600 hover:underline">
-            Admin → Google Integration
-          </a>
-          . Arima decides the sub-path from the binding it is responding in, so nobody
-          has to tell it where things go.
+          Evidence goes into the <strong>CST - ARIMA</strong> shared drive, under a{" "}
+          <Mono>Requirements</Mono> folder created on first use — beside the{" "}
+          <Mono>BRD</Mono>, <Mono>Proposals</Mono> and <Mono>Tarkie v5 CST OS</Mono>{" "}
+          folders Arima already files into. Nothing needs configuring. Arima works
+          out the sub-path from the binding it is responding in.
         </p>
-        <pre className="bg-slate-900 text-slate-100 rounded-lg p-4 text-[11.5px] leading-relaxed overflow-x-auto font-mono">{`<parent folder>/
-  Landlite Corp — a1b2c3/           ← client-scoped rooms
-    2026-10-08 — Share of Display cap/
-      screenshots/
-      recordings/
-      PROMPT.md
-  _Internal/
-    MOI/                            ← internal + team rooms
-      2026-10-08 — MTD auto-compute/
+        <pre className="bg-slate-900 text-slate-100 rounded-lg p-4 text-[11.5px] leading-relaxed overflow-x-auto font-mono">{`CST - ARIMA/                        ← shared drive
+  BRD/                              ← (existing)
+  Proposals/                        ← (existing)
+  Tarkie v5 CST OS/                 ← (existing)
+  Requirements/                     ← created on first use
+    Landlite Corp — a1b2c3/         ← client-scoped rooms
+      2026-10-08 — Share of Display cap/
         screenshots/
         recordings/
-        PROMPT.md`}</pre>
+        PROMPT.md
+    _Internal/
+      MOI/                          ← internal + team rooms
+        2026-10-08 — MTD auto-compute/
+          screenshots/
+          recordings/
+          PROMPT.md`}</pre>
+        <Note tone="info">
+          The account folder format — <Mono>Name — last6ofId</Mono> — matches what{" "}
+          <Mono>Tarkie v5 CST OS</Mono> already uses, so the two read the same way.
+        </Note>
       </Card>
 
       <Card title="The rules behind it">
@@ -483,7 +490,7 @@ function TroubleshootSection() {
     },
     {
       q: "Screenshots are not being filed",
-      a: "The evidence folder must be set in Admin → Google Integration, and that Drive folder must be shared with the service account shown on that page. Without both, Arima can still read the screenshot but has nowhere to put it, and will say so in the chat.",
+      a: "Evidence goes to the CST - ARIMA shared drive with no setup needed, so this almost always means the Google service account is missing or has lost access to that drive. Check Admin → Google Integration, and confirm the service account email listed there is a member of CST - ARIMA. Arima will say so in the chat rather than failing silently.",
     },
     {
       q: "A screen recording was ignored",

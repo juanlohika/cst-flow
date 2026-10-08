@@ -44,8 +44,25 @@ import { globalSettings } from "@/db/schema";
 
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 
-/** Where Arima files requirement evidence. Settable in Admin → Google Integration. */
+/** Override for where evidence is filed. Normally unset — see the default below. */
 export const EVIDENCE_PARENT_KEY = "GOOGLE_DRIVE_ARIMA_EVIDENCE_FOLDER_ID";
+
+/**
+ * The "CST - ARIMA" shared drive, which Arima already uses for BRDs, proposals,
+ * pin validation and pilot folders. Requirement evidence belongs alongside
+ * those rather than in a folder someone has to create and wire up by hand.
+ *
+ * A shared-drive root id works as a parent because every Drive call here passes
+ * supportsAllDrives.
+ */
+export const ARIMA_SHARED_DRIVE_ID = "0ADCWg-vie1aUUk9PVA";
+
+/**
+ * Evidence is filed under this folder inside the drive, so it sits beside
+ * "BRD" and "Tarkie v5 CST OS" instead of scattering dated folders at the root.
+ * Created on first use.
+ */
+export const EVIDENCE_ROOT_FOLDER = "Requirements";
 
 interface Cfg {
   serviceAccountJson: string;
@@ -62,14 +79,15 @@ async function loadConfig(): Promise<Cfg | null> {
   }
   const serviceAccountJson =
     map.get("GOOGLE_SERVICE_ACCOUNT_JSON") || process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "";
-  // Falls back to the BRD folder so evidence still lands somewhere sane before
-  // a dedicated folder is configured.
+  // Arima already owns a shared drive ("CST - ARIMA") organised by function —
+  // BRD, Proposals, Store Pins Validation, Tarkie v5 CST OS. Requirement
+  // evidence is another of those, so it defaults into that drive and creates a
+  // "Requirements" folder on first use. Nothing to configure; the override
+  // exists only for a deployment that files somewhere else.
   const parentFolderId =
     map.get(EVIDENCE_PARENT_KEY) ||
     process.env.GOOGLE_DRIVE_ARIMA_EVIDENCE_FOLDER_ID ||
-    map.get("GOOGLE_DRIVE_BRD_FOLDER_ID") ||
-    process.env.GOOGLE_DRIVE_BRD_FOLDER_ID ||
-    "";
+    ARIMA_SHARED_DRIVE_ID;
   if (!serviceAccountJson || !parentFolderId) return null;
   return { serviceAccountJson, parentFolderId };
 }
@@ -196,17 +214,20 @@ export async function ensureRequirementFolder(args: {
 }): Promise<RequirementFolder> {
   const cfg = await loadConfig();
   if (!cfg) {
+    // The parent always resolves (it defaults to the CST - ARIMA drive), so
+    // reaching here means the service account itself is missing.
     throw new Error(
-      `Arima evidence Drive is not configured. Set ${EVIDENCE_PARENT_KEY} in ` +
-        `Admin → Google Integration to the Drive folder Arima should file evidence into, ` +
-        `and share that folder with the service account.`
+      `Google service account is not configured. Add it in Admin → Google Integration, ` +
+        `and make sure that account has access to the "CST - ARIMA" shared drive.`
     );
   }
   const { drive } = await driveClient(cfg);
 
-  // Walk down the scope path, creating as needed.
+  // Walk down the scope path, creating as needed. "Requirements" sits at the
+  // top so evidence groups beside the drive's other functional folders rather
+  // than scattering account folders across its root.
   let parentId = cfg.parentFolderId;
-  const segments = scopeFolderPath(args.scope);
+  const segments = [EVIDENCE_ROOT_FOLDER, ...scopeFolderPath(args.scope)];
   for (const seg of segments) {
     const f = await findOrCreateFolder(drive, seg, parentId);
     parentId = f.id;

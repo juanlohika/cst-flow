@@ -189,8 +189,8 @@ export async function handleEvidence(args: {
       filed: 0,
       failed: args.attachments.length,
       note:
-        "I can see the file but I have nowhere to put it — the evidence Drive folder " +
-        "isn't configured yet. An admin can set it in Admin → Google Integration.",
+        "I can see the file but I can't reach Drive — the Google service account " +
+        "isn't set up. An admin can fix this in Admin → Google Integration.",
       folderUrl: null,
     };
   }

@@ -1149,9 +1149,8 @@ async function handleArimaChat(args: {
         gatherSession = started.session;
         if (started.folderError) {
           evidenceNote =
-            "Heads up — I can gather this, but the evidence Drive folder isn't " +
-            "configured, so I can't save screenshots. An admin can set it in " +
-            "Admin → Google Integration.";
+            "Heads up — I can gather this, but I can't reach Drive, so I can't " +
+            "save screenshots. An admin can check Admin → Google Integration.";
         }
       } else {
         gatherSession = wake.session;
