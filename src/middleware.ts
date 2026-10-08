@@ -8,6 +8,10 @@ export default auth((req) => {
   const isPublicApi = pathname.startsWith("/api/meetings/lookup") ||
                      pathname === "/api/debug-db" ||
                      pathname === "/api/branding" ||
+                     // Build marker. Must be public: every other path redirects
+                     // to sign-in, so without this there is no way to tell from
+                     // outside whether a deploy has landed. Returns no secrets.
+                     pathname === "/api/version" ||
                      pathname === "/api/telegram/webhook" ||
                      pathname.startsWith("/api/portal/") ||
                      // Pin Validator API: cookie-session auth + per-project
