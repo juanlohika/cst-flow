@@ -131,10 +131,51 @@ export async function GET(req: Request) {
       sessionsByProfile[pid].push(s);
     }
 
+    // Assigned internal team (PM / BA / RM …) for every account in one query —
+    // the list page shows and filters on these, and fetching per account would
+    // be 128 round-trips. Best-effort: a failure here must not blank the list.
+    const assigneesByProfile: Record<string, any[]> = {};
+    try {
+      const profileIds = profiles.map((p: any) => p.id);
+      if (profileIds.length > 0) {
+        const memberRows = await db
+          .select({
+            clientProfileId: membershipsTable.clientProfileId,
+            userId:          membershipsTable.userId,
+            internalRole:    membershipsTable.internalRole,
+            isPrimary:       membershipsTable.isPrimary,
+            userName:        usersTable.name,
+            userEmail:       usersTable.email,
+          })
+          .from(membershipsTable)
+          .leftJoin(usersTable, eq(membershipsTable.userId, usersTable.id))
+          .where(inArray(membershipsTable.clientProfileId, profileIds));
+
+        for (const m of memberRows) {
+          // Only typed roles are "assignments" — a plain viewer membership is
+          // access, not ownership, and should not show as the assigned person.
+          if (!m.internalRole) continue;
+          const pid = m.clientProfileId;
+          if (!assigneesByProfile[pid]) assigneesByProfile[pid] = [];
+          assigneesByProfile[pid].push(m);
+        }
+        // Primary first, then alphabetical — so the list cell shows the owner.
+        for (const pid of Object.keys(assigneesByProfile)) {
+          assigneesByProfile[pid].sort((a, b) =>
+            (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0) ||
+            (a.userName || a.userEmail || "").localeCompare(b.userName || b.userEmail || "")
+          );
+        }
+      }
+    } catch (memErr: any) {
+      console.warn("[/api/meeting-prep/profiles] assignee join failed:", memErr?.message);
+    }
+
     const formatted = profiles.map((p: any) => ({
       ...p,
       modulesAvailed: (() => { try { return JSON.parse(p.modulesAvailed || "[]"); } catch { return []; } })(),
       meetingPrepSessions: sessionsByProfile[p.id] || [],
+      assignees: assigneesByProfile[p.id] || [],
     }));
 
     return NextResponse.json(formatted);

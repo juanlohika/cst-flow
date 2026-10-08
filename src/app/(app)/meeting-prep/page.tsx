@@ -44,6 +44,14 @@ export default function MeetingPrepPage() {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface Assignee {
+  userId: string;
+  internalRole: string | null;
+  isPrimary: boolean;
+  userName: string | null;
+  userEmail: string | null;
+}
+
 interface ClientProfile {
   id: string;
   companyName: string;
@@ -55,6 +63,11 @@ interface ClientProfile {
   specialConsiderations?: string;
   updatedAt: string;
   meetingPrepSessions?: PrepSession[];
+  // Present on every row from /api/meeting-prep/profiles; the older minimal
+  // fallback select omits them, so treat each as optional.
+  tier?: string | null;
+  groupTier?: string | null;
+  assignees?: Assignee[];
 }
 
 interface PrepSession {
@@ -171,6 +184,10 @@ function MeetingPrepContent() {
   const { showToast } = useToast();
   const { data: session } = useSession();
   const isAdmin = (session?.user as any)?.role === "admin";
+  const myUserId = (session?.user as any)?.id as string | undefined;
+  /** Mirrors the server gate: admins, or whoever holds this account's primary membership. */
+  const canAssign = (p: ClientProfile) =>
+    isAdmin || (p.assignees || []).some(a => a.isPrimary && a.userId === myUserId);
   const [view, setView] = useState<"list" | "form" | "profile-detail">("list");
   const [editingProfile, setEditingProfile] = useState<ClientProfile | null>(null);
   const [profiles, setProfiles] = useState<ClientProfile[]>([]);
@@ -184,13 +201,28 @@ function MeetingPrepContent() {
   const [filterIndustry, setFilterIndustry] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterHealth, setFilterHealth] = useState<"" | HealthColor>("");
+  const [filterAssignee, setFilterAssignee] = useState("");
+  // Everyone who can be assigned — feeds the filter and the row picker.
+  const [teamUsers, setTeamUsers] = useState<{ id: string; name: string | null; email: string }[]>([]);
+  // Which row's assign popover is open, keyed by account id.
+  const [assignOpen, setAssignOpen] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [sortKey, setSortKey] = useState<"companyName" | "industry" | "updatedAt">("updatedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const [formData, setFormData] = useState(EMPTY_FORM);
 
-  useEffect(() => { loadProfiles(); loadHealth(); }, []);
+  useEffect(() => { loadProfiles(); loadHealth(); loadTeam(); }, []);
+
+  const loadTeam = async () => {
+    try {
+      const res = await fetch("/api/users/members");
+      if (res.ok) {
+        const data = await res.json();
+        setTeamUsers(Array.isArray(data?.users) ? data.users : []);
+      }
+    } catch { /* the filter simply stays empty */ }
+  };
 
   const loadProfiles = async () => {
     setLoading(true);
@@ -231,6 +263,11 @@ function MeetingPrepContent() {
         return h.color === filterHealth;
       });
     }
+    if (filterAssignee) {
+      rows = filterAssignee === "__none__"
+        ? rows.filter(p => !(p.assignees || []).length)
+        : rows.filter(p => (p.assignees || []).some(a => a.userId === filterAssignee));
+    }
 
     rows = [...rows].sort((a, b) => {
       const av = a[sortKey] as string;
@@ -239,7 +276,7 @@ function MeetingPrepContent() {
     });
 
     return rows;
-  }, [profiles, search, filterIndustry, filterStatus, filterHealth, healthMap, sortKey, sortDir]);
+  }, [profiles, search, filterIndustry, filterStatus, filterHealth, filterAssignee, healthMap, sortKey, sortDir]);
 
   // Aggregate counts for the toolbar pills
   const healthCounts = useMemo(() => {
@@ -448,9 +485,24 @@ function MeetingPrepContent() {
               </select>
             </div>
 
-            {(search || filterIndustry || filterStatus || filterHealth) && (
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] font-bold text-text-muted uppercase tracking-widest mr-1">Assigned:</span>
+              <select
+                value={filterAssignee}
+                onChange={e => { setFilterAssignee(e.target.value); setPage(1); }}
+                className="h-7 px-2 border border-border-default rounded-md text-[11px] font-bold bg-white focus:outline-none focus:ring-1 focus:ring-primary/40"
+              >
+                <option value="">Anyone</option>
+                <option value="__none__">— Unassigned —</option>
+                {teamUsers.map(u => (
+                  <option key={u.id} value={u.id}>{u.name || u.email}</option>
+                ))}
+              </select>
+            </div>
+
+            {(search || filterIndustry || filterStatus || filterHealth || filterAssignee) && (
               <button
-                onClick={() => { setSearch(""); setFilterIndustry(""); setFilterStatus(""); setFilterHealth(""); setPage(1); }}
+                onClick={() => { setSearch(""); setFilterIndustry(""); setFilterStatus(""); setFilterHealth(""); setFilterAssignee(""); setPage(1); }}
                 className="text-[11px] font-bold text-text-muted hover:text-text-primary px-2 transition-colors uppercase tracking-widest"
               >
                 Clear
@@ -538,6 +590,9 @@ function MeetingPrepContent() {
                         <SortHeader label="Company / Account" col="companyName" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                         <SortHeader label="Industry" col="industry" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                         <th className="px-3 py-2 text-[11px] font-bold text-text-muted border-b border-border-default select-none uppercase tracking-widest">Modules</th>
+                        <th className="px-3 py-2 text-[11px] font-bold text-text-muted border-b border-border-default select-none uppercase tracking-widest">Group Tier</th>
+                        <th className="px-3 py-2 text-[11px] font-bold text-text-muted border-b border-border-default select-none uppercase tracking-widest">Acct Tier</th>
+                        <th className="px-3 py-2 text-[11px] font-bold text-text-muted border-b border-border-default select-none uppercase tracking-widest">Assigned</th>
                         <th className="px-3 py-2 text-[11px] font-bold text-text-muted border-b border-border-default select-none uppercase tracking-widest">Health</th>
                         <th className="px-3 py-2 text-[11px] font-bold text-text-muted border-b border-border-default select-none uppercase tracking-widest">Status</th>
                         <th className="px-3 py-2 text-[11px] font-bold text-text-muted border-b border-border-default select-none uppercase tracking-widest">Preps</th>
@@ -582,6 +637,22 @@ function MeetingPrepContent() {
                                 ))}
                                 {modules.length > 2 && <span className="text-[10px] text-text-muted">+{modules.length - 2}</span>}
                               </div>
+                            </td>
+                            <td className="px-3 py-3">
+                              <TierChip value={profile.groupTier} />
+                            </td>
+                            <td className="px-3 py-3">
+                              <TierChip value={profile.tier} />
+                            </td>
+                            <td className="px-3 py-3">
+                              <AssignCell
+                                profile={profile}
+                                teamUsers={teamUsers}
+                                canAssign={canAssign(profile)}
+                                open={assignOpen === profile.id}
+                                onToggle={() => setAssignOpen(assignOpen === profile.id ? null : profile.id)}
+                                onChanged={loadProfiles}
+                              />
                             </td>
                             <td className="px-3 py-3">
                               {(() => {
@@ -1000,6 +1071,163 @@ function ComplianceBadge({ status, daysSince, frequency }: { status: "compliant"
     >
       {p.icon} {p.label}
     </span>
+  );
+}
+
+
+const ROLE_OPTIONS = ["PM", "BA", "RM", "Developer", "Other"] as const;
+
+/** Tier badge. VIP reads differently from a numbered tier, so it is coloured. */
+function TierChip({ value }: { value?: string | null }) {
+  if (!value) return <span className="text-[11px] text-text-muted">—</span>;
+  const vip = String(value).toUpperCase() === "VIP";
+  return (
+    <span className={`px-1.5 py-0.5 text-[10px] font-bold uppercase rounded border ${
+      vip
+        ? "bg-amber-50 text-amber-700 border-amber-200"
+        : "bg-surface-muted text-text-muted border-border-default"
+    }`}>
+      {value}
+    </span>
+  );
+}
+
+/**
+ * Assigned-people cell. Shows who owns the account and, for those allowed to
+ * change it, opens a small picker on click. Assigning writes an
+ * AccountMembership, so it grants the person access as well as labelling them.
+ */
+function AssignCell({ profile, teamUsers, canAssign, open, onToggle, onChanged }: {
+  profile: ClientProfile;
+  teamUsers: { id: string; name: string | null; email: string }[];
+  canAssign: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onChanged: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [role, setRole] = useState<string>("RM");
+  const [busy, setBusy] = useState(false);
+  const assignees = profile.assignees || [];
+
+  const assign = async (userId: string) => {
+    setBusy(true);
+    try {
+      await fetch(`/api/accounts/${profile.id}/members`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, role: "member", internalRole: role, isPrimary: assignees.length === 0 }),
+      });
+      // POST is idempotent on an existing membership and skips internalRole,
+      // so follow with a PATCH to be sure the role lands either way.
+      await fetch(`/api/accounts/${profile.id}/members`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, internalRole: role }),
+      });
+      setSearch("");
+      onToggle();
+      onChanged();
+    } finally { setBusy(false); }
+  };
+
+  const unassign = async (userId: string) => {
+    setBusy(true);
+    try {
+      await fetch(`/api/accounts/${profile.id}/members?userId=${userId}`, { method: "DELETE" });
+      onChanged();
+    } finally { setBusy(false); }
+  };
+
+  const candidates = teamUsers
+    .filter(u => !assignees.some(a => a.userId === u.id))
+    .filter(u => {
+      const q = search.trim().toLowerCase();
+      if (!q) return true;
+      return (u.name || "").toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+    })
+    .slice(0, 8);
+
+  return (
+    <div className="relative">
+      <div className="flex items-center gap-1 flex-wrap">
+        {assignees.length === 0 ? (
+          <span className="text-[11px] text-text-muted">Unassigned</span>
+        ) : (
+          assignees.slice(0, 2).map(a => (
+            <span key={a.userId}
+                  title={`${a.userName || a.userEmail} — ${a.internalRole}`}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-surface-muted text-text-secondary text-[10px] font-bold rounded border border-border-default">
+              {a.isPrimary && <span className="text-amber-500">★</span>}
+              {(a.userName || a.userEmail || "?").split(" ")[0]}
+              <span className="text-text-muted">{a.internalRole}</span>
+            </span>
+          ))
+        )}
+        {assignees.length > 2 && (
+          <span className="text-[10px] text-text-muted">+{assignees.length - 2}</span>
+        )}
+        {canAssign && (
+          <button
+            onClick={onToggle}
+            className="ml-0.5 w-5 h-5 flex items-center justify-center rounded border border-border-default bg-white text-text-muted hover:text-primary hover:border-primary/40 opacity-0 group-hover:opacity-100 transition-opacity"
+            title="Assign someone"
+          >
+            <Plus className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+
+      {open && canAssign && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={onToggle} />
+          <div className="absolute left-0 top-full mt-1 z-50 w-60 bg-white border border-border-default rounded-lg shadow-lg p-2 space-y-2">
+            {assignees.length > 0 && (
+              <div className="space-y-0.5 pb-1 border-b border-border-default">
+                {assignees.map(a => (
+                  <div key={a.userId} className="flex items-center gap-1.5 px-1 py-0.5">
+                    <span className="flex-1 text-[11px] font-semibold text-text-primary truncate">
+                      {a.userName || a.userEmail}
+                    </span>
+                    <span className="text-[9px] font-bold text-text-muted">{a.internalRole}</span>
+                    <button onClick={() => unassign(a.userId)} disabled={busy}
+                            className="text-text-muted hover:text-rose-500 disabled:opacity-40" title="Remove">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center gap-1.5">
+              <select value={role} onChange={e => setRole(e.target.value)}
+                      className="h-6 px-1 border border-border-default rounded text-[10px] font-bold bg-white">
+                {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+              <input
+                autoFocus
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search name…"
+                className="flex-1 h-6 px-1.5 border border-border-default rounded text-[11px] bg-white focus:outline-none focus:ring-1 focus:ring-primary/40"
+              />
+            </div>
+
+            <div className="max-h-40 overflow-auto space-y-0.5">
+              {candidates.length === 0 ? (
+                <p className="text-[10px] text-text-muted italic py-1.5 text-center">No one to add</p>
+              ) : candidates.map(u => (
+                <button key={u.id} onClick={() => assign(u.id)} disabled={busy}
+                        className="w-full text-left px-1.5 py-1 rounded hover:bg-surface-subtle disabled:opacity-40">
+                  <p className="text-[11px] font-semibold text-text-primary truncate">{u.name || u.email}</p>
+                  <p className="text-[9px] text-text-muted truncate">{u.email}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

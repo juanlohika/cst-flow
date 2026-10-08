@@ -25,6 +25,36 @@ function requireAdmin(session: any) {
   return { ok: true } as const;
 }
 
+/**
+ * Who may change who is assigned to an account.
+ *
+ * Admins, plus the account's own lead — the person already holding the primary
+ * membership on it. There is no "lead" user role in this system, so leadership
+ * is read from the data rather than invented: if you own the account, you can
+ * say who works on it. Everyone else is read-only.
+ */
+type Gate = { ok: true } | { error: { status: number; message: string } };
+
+async function requireAdminOrAccountLead(session: any, clientProfileId: string): Promise<Gate> {
+  const userId = session?.user?.id;
+  if (!userId) return { error: { status: 401, message: "Unauthorized" } };
+  if ((session.user as any).role === "admin") return { ok: true };
+
+  const [own] = await db
+    .select({ isPrimary: membershipsTable.isPrimary })
+    .from(membershipsTable)
+    .where(and(
+      eq(membershipsTable.userId, userId),
+      eq(membershipsTable.clientProfileId, clientProfileId),
+    ))
+    .limit(1);
+
+  if (own?.isPrimary) return { ok: true };
+  return {
+    error: { status: 403, message: "Only an admin or this account's primary owner can change assignments." },
+  };
+}
+
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   try {
     const session = await auth();
@@ -99,7 +129,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
     const session = await auth();
-    const gate = requireAdmin(session);
+    const gate = await requireAdminOrAccountLead(session, params.id);
     if ("error" in gate) {
       return NextResponse.json({ error: gate.error.message }, { status: gate.error.status });
     }
@@ -192,7 +222,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   try {
     const session = await auth();
-    const gate = requireAdmin(session);
+    const gate = await requireAdminOrAccountLead(session, params.id);
     if ("error" in gate) {
       return NextResponse.json({ error: gate.error.message }, { status: gate.error.status });
     }
@@ -246,7 +276,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 export async function DELETE(req: Request, { params }: { params: { id: string } }) {
   try {
     const session = await auth();
-    const gate = requireAdmin(session);
+    const gate = await requireAdminOrAccountLead(session, params.id);
     if ("error" in gate) {
       return NextResponse.json({ error: gate.error.message }, { status: gate.error.status });
     }
