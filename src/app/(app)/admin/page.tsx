@@ -1160,6 +1160,23 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                   <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                 </a>
 
+                {/* Reference doc for the gather/file/handoff behaviour. */}
+                <a
+                  href="/admin/arima-evidence-docs"
+                  className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                    <BookOpen className="w-4 h-4 text-slate-600" strokeWidth={2} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-semibold text-slate-800">Arima Evidence &amp; Handoff · Reference</p>
+                    <p className="text-[11px] text-slate-500">
+                      How Arima gathers a requirement from a Telegram group, files screenshots to Drive, and hands off to a coding assistant. Covers the wake/rest behaviour, the folder convention, and the rate-limit throttle.
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                </a>
+
                 {/* Phase 21.1: Agent debug — raw I/O per turn */}
                 <a
                   href="/admin/arima-debug"

@@ -3,6 +3,7 @@ import Groq from "groq-sdk";
 import Anthropic from "@anthropic-ai/sdk";
 import fs from "fs/promises";
 import path from "path";
+import { withBudget, estimateCallTokens, GROQ_FREE } from "@/lib/ai/throttle";
 
 const SETTINGS_FILE = path.join(process.cwd(), "config.json");
 
@@ -328,12 +329,40 @@ function buildGroqAdapter(apiKey: string, modelId?: string) {
       // Honour a caller-supplied ceiling so a long system prompt plus a long
       // document cannot exceed it and return 413.
       const maxOut = input?.generationConfig?.maxOutputTokens;
-      const completion = await groq.chat.completions.create({
-        model: useModel,
-        messages,
-        temperature: input?.generationConfig?.temperature ?? 0.7,
-        ...(maxOut ? { max_tokens: Number(maxOut) } : {}),
+
+      // Every Groq call goes through the token budget. `max_tokens` above only
+      // protects against ONE oversized call — it does nothing about ten calls
+      // inside a minute, which is exactly what reading a batch of screenshots
+      // does. withBudget() paces the burst and waits out any 429 rather than
+      // dropping the work. See src/lib/ai/throttle.ts.
+      const promptChars = messages.reduce((n, m) => {
+        const c: any = (m as any).content;
+        if (typeof c === "string") return n + c.length;
+        if (Array.isArray(c)) {
+          return n + c.reduce((k: number, p: any) => k + (p?.text?.length || 0), 0);
+        }
+        return n;
+      }, 0);
+      // base64 is ~4/3 the byte size; convert back for a byte estimate.
+      const imageBytes = images.map((img) => Math.ceil((img.data?.length || 0) * 0.75));
+      const estimated = estimateCallTokens({
+        promptChars,
+        imageBytes,
+        expectedOutputTokens: maxOut ? Number(maxOut) : 800,
       });
+
+      const completion = await withBudget(
+        GROQ_FREE,
+        estimated,
+        () =>
+          groq.chat.completions.create({
+            model: useModel,
+            messages,
+            temperature: input?.generationConfig?.temperature ?? 0.7,
+            ...(maxOut ? { max_tokens: Number(maxOut) } : {}),
+          }),
+        { label: `${useModel}${images.length ? ` +${images.length}img` : ""}` }
+      );
 
       let content = completion.choices[0]?.message?.content ?? "";
       // Qwen models can emit a <think> block; never surface it to the user.

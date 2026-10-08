@@ -24,7 +24,7 @@ let _schemaFullySynced = false;
 // Bump this whenever ensureAccessSchema gains new CREATE/ALTER work, so already
 // migrated databases skip the whole body instead of re-issuing every statement.
 const ACCESS_SCHEMA_VERSION_KEY = "ACCESS_SCHEMA_VERSION";
-const ACCESS_SCHEMA_VERSION = "2026-10-07-brd-usage-log";
+const ACCESS_SCHEMA_VERSION = "2026-10-08-arima-gather-sessions";
 
 /**
  * Phase E.9 — SQLite can't ALTER a column to remove NOT NULL. To relax
@@ -1082,6 +1082,62 @@ export async function ensureAccessSchema(): Promise<void> {
       status TEXT DEFAULT 'validated' NOT NULL,
       FOREIGN KEY (projectId) REFERENCES PilotProject(id) ON DELETE CASCADE
     )`);
+
+    // ── Arima gathering sessions ────────────────────────────────────────────
+    // "Wake, gather, confirm, rest." Arima used to be a permanent listener in
+    // every bound group, writing an ArimaRunLog row for every human-to-human
+    // message. Now it wakes on a tag, stays awake through the clarification
+    // exchange, and rests on confirmation or after 15 idle minutes.
+    //
+    // The row is small and short-lived; it exists in the DB rather than memory
+    // because App Hosting can move us to a new container mid-thread, and a
+    // session that forgets it is awake is worse than one that never woke.
+    // See src/lib/arima/session.ts.
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaGatherSession (
+      id TEXT PRIMARY KEY,
+      conversationId TEXT NOT NULL,
+      chatId TEXT,
+      clientProfileId TEXT,
+      scopeType TEXT DEFAULT 'client' NOT NULL,
+      requestTitle TEXT,
+      arimaRequestId TEXT,
+      driveFolderId TEXT,
+      driveFolderUrl TEXT,
+      driveDisplayPath TEXT,
+      status TEXT DEFAULT 'gathering' NOT NULL,
+      evidenceCount INTEGER DEFAULT 0 NOT NULL,
+      wokenByUserId TEXT,
+      wokenByName TEXT,
+      lastActivityAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      startedAt TEXT DEFAULT (datetime('now')) NOT NULL,
+      restedAt TEXT,
+      restReason TEXT
+    )`);
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS ArimaGatherSession_conv_idx ON ArimaGatherSession(conversationId, status)`); } catch {}
+
+    // ── Arima evidence files ────────────────────────────────────────────────
+    // Links only, never bytes. Telegram photos previously went into
+    // ArimaMessage.attachments as base64 — ~10.7 MB of text for an 8 MB photo,
+    // kept forever, against a 9 GB Turso ceiling. Bytes now live in Drive and
+    // this table records where. Same split CourtesyCallEvidence already uses.
+    await db.run(sql`CREATE TABLE IF NOT EXISTS ArimaEvidenceFile (
+      id TEXT PRIMARY KEY,
+      sessionId TEXT,
+      conversationId TEXT NOT NULL,
+      messageId TEXT,
+      arimaRequestId TEXT,
+      kind TEXT DEFAULT 'screenshot' NOT NULL,
+      fileName TEXT NOT NULL,
+      mimeType TEXT,
+      sizeBytes INTEGER,
+      driveFileId TEXT NOT NULL,
+      driveWebViewLink TEXT NOT NULL,
+      visionSummary TEXT,
+      uploadedByName TEXT,
+      createdAt TEXT DEFAULT (datetime('now')) NOT NULL
+    )`);
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS ArimaEvidenceFile_session_idx ON ArimaEvidenceFile(sessionId)`); } catch {}
+    try { await db.run(sql`CREATE INDEX IF NOT EXISTS ArimaEvidenceFile_conv_idx ON ArimaEvidenceFile(conversationId)`); } catch {}
 
     _schemaEnsuredAt = Date.now();
     // Everything the function knows how to add is now present — skip entirely

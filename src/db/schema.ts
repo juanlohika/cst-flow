@@ -1794,3 +1794,72 @@ export const brdGenerationLogs = sqliteTable("BrdGenerationLog", {
   errorMessage: text("errorMessage"),
   createdAt:    text("createdAt").default(sql`(datetime('now'))`).notNull(),
 });
+
+// ─── Arima gathering sessions (Phase: wake/gather/rest) ───────────────────────
+// Arima is no longer a permanent listener in bound groups. It wakes when tagged
+// with something that reads like a requirement, stays awake through the
+// clarification exchange, then rests on confirmation or after 15 idle minutes.
+//
+// Before this, every human-to-human message in a bound group wrote an
+// ArimaRunLog row (system prompt + model output, 64,000 chars each). That is
+// the growth this table removes.
+//
+// Lives in the DB rather than memory because App Hosting can move the request
+// to a new container mid-thread. Rows are small and finite — one per gathering.
+export const arimaGatherSessions = sqliteTable("ArimaGatherSession", {
+  id:               text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  conversationId:   text("conversationId").notNull(),
+  /** Telegram chat id, for posting progress back to the right room. */
+  chatId:           text("chatId"),
+  clientProfileId:  text("clientProfileId"),
+  /** Mirrors ArimaChannelBinding.scopeType — decides which Drive folder is used. */
+  scopeType:        text("scopeType").default("client").notNull(),
+  /** Working title; becomes the Drive folder name and the ArimaRequest title. */
+  requestTitle:     text("requestTitle"),
+  /** Set once create_request has run. */
+  arimaRequestId:   text("arimaRequestId"),
+  driveFolderId:    text("driveFolderId"),
+  driveFolderUrl:   text("driveFolderUrl"),
+  /** Human-readable path, e.g. "_Internal / MOI / 2026-10-08 — MTD auto-compute". */
+  driveDisplayPath: text("driveDisplayPath"),
+  /** gathering | confirming | rested | expired */
+  status:           text("status").default("gathering").notNull(),
+  evidenceCount:    integer("evidenceCount").default(0).notNull(),
+  wokenByUserId:    text("wokenByUserId"),
+  wokenByName:      text("wokenByName"),
+  /** Refreshed on every inbound message; drives the 15-minute idle expiry. */
+  lastActivityAt:   text("lastActivityAt").default(sql`(datetime('now'))`).notNull(),
+  startedAt:        text("startedAt").default(sql`(datetime('now'))`).notNull(),
+  restedAt:         text("restedAt"),
+  /** confirmed | idle-timeout | explicit-rest | superseded */
+  restReason:       text("restReason"),
+});
+
+// ─── Arima evidence files ─────────────────────────────────────────────────────
+// LINKS ONLY, NEVER BYTES.
+//
+// Telegram photos used to be base64'd into ArimaMessage.attachments and kept
+// forever: an 8 MB photo becomes ~10.7 MB of base64 text in a SQLite row, and
+// Turso's ceiling is 9 GB. Bytes now go to Drive on receipt and this table
+// records where they landed — the same split CourtesyCallEvidence already gets
+// right. See src/lib/arima/evidence-drive.ts.
+export const arimaEvidenceFiles = sqliteTable("ArimaEvidenceFile", {
+  id:               text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  sessionId:        text("sessionId"),
+  conversationId:   text("conversationId").notNull(),
+  /** The ArimaMessage this arrived on, so the portal can render it in place. */
+  messageId:        text("messageId"),
+  arimaRequestId:   text("arimaRequestId"),
+  /** screenshot | recording | document */
+  kind:             text("kind").default("screenshot").notNull(),
+  fileName:         text("fileName").notNull(),
+  mimeType:         text("mimeType"),
+  sizeBytes:        integer("sizeBytes"),
+  driveFileId:      text("driveFileId").notNull(),
+  driveWebViewLink: text("driveWebViewLink").notNull(),
+  /** What Arima saw — a DESCRIPTION, not a transcription. Exact values are read
+   *  from the image later; a misread digit must not become a stated fact. */
+  visionSummary:    text("visionSummary"),
+  uploadedByName:   text("uploadedByName"),
+  createdAt:        text("createdAt").default(sql`(datetime('now'))`).notNull(),
+});
