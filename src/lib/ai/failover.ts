@@ -42,8 +42,15 @@ export type ProviderName = "claude" | "gemini" | "groq" | "ollama";
 const BREAKER_MS = 3 * 60_000;
 /** Consecutive failures before a provider is considered down. */
 const BREAKER_THRESHOLD = 2;
-/** Minimum gap between user-visible error notices in one conversation. */
-const NOTICE_COOLDOWN_MS = 10 * 60_000;
+/**
+ * Minimum gap between user-visible error notices in one conversation.
+ *
+ * Raised from 10 to 45 minutes on 2026-10-09: with a 10-minute window a group
+ * still received a notice every 10-12 minutes through a sustained outage, which
+ * reads as spam even though each one was technically within policy. During an
+ * outage the useful number of notices is one.
+ */
+const NOTICE_COOLDOWN_MS = 45 * 60_000;
 
 interface BreakerState {
   failures: number;
@@ -104,6 +111,39 @@ export function shouldNotifyError(conversationKey: string): boolean {
   if (last && now - last < NOTICE_COOLDOWN_MS) return false;
   noticeSentAt.set(conversationKey, now);
   return true;
+}
+
+/**
+ * Durable version of the check above.
+ *
+ * The in-memory map is per-container. App Hosting starts fresh containers
+ * freely, so on 2026-10-09 a group still received a notice every ten minutes
+ * through an outage: each new container had an empty map and believed it was
+ * the first to report. The timestamp now lives in GlobalSetting so every
+ * container sees the same last-notified time.
+ *
+ * Falls back to the in-memory check if the write fails — a notice getting
+ * through is better than an exception swallowing the error path entirely.
+ */
+export async function shouldNotifyErrorDurable(conversationKey: string): Promise<boolean> {
+  const key = `ai_error_notice:${conversationKey}`;
+  try {
+    const { db } = await import("@/db");
+    const { sql } = await import("drizzle-orm");
+    const res: any = await db.run(
+      sql`SELECT value FROM GlobalSetting WHERE key = ${key} LIMIT 1`);
+    const prev = res?.rows?.[0]?.value;
+    const now = Date.now();
+    if (prev && now - Number(prev) < NOTICE_COOLDOWN_MS) return false;
+    await db.run(sql`
+      INSERT INTO GlobalSetting (id, key, value)
+      VALUES (${"gs_" + key}, ${key}, ${String(now)})
+      ON CONFLICT(key) DO UPDATE SET value = ${String(now)}`);
+    return true;
+  } catch (e: any) {
+    console.warn("[failover] durable notice check failed, using memory:", e?.message);
+    return shouldNotifyError(conversationKey);
+  }
 }
 
 /** For the admin diagnostics view. */

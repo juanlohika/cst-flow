@@ -545,7 +545,42 @@ export async function generateWithRetry(model: any, input: any, fallbackModel?: 
         msg.includes("503") ||
         msg.toLowerCase().includes("high demand") ||
         msg.toLowerCase().includes("service unavailable");
+
+      // Quota exhaustion. Gemini's free tier returns 429 "You exceeded your
+      // current quota" once the daily cap is reached. This is NOT transient —
+      // retrying is pointless and the quota will not return until the window
+      // resets — but it is absolutely a reason to fail over to another
+      // provider. Before 2026-10-09 this fell straight through to `throw err`,
+      // which is why a quota-exhausted Gemini kept erroring instead of handing
+      // over to Groq.
+      const isQuotaExhausted =
+        err?.status === 429 ||
+        msg.includes("429") ||
+        msg.toLowerCase().includes("exceeded your current quota") ||
+        msg.toLowerCase().includes("quota") ||
+        msg.toLowerCase().includes("resource_exhausted");
+
       const isOverloaded = isClaudeOverloaded || isGeminiOverloaded;
+
+      // Quota: do not retry the same provider, go straight to the next one.
+      if (isQuotaExhausted) {
+        const downProvider: ProviderName = msg.toLowerCase().includes("generativelanguage")
+          || msg.toLowerCase().includes("gemini") ? "gemini"
+          : msg.toLowerCase().includes("groq") ? "groq" : "claude";
+        console.warn(`[AI] ${downProvider} quota exhausted — failing over immediately`);
+        recordProviderFailure(downProvider, err);
+        recordProviderFailure(downProvider, err);   // trip the breaker at once
+        try {
+          const alt = await generateWithAnyProvider(input, { exclude: downProvider });
+          if (alt) return alt;
+        } catch (failoverErr: any) {
+          console.warn("[AI] quota failover failed:", failoverErr?.message);
+        }
+        const e: any = new Error(
+          `${downProvider} quota exhausted and no other provider is available.`);
+        e.status = 429;
+        throw e;
+      }
 
       if (isOverloaded && attempt < delays.length) {
         console.warn(`[AI] ${isGeminiOverloaded ? "Gemini" : "Claude"} overloaded, retrying in ${delays[attempt]}ms (attempt ${attempt + 1})`);

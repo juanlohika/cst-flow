@@ -34,7 +34,7 @@ import { superAdminContext as saCtxTable, superAdminUsers as saUsersTable, clien
 import { ensureAccessSchema } from "@/lib/access/accounts";
 import { resolveTelegramMentions } from "@/lib/arima/mentions";
 import { broadcastToClient } from "@/lib/portal/stream";
-import { shouldNotifyError, userFacingOutageMessage, isProviderOutageActive } from "@/lib/ai/failover";
+import { shouldNotifyErrorDurable, userFacingOutageMessage, isProviderOutageActive } from "@/lib/ai/failover";
 import {
   resolveWake, beginGathering, handleEvidence, finishGathering,
   gatheringInstructions,
@@ -1310,7 +1310,7 @@ async function handleArimaChat(args: {
     // the provider URL and model id into a client-facing chat. Two changes:
     // a cooldown so the notice appears at most once per conversation per
     // window, and plain wording that does not leak infrastructure detail.
-    if (!shouldNotifyError(`tg:${args.chatId}`)) {
+    if (!(await shouldNotifyErrorDurable(`tg:${args.chatId}`))) {
       console.warn("[telegram/webhook] error notice suppressed (cooldown active)");
       return;
     }

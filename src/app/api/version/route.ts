@@ -21,7 +21,7 @@ export async function GET() {
     ok: true,
     // Bumped by hand when a change should be externally detectable. Mirrors the
     // ACCESS_SCHEMA_VERSION naming so the two are easy to line up.
-    build: "2026-10-09-provider-failover",
+    build: "2026-10-09-quota-failover",
     features: [
       "arima-gather-sessions",
       "arima-evidence-drive",
@@ -29,6 +29,8 @@ export async function GET() {
       "arima-retention-sweep",
       "ai-provider-failover",
       "ai-error-notice-cooldown",
+      "ai-quota-failover",
+      "ai-durable-notice-cooldown",
     ],
     now: new Date().toISOString(),
   });
