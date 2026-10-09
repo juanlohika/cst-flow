@@ -34,6 +34,7 @@ import { superAdminContext as saCtxTable, superAdminUsers as saUsersTable, clien
 import { ensureAccessSchema } from "@/lib/access/accounts";
 import { resolveTelegramMentions } from "@/lib/arima/mentions";
 import { broadcastToClient } from "@/lib/portal/stream";
+import { shouldNotifyError, userFacingOutageMessage, isProviderOutageActive } from "@/lib/ai/failover";
 import {
   resolveWake, beginGathering, handleEvidence, finishGathering,
   gatheringInstructions,
@@ -1066,6 +1067,11 @@ async function handleArimaChat(args: {
   const lastAssistant = [...history].reverse().find(m => m.role === "assistant");
   const lastBotWasEliana = (lastAssistant?.senderName || "").toLowerCase().startsWith("eli");
 
+  // Has the provider been failing for this chat? If so, do not let the
+  // follow-up gate below treat ordinary chatter as an answer to a question
+  // Eliana never successfully asked. See shouldElianaRespond().
+  const recentFailure = isProviderOutageActive();
+
   let shouldReply = args.agentMode === "eliana"
     ? shouldElianaRespond({
         isGroup: args.isGroup,
@@ -1073,6 +1079,7 @@ async function handleArimaChat(args: {
         mentions,
         isFirstMessageInConvo,
         lastBotWasEliana,
+        recentFailure,
       })
     : shouldArimaRespond({
         senderChannel: "telegram",
@@ -1295,11 +1302,22 @@ async function handleArimaChat(args: {
   } catch (e: any) {
     console.error("[telegram/webhook] ARIMA failed:", e);
     if (!shouldReply) return;
-    const errMsg = e?.message || "unknown error";
+
+    // Tell the room ONCE, not once per message.
+    //
+    // On 2026-10-09 a bound group received 48 of these. Gemini was returning
+    // 503, every inbound message hit the same failure, and every failure posted
+    // the provider URL and model id into a client-facing chat. Two changes:
+    // a cooldown so the notice appears at most once per conversation per
+    // window, and plain wording that does not leak infrastructure detail.
+    if (!shouldNotifyError(`tg:${args.chatId}`)) {
+      console.warn("[telegram/webhook] error notice suppressed (cooldown active)");
+      return;
+    }
     await safeReply(
       args.botToken,
       args.chatId,
-      `⚠️ Sorry — I hit an error generating a reply.\n\n_${errMsg.slice(0, 300)}_\n\nA human teammate will follow up. You can also try a simpler version of your question.`,
+      userFacingOutageMessage(),
       args.replyToMessageId
     );
   }

@@ -4,6 +4,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import fs from "fs/promises";
 import path from "path";
 import { withBudget, estimateCallTokens, GROQ_FREE } from "@/lib/ai/throttle";
+import { failoverOrder, isProviderDown, recordProviderFailure, recordProviderSuccess,
+         isTransientProviderError, type ProviderName } from "@/lib/ai/failover";
 
 const SETTINGS_FILE = path.join(process.cwd(), "config.json");
 
@@ -551,6 +553,20 @@ export async function generateWithRetry(model: any, input: any, fallbackModel?: 
         continue;
       }
       if (isOverloaded) {
+        // Retries are exhausted on this provider. Before giving up, try the
+        // others that are configured — an outage at one vendor should not take
+        // the agent offline.
+        //
+        // This path did not exist before 2026-10-09, when a Gemini 503 took
+        // Eliana down in a bound group for an afternoon while Groq sat idle.
+        const downProvider: ProviderName = isGeminiOverloaded ? "gemini" : "claude";
+        recordProviderFailure(downProvider, err);
+        try {
+          const alt = await generateWithAnyProvider(input, { exclude: downProvider });
+          if (alt) return alt;
+        } catch (failoverErr: any) {
+          console.warn("[AI] cross-provider failover also failed:", failoverErr?.message);
+        }
         const e: any = new Error(
           `${isGeminiOverloaded ? "Gemini" : "Claude"} is experiencing high demand right now. ` +
           `Try again in a minute. (Retried ${delays.length} times automatically.)`
@@ -561,4 +577,56 @@ export async function generateWithRetry(model: any, input: any, fallbackModel?: 
       throw err;
     }
   }
+}
+
+/**
+ * Try every configured provider except the one that just failed.
+ *
+ * Returns the first successful result, or null when nothing is available. A
+ * provider the circuit breaker has marked down is skipped without being called,
+ * so a sustained outage costs one attempt per cooldown window rather than one
+ * per message.
+ *
+ * Added after a Gemini 503 on 2026-10-09 left a bound group without an agent
+ * for an afternoon while Groq and Ollama were configured and healthy.
+ */
+export async function generateWithAnyProvider(
+  input: any,
+  opts: { exclude?: ProviderName } = {}
+): Promise<any | null> {
+  const config = await readAIConfig();
+
+  const available: ProviderName[] = [];
+  if (config.groqApiKey) available.push("groq");
+  if (config.geminiApiKey) available.push("gemini");
+  if (config.anthropicApiKey) available.push("claude");
+  if (config.ollamaEndpoint) available.push("ollama");
+
+  const order = failoverOrder(config.primaryProvider as ProviderName, available)
+    .filter((p) => p !== opts.exclude);
+
+  for (const p of order) {
+    if (isProviderDown(p)) {
+      console.log(`[AI] skipping ${p} — circuit breaker open`);
+      continue;
+    }
+    try {
+      const adapter =
+        p === "groq"   ? buildGroqAdapter(config.groqApiKey, config.groqModel)
+      : p === "gemini" ? buildGeminiAdapter(config.geminiApiKey)
+      : p === "claude" ? buildClaudeAdapter(config.anthropicApiKey)
+      :                  buildOllamaAdapter(config.ollamaEndpoint, config.ollamaModel);
+      console.log(`[AI] failing over to ${p}`);
+      const result = await adapter.generateContent(input);
+      recordProviderSuccess(p);
+      return result;
+    } catch (err: any) {
+      recordProviderFailure(p, err);
+      console.warn(`[AI] failover candidate ${p} failed: ${err?.message}`);
+      // Only keep trying for transient faults. A bad key or malformed request
+      // will fail identically everywhere.
+      if (!isTransientProviderError(err)) break;
+    }
+  }
+  return null;
 }

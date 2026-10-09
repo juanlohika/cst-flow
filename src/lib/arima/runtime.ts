@@ -207,6 +207,9 @@ export function shouldElianaRespond(args: {
   mentions?: MentionRef[];
   isFirstMessageInConvo: boolean;
   lastBotWasEliana: boolean;
+  /** True when recent turns in this conversation failed — suppresses the
+   *  follow-up gate so an outage cannot turn into a reply to every message. */
+  recentFailure?: boolean;
 }): boolean {
   // In a 1:1 / DM context, always reply
   if (!args.isGroup) return true;
@@ -248,8 +251,16 @@ export function shouldElianaRespond(args: {
   }
 
   // Question follow-up: if Eliana just asked something, treat any reasonable
-  // text response as an answer to her question
-  if (args.lastBotWasEliana && raw.length > 2 && !isEmojiOnly(raw)) {
+  // text response as an answer to her question.
+  //
+  // IMPORTANT: this is checked against the last SUCCESSFUL assistant message.
+  // A failed turn writes no assistant row, so during a provider outage
+  // `lastBotWasEliana` stays true for whatever she last managed to say — and
+  // every subsequent human message passes this gate. On 2026-10-09 that turned
+  // one Gemini outage into 48 error replies. The caller now also passes
+  // `recentFailure`; when the previous turns errored we stop treating ordinary
+  // chatter as a reply to a question Eliana may never have asked.
+  if (args.lastBotWasEliana && !args.recentFailure && raw.length > 2 && !isEmojiOnly(raw)) {
     return true;
   }
 

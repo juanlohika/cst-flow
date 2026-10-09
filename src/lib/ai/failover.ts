@@ -1,0 +1,174 @@
+/**
+ * Provider failover and error suppression.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * On 2026-10-09 a bound Telegram group received 48 identical error messages.
+ * Gemini was returning 503 "high demand", and three separate faults compounded:
+ *
+ *   1. NO CROSS-PROVIDER FAILOVER. `generateWithRetry` retried Gemini three
+ *      times and then threw. The `fallbackModel` path existed only for Claude
+ *      billing errors, so a Gemini outage took the agent down even though Groq
+ *      and Ollama were configured and healthy.
+ *
+ *   2. NO MEMORY BETWEEN MESSAGES. Every inbound message repeated the full
+ *      retry sequence from scratch. With a provider that is down, that is ~27
+ *      seconds of retries per message, every message, indefinitely.
+ *
+ *   3. THE RAW ERROR WAS SENT TO THE USER. Each failure posted the provider
+ *      URL, model id and stack-ish text into a client-facing group. Forty-eight
+ *      times.
+ *
+ * WHAT THIS MODULE ADDS
+ * ---------------------
+ *   · An ordered failover chain, so one provider being down is survivable.
+ *   · A short-lived circuit breaker per provider, so a known-down provider is
+ *     skipped rather than retried on every message.
+ *   · A per-conversation notice cooldown, so a user is told once that something
+ *     is wrong, not once per message.
+ *
+ * DESIGN NOTE — WHY IN-MEMORY
+ * ---------------------------
+ * Both the breaker and the cooldown are process-local. On App Hosting a second
+ * container has its own copy, so in the worst case a user sees one notice per
+ * container rather than one in total. That is an acceptable trade for not
+ * adding a database write to every failed turn; the failure mode it prevents
+ * (48 messages) is three orders of magnitude worse than the one it leaves (2-3).
+ */
+
+export type ProviderName = "claude" | "gemini" | "groq" | "ollama";
+
+/** How long a provider stays "open" (skipped) after repeated failures. */
+const BREAKER_MS = 3 * 60_000;
+/** Consecutive failures before a provider is considered down. */
+const BREAKER_THRESHOLD = 2;
+/** Minimum gap between user-visible error notices in one conversation. */
+const NOTICE_COOLDOWN_MS = 10 * 60_000;
+
+interface BreakerState {
+  failures: number;
+  openedAt: number | null;
+  lastError: string | null;
+}
+
+const breakers = new Map<ProviderName, BreakerState>();
+const noticeSentAt = new Map<string, number>();
+
+function state(p: ProviderName): BreakerState {
+  let s = breakers.get(p);
+  if (!s) { s = { failures: 0, openedAt: null, lastError: null }; breakers.set(p, s); }
+  return s;
+}
+
+/** True when a provider is currently being skipped. */
+export function isProviderDown(p: ProviderName): boolean {
+  const s = state(p);
+  if (s.openedAt === null) return false;
+  if (Date.now() - s.openedAt > BREAKER_MS) {
+    // Cooldown elapsed — let one request through to test the water.
+    s.openedAt = null; s.failures = 0;
+    return false;
+  }
+  return true;
+}
+
+export function recordProviderFailure(p: ProviderName, err: any) {
+  const s = state(p);
+  s.failures += 1;
+  s.lastError = err?.message ? String(err.message).slice(0, 200) : "unknown";
+  if (s.failures >= BREAKER_THRESHOLD && s.openedAt === null) {
+    s.openedAt = Date.now();
+    console.warn(
+      `[failover] ${p} marked down after ${s.failures} failures — ` +
+        `skipping for ${BREAKER_MS / 60000} min. Last: ${s.lastError}`
+    );
+  }
+}
+
+export function recordProviderSuccess(p: ProviderName) {
+  const s = state(p);
+  if (s.failures || s.openedAt) console.log(`[failover] ${p} recovered`);
+  s.failures = 0; s.openedAt = null; s.lastError = null;
+}
+
+/**
+ * Should we post a user-visible error notice for this conversation?
+ *
+ * Returns true at most once per cooldown window. Everything else fails
+ * silently to the user and loudly to the logs — which is the right balance for
+ * a group chat full of people who cannot act on a provider outage.
+ */
+export function shouldNotifyError(conversationKey: string): boolean {
+  const last = noticeSentAt.get(conversationKey);
+  const now = Date.now();
+  if (last && now - last < NOTICE_COOLDOWN_MS) return false;
+  noticeSentAt.set(conversationKey, now);
+  return true;
+}
+
+/** For the admin diagnostics view. */
+export function failoverSnapshot() {
+  return Array.from(breakers.entries()).map(([p, s]) => ({
+    provider: p,
+    down: isProviderDown(p),
+    failures: s.failures,
+    openedAt: s.openedAt ? new Date(s.openedAt).toISOString() : null,
+    lastError: s.lastError,
+  }));
+}
+
+/**
+ * Classify an error so the caller knows whether another provider would help.
+ *
+ * A capacity or outage error is worth failing over. A bad request or a missing
+ * key is not — the next provider would fail the same way, or worse, succeed and
+ * hide a configuration problem.
+ */
+export function isTransientProviderError(err: any): boolean {
+  const status = err?.status ?? err?.response?.status;
+  const msg = String(err?.message || "").toLowerCase();
+  if (status === 503 || status === 529 || status === 502 || status === 504) return true;
+  if (status === 429) return true;
+  return (
+    msg.includes("high demand") ||
+    msg.includes("service unavailable") ||
+    msg.includes("overload") ||
+    msg.includes("rate limit") ||
+    msg.includes("timeout") ||
+    msg.includes("etimedout") ||
+    msg.includes("econnreset") ||
+    msg.includes("fetch failed")
+  );
+}
+
+/**
+ * The order providers are tried in, starting from whichever one is configured
+ * as primary. Only providers with credentials are included.
+ */
+export function failoverOrder(primary: ProviderName, available: ProviderName[]): ProviderName[] {
+  // Preference after the primary: Groq (fast, free tier), Gemini, Claude,
+  // Ollama last because it is local and may not be reachable from the host.
+  const preference: ProviderName[] = ["groq", "gemini", "claude", "ollama"];
+  const rest = preference.filter((p) => p !== primary && available.includes(p));
+  return [primary, ...rest].filter((p) => available.includes(p));
+}
+
+/** A short, non-technical line for the user when everything is down. */
+export function userFacingOutageMessage(): string {
+  return (
+    "I'm having trouble reaching the AI service right now, so I can't answer this one. " +
+    "This is usually temporary. A teammate will pick it up if it's urgent."
+  );
+}
+
+/**
+ * True when every configured provider is currently circuit-broken, or when any
+ * provider has failed recently enough that the next turn is likely to fail too.
+ *
+ * Used by the reply gates to stop an outage from amplifying into a reply on
+ * every inbound message.
+ */
+export function isProviderOutageActive(): boolean {
+  if (breakers.size === 0) return false;
+  return Array.from(breakers.keys()).some((p) => isProviderDown(p));
+}

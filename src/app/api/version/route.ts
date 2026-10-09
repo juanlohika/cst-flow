@@ -21,12 +21,14 @@ export async function GET() {
     ok: true,
     // Bumped by hand when a change should be externally detectable. Mirrors the
     // ACCESS_SCHEMA_VERSION naming so the two are easy to line up.
-    build: "2026-10-08-arima-gathering",
+    build: "2026-10-09-provider-failover",
     features: [
       "arima-gather-sessions",
       "arima-evidence-drive",
       "arima-rate-limit-throttle",
       "arima-retention-sweep",
+      "ai-provider-failover",
+      "ai-error-notice-cooldown",
     ],
     now: new Date().toISOString(),
   });
