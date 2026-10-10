@@ -275,7 +275,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, ignored: "duplicate-update" });
     }
 
-    // We currently only handle message updates and my_chat_member (joined/left a group).
+    // Only message updates are acted on. `my_chat_member` is in allowed_updates
+    // but nothing reads it — join and leave events fall through to the
+    // "non-message" exit below. That is harmless (the response is immediate, so
+    // Telegram does not redeliver) but it means the bot has no reaction when it
+    // is added to or removed from a group, and cannot refresh group-privacy
+    // state on being re-added. Worth building if that is ever needed; the
+    // previous comment here claimed it was handled, and it was not.
     const message = update?.message || update?.edited_message;
     if (!message) {
       return NextResponse.json({ ok: true, ignored: "non-message" });
