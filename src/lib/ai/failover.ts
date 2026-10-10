@@ -212,3 +212,51 @@ export function isProviderOutageActive(): boolean {
   if (breakers.size === 0) return false;
   return Array.from(breakers.keys()).some((p) => isProviderDown(p));
 }
+
+// ── Outbound circuit breaker ─────────────────────────────────────────────────
+//
+// The cooldowns above each guard one code path. Twice now a path was missed —
+// first the 429 that never reached the retry block, then the empty-reply branch
+// that returns before the catch — and each time a group received a stream of
+// messages. This is the backstop: a hard cap on how many messages the bot may
+// send into one chat in a window, whatever the reason.
+//
+// It is deliberately generous. A real conversation with a dozen quick replies
+// is fine; what it stops is the runaway case where one broken turn repeats
+// unattended. If it ever trips during legitimate use, the limit is wrong and
+// should be raised — it is not a rate limit on people, it is a fuse.
+
+const OUTBOUND_WINDOW_MS = 10 * 60_000;
+const OUTBOUND_MAX = 12;
+
+const outbound = new Map<string, number[]>();
+
+/**
+ * Record an outbound message and report whether the chat has gone over its
+ * cap. Returns true when the message should be SUPPRESSED.
+ */
+export function outboundFuseTripped(chatKey: string): boolean {
+  const now = Date.now();
+  const arr = (outbound.get(chatKey) || []).filter((t) => now - t < OUTBOUND_WINDOW_MS);
+  if (arr.length >= OUTBOUND_MAX) {
+    outbound.set(chatKey, arr);
+    console.error(
+      `[failover] OUTBOUND FUSE: ${chatKey} has had ${arr.length} messages in ` +
+        `${OUTBOUND_WINDOW_MS / 60000} min — suppressing further sends. ` +
+        "If this was legitimate traffic, raise OUTBOUND_MAX."
+    );
+    return true;
+  }
+  arr.push(now);
+  outbound.set(chatKey, arr);
+  return false;
+}
+
+export function outboundSnapshot() {
+  const now = Date.now();
+  return Array.from(outbound.entries()).map(([k, v]) => ({
+    chat: k,
+    inWindow: v.filter((t) => now - t < OUTBOUND_WINDOW_MS).length,
+    cap: OUTBOUND_MAX,
+  }));
+}

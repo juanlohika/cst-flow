@@ -34,7 +34,8 @@ import { superAdminContext as saCtxTable, superAdminUsers as saUsersTable, clien
 import { ensureAccessSchema } from "@/lib/access/accounts";
 import { resolveTelegramMentions } from "@/lib/arima/mentions";
 import { broadcastToClient } from "@/lib/portal/stream";
-import { shouldNotifyErrorDurable, userFacingOutageMessage, isProviderOutageActive } from "@/lib/ai/failover";
+import { shouldNotifyErrorDurable, userFacingOutageMessage, isProviderOutageActive,
+         outboundFuseTripped } from "@/lib/ai/failover";
 import {
   resolveWake, beginGathering, handleEvidence, finishGathering,
   gatheringInstructions,
@@ -88,6 +89,10 @@ const INTERNAL_HELP_TEXT = (
 /** Helper to send a reply. Tries Markdown first; if that fails (e.g. malformed
  *  Markdown in the AI output), retries as plain text so the user gets *something*. */
 async function safeReply(token: string, chatId: number, text: string, replyToMessageId?: number) {
+  // Every outbound message passes the fuse. Two separate code paths have now
+  // leaked a message-per-inbound loop into a client group; this is the single
+  // place that cannot be bypassed by adding a new one.
+  if (outboundFuseTripped(`tg:${chatId}`)) return;
   const finalText = truncateForTelegram(text || "(empty reply)");
   try {
     await tgSendMessage(token, chatId, finalText, {
@@ -1262,11 +1267,24 @@ async function handleArimaChat(args: {
 
     const replyText = (result.replyText || "").trim();
     if (!replyText) {
+      // THE PATH THAT KEPT SPAMMING.
+      //
+      // A provider can fail WITHOUT throwing — Gemini returns an empty
+      // candidate when its quota is exhausted or a safety filter trips. That
+      // never reaches the catch below, so the cooldown added in 3aa0242 did
+      // not apply here and this branch posted on every single message.
+      //
+      // Same rule as the catch: say it once per conversation per window, in
+      // plain language, and stay quiet otherwise.
       console.error("[telegram/webhook] ARIMA returned empty reply");
+      if (!(await shouldNotifyErrorDurable(`tg:${args.chatId}`))) {
+        console.warn("[telegram/webhook] empty-reply notice suppressed (cooldown active)");
+        return;
+      }
       await safeReply(
         args.botToken,
         args.chatId,
-        "⚠️ I couldn't generate a reply for that message. This usually means the AI's safety filters blocked it or the conversation context got too long. Try asking again with shorter or simpler wording.",
+        userFacingOutageMessage(),
         args.replyToMessageId
       );
       return;

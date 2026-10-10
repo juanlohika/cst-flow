@@ -1358,15 +1358,44 @@ If you find yourself about to type a tool name in your reply, STOP and ask: "am 
       // BRD. The /eliana detail modal will show it when ready.
       if (parsedRequest.category === "brd") {
         const reqIdForBrd = capturedRequestId;
+        const brdChatId = args.sourceTelegramChatId || null;
+        const brdTitle = parsedRequest.title || "BRD";
         (async () => {
           try {
             const { generateBrdDocument } = await import("@/lib/arima/brd-generator");
             await generateBrdDocument({ requestId: reqIdForBrd });
             // Try Google Docs export if configured (no-op if not)
             const { exportBrdToDrive } = await import("@/lib/arima/drive-export");
-            await exportBrdToDrive({ requestId: reqIdForBrd }).catch(err => {
+            const exported = await exportBrdToDrive({ requestId: reqIdForBrd }).catch(err => {
               console.warn("[arima/runtime] BRD Drive export failed (non-fatal):", err?.message);
+              return null;
             });
+
+            // Tell the room it is ready. Generation runs in the background and
+            // can take a minute or two, so without this the person who asked
+            // has no idea it finished — they were going to the /eliana modal to
+            // look for it. Posting the link closes that gap.
+            if (brdChatId && exported?.ok && (exported.docxUrl || exported.pdfUrl)) {
+              try {
+                const { getTelegramConfig } = await import("@/lib/telegram/config");
+                const { tgSendMessage } = await import("@/lib/telegram/api");
+                const cfg = await getTelegramConfig();
+                if (cfg?.botToken) {
+                  const links = [
+                    exported.docxUrl ? `📄 Document: ${exported.docxUrl}` : "",
+                    exported.pdfUrl ? `📕 PDF: ${exported.pdfUrl}` : "",
+                  ].filter(Boolean).join("\n");
+                  await tgSendMessage(cfg.botToken, Number(brdChatId),
+                    `✅ *BRD ready* — ${brdTitle}\n\n${links}\n\n` +
+                    "_The link opens for anyone already on the Drive folder. If you need someone " +
+                    "else to edit it, reply with their email address and I will note it for a " +
+                    "teammate to grant access._",
+                    { parseMode: "Markdown" });
+                }
+              } catch (notifyErr: any) {
+                console.warn("[arima/runtime] BRD ready notice failed:", notifyErr?.message);
+              }
+            }
           } catch (genErr: any) {
             console.warn("[arima/runtime] BRD document generation failed:", genErr?.message);
           }
