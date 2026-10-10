@@ -21,7 +21,7 @@ export async function GET() {
     ok: true,
     // Bumped by hand when a change should be externally detectable. Mirrors the
     // ACCESS_SCHEMA_VERSION naming so the two are easy to line up.
-    build: "2026-10-10-telegram-diag",
+    build: "2026-10-10-update-dedup",
     features: [
       "arima-gather-sessions",
       "arima-evidence-drive",
@@ -36,6 +36,8 @@ export async function GET() {
       "telegram-fast-commands",
       "telegram-diag",
       "mode-aware-help",
+      "telegram-update-dedup",
+      "telegram-nonblocking-turn",
     ],
     now: new Date().toISOString(),
   });

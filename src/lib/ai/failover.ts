@@ -260,3 +260,42 @@ export function outboundSnapshot() {
     cap: OUTBOUND_MAX,
   }));
 }
+
+// ── Telegram update de-duplication ───────────────────────────────────────────
+//
+// Telegram REDELIVERS an update when the webhook does not return 200 quickly
+// enough, and keeps redelivering until it does. The webhook awaits the whole
+// AI turn before responding — model call, retries, tool calls — so any slow
+// turn gets delivered two, three, five times. Each delivery is processed as a
+// fresh message, which is why a group saw the same old message answered over
+// and over, each reply quoting it and saying "I've already flagged this".
+//
+// Every update carries a monotonically increasing update_id. Seeing one twice
+// means a redelivery, never a new message. Processing stops there.
+//
+// In-memory and per-container: a redelivery landing on a different container
+// still gets through. That is a far smaller leak than the current behaviour,
+// and the real fix — responding 200 before doing the work — is a larger change
+// to how the webhook is structured.
+
+const SEEN_UPDATE_TTL_MS = 10 * 60_000;
+const seenUpdates = new Map<number, number>();
+
+/** True when this update_id has already been processed — caller should stop. */
+export function isDuplicateUpdate(updateId: number | undefined | null): boolean {
+  if (typeof updateId !== "number") return false;
+  const now = Date.now();
+  // Opportunistic prune so the map cannot grow without bound.
+  if (seenUpdates.size > 500) {
+    for (const [id, t] of Array.from(seenUpdates.entries())) {
+      if (now - t > SEEN_UPDATE_TTL_MS) seenUpdates.delete(id);
+    }
+  }
+  const prev = seenUpdates.get(updateId);
+  if (prev !== undefined && now - prev < SEEN_UPDATE_TTL_MS) {
+    console.warn(`[telegram] duplicate update_id ${updateId} — Telegram redelivered, skipping`);
+    return true;
+  }
+  seenUpdates.set(updateId, now);
+  return false;
+}

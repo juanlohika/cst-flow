@@ -35,7 +35,7 @@ import { ensureAccessSchema } from "@/lib/access/accounts";
 import { resolveTelegramMentions } from "@/lib/arima/mentions";
 import { broadcastToClient } from "@/lib/portal/stream";
 import { shouldNotifyErrorDurable, userFacingOutageMessage, isProviderOutageActive,
-         outboundFuseTripped } from "@/lib/ai/failover";
+         outboundFuseTripped, isDuplicateUpdate } from "@/lib/ai/failover";
 import {
   resolveWake, beginGathering, handleEvidence, finishGathering,
   gatheringInstructions,
@@ -266,6 +266,14 @@ export async function POST(req: Request) {
     }
 
     const update = await req.json();
+
+    // Stop a redelivery before it is processed. Telegram resends an update
+    // until the webhook returns 200, and this handler awaits the entire AI
+    // turn first — so a slow turn is delivered several times and answered
+    // several times. See isDuplicateUpdate().
+    if (isDuplicateUpdate(update?.update_id)) {
+      return NextResponse.json({ ok: true, ignored: "duplicate-update" });
+    }
 
     // We currently only handle message updates and my_chat_member (joined/left a group).
     const message = update?.message || update?.edited_message;
@@ -800,7 +808,11 @@ export async function POST(req: Request) {
           // arimaConversations row (NOT NULL FK). If the sender isn't linked,
           // the SA gate inside handleArimaChat will refuse politely anyway.
           const senderCst = await resolveCstUserFromTelegram(from.id);
-          await handleArimaChat({
+          // Do NOT await. Telegram redelivers an update until the webhook
+          // returns 200, and an AI turn can take far longer than its
+          // patience — which is what produced the same message being
+          // answered five times. The turn runs on; Telegram is released now.
+          void handleArimaChat({
             botToken: config.botToken,
             chatId: chat.id,
             chatTitle: chat.title || null,
@@ -818,7 +830,8 @@ export async function POST(req: Request) {
             entities,
             otherMedia,
             isGroup: true,
-          });
+          }).catch(e =>
+        console.error("[telegram/webhook] background ARIMA turn failed:", e?.message));
           return NextResponse.json({ ok: true });
         }
         return NextResponse.json({ ok: true, ignored: "unbound-group" });
@@ -827,7 +840,11 @@ export async function POST(req: Request) {
       // sender's cst user id so we have a valid conversation owner FK.
       if (binding.scopeType === "rm-team") {
         const senderCst = await resolveCstUserFromTelegram(from.id);
-        await handleArimaChat({
+        // Do NOT await. Telegram redelivers an update until the webhook
+        // returns 200, and an AI turn can take far longer than its
+        // patience — which is what produced the same message being
+        // answered five times. The turn runs on; Telegram is released now.
+        void handleArimaChat({
           botToken: config.botToken,
           chatId: chat.id,
           chatTitle: chat.title || null,
@@ -847,10 +864,15 @@ export async function POST(req: Request) {
           isGroup: true,
           rmTeamUserId: binding.scopeRef,
           scopeType: "rm-team",
-        });
+        }).catch(e =>
+        console.error("[telegram/webhook] background ARIMA turn failed:", e?.message));
         return NextResponse.json({ ok: true });
       }
-      await handleArimaChat({
+      // Do NOT await. Telegram redelivers an update until the webhook
+      // returns 200, and an AI turn can take far longer than its
+      // patience — which is what produced the same message being
+      // answered five times. The turn runs on; Telegram is released now.
+      void handleArimaChat({
         botToken: config.botToken,
         chatId: chat.id,
         chatTitle: chat.title || null,
@@ -869,7 +891,8 @@ export async function POST(req: Request) {
         otherMedia,
         isGroup: true,
         scopeType: binding.scopeType || "client",
-      });
+      }).catch(e =>
+        console.error("[telegram/webhook] background ARIMA turn failed:", e?.message));
       return NextResponse.json({ ok: true });
     }
 
