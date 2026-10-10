@@ -88,11 +88,17 @@ const INTERNAL_HELP_TEXT = (
 
 /** Helper to send a reply. Tries Markdown first; if that fails (e.g. malformed
  *  Markdown in the AI output), retries as plain text so the user gets *something*. */
-async function safeReply(token: string, chatId: number, text: string, replyToMessageId?: number) {
+async function safeReply(token: string, chatId: number, text: string, replyToMessageId?: number,
+                         opts: { bypassFuse?: boolean } = {}) {
   // Every outbound message passes the fuse. Two separate code paths have now
   // leaked a message-per-inbound loop into a client group; this is the single
   // place that cannot be bypassed by adding a new one.
-  if (outboundFuseTripped(`tg:${chatId}`)) return;
+  //
+  // Slash commands bypass it. Someone typing /mode or /status is asking a
+  // direct question and must always get an answer — if the fuse has tripped,
+  // that is precisely when they need to check state or switch the agent off.
+  // The fuse is there to stop unattended loops, not to gag the bot.
+  if (!opts.bypassFuse && outboundFuseTripped(`tg:${chatId}`)) return;
   const finalText = truncateForTelegram(text || "(empty reply)");
   try {
     await tgSendMessage(token, chatId, finalText, {
@@ -234,7 +240,17 @@ async function performKeyAwareBind(args: {
  */
 export async function POST(req: Request) {
   try {
-    await ensureAccessSchema();
+    // Schema sync is NOT on the critical path for an inbound message.
+    //
+    // ensureAccessSchema() issues ~149 DDL statements, each a separate ~88ms
+    // round trip to Turso in ap-northeast-1. A version marker normally skips
+    // the lot, but any cold container that starts after the marker is bumped
+    // pays the full ~13s — and Telegram shows that as a command that simply
+    // never answers. The tables it creates are not needed to parse and reply
+    // to a slash command, so it runs in the background and the handler
+    // continues immediately. The next request picks up the synced marker.
+    ensureAccessSchema().catch(e =>
+      console.warn("[telegram/webhook] background schema sync failed:", e?.message));
 
     const config = await getTelegramConfig();
     if (!config.botToken) {
@@ -333,17 +349,17 @@ export async function POST(req: Request) {
               ? "Hi! I'm ARIMA. This group is bound and ready. Just chat with me normally.\n\n" + HELP_TEXT
               : "Hi! I'm ARIMA. This group isn't bound yet. " + HELP_TEXT
           : HELP_TEXT;
-        await safeReply(config.botToken, chat.id, String(replyText), message.message_id);
+        await safeReply(config.botToken, chat.id, String(replyText), message.message_id, { bypassFuse: true });
         return NextResponse.json({ ok: true });
       }
 
       if (cmd === "link") {
         if (!isPrivate) {
-          await safeReply(config.botToken, chat.id, "Please run `/link` in a private DM with me, not in a group.", message.message_id);
+          await safeReply(config.botToken, chat.id, "Please run `/link` in a private DM with me, not in a group.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         if (!argText) {
-          await safeReply(config.botToken, chat.id, "Send `/link <code>` where the code comes from CST OS → Admin → Channels → Telegram.", message.message_id);
+          await safeReply(config.botToken, chat.id, "Send `/link <code>` where the code comes from CST OS → Admin → Channels → Telegram.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const result = await consumeLinkCode(argText, {
@@ -353,7 +369,7 @@ export async function POST(req: Request) {
           last_name: from.last_name,
         });
         if (!result.ok) {
-          await safeReply(config.botToken, chat.id, `❌ ${result.reason}`, message.message_id);
+          await safeReply(config.botToken, chat.id, `❌ ${result.reason}`, message.message_id, { bypassFuse: true });
         } else {
           await safeReply(
             config.botToken,
@@ -367,11 +383,11 @@ export async function POST(req: Request) {
 
       if (cmd === "bind") {
         if (!isGroup) {
-          await safeReply(config.botToken, chat.id, "`/bind` only works in a group.", message.message_id);
+          await safeReply(config.botToken, chat.id, "`/bind` only works in a group.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         if (!argText) {
-          await safeReply(config.botToken, chat.id, "Usage: `/bind <accessToken>`\nGet the token from CST OS → Admin → Telegram Bindings.", message.message_id);
+          await safeReply(config.botToken, chat.id, "Usage: `/bind <accessToken>`\nGet the token from CST OS → Admin → Telegram Bindings.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         await performKeyAwareBind({
@@ -389,36 +405,36 @@ export async function POST(req: Request) {
         // Caller must be Telegram group admin + linked CST OS admin.
         // The bind token (from /admin/super-admin-context) must match an active draft.
         if (!isGroup) {
-          await safeReply(config.botToken, chat.id, "`/sabind` only works in a group.", message.message_id);
+          await safeReply(config.botToken, chat.id, "`/sabind` only works in a group.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         if (!argText) {
-          await safeReply(config.botToken, chat.id, "Usage: `/sabind <token>`\nGet the token from CST OS → Admin → Super Admin Context.", message.message_id);
+          await safeReply(config.botToken, chat.id, "Usage: `/sabind <token>`\nGet the token from CST OS → Admin → Super Admin Context.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const isGroupAdmin = await isUserGroupAdmin(config.botToken, chat.id, from.id);
         if (!isGroupAdmin) {
-          await safeReply(config.botToken, chat.id, "❌ You must be a Telegram group admin to bind the Super Admin Context.", message.message_id);
+          await safeReply(config.botToken, chat.id, "❌ You must be a Telegram group admin to bind the Super Admin Context.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const cst = await resolveCstUserFromTelegram(from.id);
         if (!cst || cst.role !== "admin") {
-          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can bind the Super Admin Context.", message.message_id);
+          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can bind the Super Admin Context.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         // Look up by bindToken
         const rows = await db.select().from(saCtxTable).where(eq(saCtxTable.bindToken, argText.trim())).limit(1);
         const ctx = rows[0];
         if (!ctx) {
-          await safeReply(config.botToken, chat.id, "❌ That bind token isn't valid. Generate a new one in CST OS → Admin → Super Admin Context.", message.message_id);
+          await safeReply(config.botToken, chat.id, "❌ That bind token isn't valid. Generate a new one in CST OS → Admin → Super Admin Context.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         if (ctx.status !== "active") {
-          await safeReply(config.botToken, chat.id, `❌ That bind token is ${ctx.status}. Generate a new one.`, message.message_id);
+          await safeReply(config.botToken, chat.id, `❌ That bind token is ${ctx.status}. Generate a new one.`, message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         if (new Date(ctx.expiresAt).getTime() < Date.now()) {
-          await safeReply(config.botToken, chat.id, "❌ That bind token has expired. Generate a new one.", message.message_id);
+          await safeReply(config.botToken, chat.id, "❌ That bind token has expired. Generate a new one.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         // Update the row with the actual chat id
@@ -447,46 +463,46 @@ export async function POST(req: Request) {
 
       if (cmd === "extend") {
         if (!isGroup) {
-          await safeReply(config.botToken, chat.id, "`/extend` only works inside the Super Admin group.", message.message_id);
+          await safeReply(config.botToken, chat.id, "`/extend` only works inside the Super Admin group.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const saCtx = await loadActiveSuperAdminContext();
         if (!saCtx || saCtx.telegramChatId !== String(chat.id)) {
-          await safeReply(config.botToken, chat.id, "❌ This group isn't the bound Super Admin Context.", message.message_id);
+          await safeReply(config.botToken, chat.id, "❌ This group isn't the bound Super Admin Context.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         // Caller must be on the allowlist
         const cst = await resolveCstUserFromTelegram(from.id);
         if (!cst) {
-          await safeReply(config.botToken, chat.id, "❌ Your Telegram account isn't linked to a CST OS account.", message.message_id);
+          await safeReply(config.botToken, chat.id, "❌ Your Telegram account isn't linked to a CST OS account.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const allow = await db.select({ id: saUsersTable.id }).from(saUsersTable).where(eq(saUsersTable.cstUserId, cst.cstUserId)).limit(1);
         if (!allow[0]) {
-          await safeReply(config.botToken, chat.id, "❌ You aren't on the Super Admin allowlist.", message.message_id);
+          await safeReply(config.botToken, chat.id, "❌ You aren't on the Super Admin allowlist.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const hours = Math.max(1, Math.min(168, parseInt(argText, 10) || 24));
         const newExpiry = await extendSuperAdminContext({ hours, byUserId: cst.cstUserId });
-        await safeReply(config.botToken, chat.id, `✅ Super Admin Context extended by ${hours}h.\nNew expiry: ${newExpiry ? new Date(newExpiry).toLocaleString() : "(unknown)"}`, message.message_id);
+        await safeReply(config.botToken, chat.id, `✅ Super Admin Context extended by ${hours}h.\nNew expiry: ${newExpiry ? new Date(newExpiry).toLocaleString() : "(unknown)"}`, message.message_id, { bypassFuse: true });
         return NextResponse.json({ ok: true });
       }
 
       if (cmd === "saunbind") {
         if (!isGroup) {
-          await safeReply(config.botToken, chat.id, "`/saunbind` only works in the bound Super Admin group.", message.message_id);
+          await safeReply(config.botToken, chat.id, "`/saunbind` only works in the bound Super Admin group.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const cst = await resolveCstUserFromTelegram(from.id);
         if (!cst || cst.role !== "admin") {
-          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can revoke the Super Admin Context.", message.message_id);
+          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can revoke the Super Admin Context.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const now = new Date().toISOString();
         await db.update(saCtxTable)
           .set({ status: "revoked", revokedBy: cst.cstUserId, revokedAt: now })
           .where(eq(saCtxTable.status, "active"));
-        await safeReply(config.botToken, chat.id, "✅ Super Admin Context revoked. ARIMA will stop providing portfolio data here.", message.message_id);
+        await safeReply(config.botToken, chat.id, "✅ Super Admin Context revoked. ARIMA will stop providing portfolio data here.", message.message_id, { bypassFuse: true });
         return NextResponse.json({ ok: true });
       }
 
@@ -500,7 +516,7 @@ export async function POST(req: Request) {
       ]);
       if (portfolioCommands.has(cmd)) {
         if (!isGroup) {
-          await safeReply(config.botToken, chat.id, "This command only works in a bound group.", message.message_id);
+          await safeReply(config.botToken, chat.id, "This command only works in a bound group.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         // Figure out scope: SA GC vs team room vs anything else
@@ -510,19 +526,19 @@ export async function POST(req: Request) {
         const inTeamRoom = !!(binding && binding.scopeType === "rm-team" && binding.scopeRef);
 
         if (!inSaChat && !inTeamRoom) {
-          await safeReply(config.botToken, chat.id, "These commands only work in the Super Admin group or an RM team room.", message.message_id);
+          await safeReply(config.botToken, chat.id, "These commands only work in the Super Admin group or an RM team room.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         // SA GC: only allowlisted users
         if (inSaChat) {
           const cst = await resolveCstUserFromTelegram(from.id);
           if (!cst) {
-            await safeReply(config.botToken, chat.id, "❌ Your Telegram account isn't linked to a CST OS account.", message.message_id);
+            await safeReply(config.botToken, chat.id, "❌ Your Telegram account isn't linked to a CST OS account.", message.message_id, { bypassFuse: true });
             return NextResponse.json({ ok: true });
           }
           const allow = await db.select({ id: saUsersTable.id }).from(saUsersTable).where(eq(saUsersTable.cstUserId, cst.cstUserId)).limit(1);
           if (!allow[0]) {
-            await safeReply(config.botToken, chat.id, "❌ You aren't on the Super Admin allowlist.", message.message_id);
+            await safeReply(config.botToken, chat.id, "❌ You aren't on the Super Admin allowlist.", message.message_id, { bypassFuse: true });
             return NextResponse.json({ ok: true });
           }
         }
@@ -539,47 +555,47 @@ export async function POST(req: Request) {
             replyToMessageId: message.message_id,
           });
           if (!result.posted && result.errorReason) {
-            await safeReply(config.botToken, chat.id, `❌ ${result.errorReason}`, message.message_id);
+            await safeReply(config.botToken, chat.id, `❌ ${result.errorReason}`, message.message_id, { bypassFuse: true });
           }
         } catch (e: any) {
-          await safeReply(config.botToken, chat.id, `❌ Command failed: ${e?.message || "unknown"}`, message.message_id);
+          await safeReply(config.botToken, chat.id, `❌ Command failed: ${e?.message || "unknown"}`, message.message_id, { bypassFuse: true });
         }
         return NextResponse.json({ ok: true });
       }
 
       if (cmd === "unbind") {
         if (!isGroup) {
-          await safeReply(config.botToken, chat.id, "`/unbind` only works in a group.", message.message_id);
+          await safeReply(config.botToken, chat.id, "`/unbind` only works in a group.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const isGroupAdmin = await isUserGroupAdmin(config.botToken, chat.id, from.id);
         if (!isGroupAdmin) {
-          await safeReply(config.botToken, chat.id, "❌ You must be a Telegram group admin to run `/unbind`.", message.message_id);
+          await safeReply(config.botToken, chat.id, "❌ You must be a Telegram group admin to run `/unbind`.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const cst = await resolveCstUserFromTelegram(from.id);
         if (!cst || cst.role !== "admin") {
-          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can unbind groups.", message.message_id);
+          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can unbind groups.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const current = await getActiveBindingForChat(chat.id);
         if (!current) {
-          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't currently bound to anything.", message.message_id);
+          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't currently bound to anything.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         await revokeBinding(chat.id);
-        await safeReply(config.botToken, chat.id, `✅ Unbound from **${current.clientName}**. I'll stop responding here until rebound.`, message.message_id);
+        await safeReply(config.botToken, chat.id, `✅ Unbound from **${current.clientName}**. I'll stop responding here until rebound.`, message.message_id, { bypassFuse: true });
         return NextResponse.json({ ok: true });
       }
 
       if (cmd === "status") {
         if (!isGroup) {
-          await safeReply(config.botToken, chat.id, "Run `/status` in a group to see its binding.", message.message_id);
+          await safeReply(config.botToken, chat.id, "Run `/status` in a group to see its binding.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const current = await getActiveBindingForChat(chat.id);
         if (!current) {
-          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound to any client.", message.message_id);
+          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound to any client.", message.message_id, { bypassFuse: true });
         } else {
           await safeReply(
             config.botToken,
@@ -598,16 +614,16 @@ export async function POST(req: Request) {
         // it — no admin gate, because the assignee is chosen by the team
         // living in the room, not by CST OS.
         if (!isGroup) {
-          await safeReply(config.botToken, chat.id, "Run `/tagbroadcast` inside a bound group.", message.message_id);
+          await safeReply(config.botToken, chat.id, "Run `/tagbroadcast` inside a bound group.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const current = await getActiveBindingForChat(chat.id);
         if (!current) {
-          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound yet.", message.message_id);
+          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound yet.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         if (current.scopeType !== "internal") {
-          await safeReply(config.botToken, chat.id, "ℹ️ `/tagbroadcast` only applies to internal channels (broadcast-only rooms).", message.message_id);
+          await safeReply(config.botToken, chat.id, "ℹ️ `/tagbroadcast` only applies to internal channels (broadcast-only rooms).", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const raw = (argText || "").trim();
@@ -619,14 +635,14 @@ export async function POST(req: Request) {
           const line = currentTag
             ? `📌 Currently tagging *${currentTag}* on every broadcast.\n\nChange it with \`/tagbroadcast @newuser\` or clear it with \`/tagbroadcast off\`.`
             : `ℹ️ No assignee set. Broadcasts land here un-tagged.\n\nAssign one with \`/tagbroadcast @username\`.`;
-          await safeReply(config.botToken, chat.id, line, message.message_id);
+          await safeReply(config.botToken, chat.id, line, message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         if (raw.toLowerCase() === "off" || raw.toLowerCase() === "clear" || raw.toLowerCase() === "none") {
           await db.update(arimaChannelBindings)
             .set({ broadcastAssignee: null } as any)
             .where(eq(arimaChannelBindings.id, current.id));
-          await safeReply(config.botToken, chat.id, `✅ Cleared broadcast assignee. Future messages won't tag anyone.`, message.message_id);
+          await safeReply(config.botToken, chat.id, `✅ Cleared broadcast assignee. Future messages won't tag anyone.`, message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         // Accept @handle or plain name. Normalize to include the @ prefix
@@ -649,27 +665,27 @@ export async function POST(req: Request) {
 
       if (cmd === "mode") {
         if (!isGroup) {
-          await safeReply(config.botToken, chat.id, "Run `/mode` in a bound group.", message.message_id);
+          await safeReply(config.botToken, chat.id, "Run `/mode` in a bound group.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const current = await getActiveBindingForChat(chat.id);
         if (!current) {
-          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound yet. Run `/bind <token>` first.", message.message_id);
+          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound yet. Run `/bind <token>` first.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         if (current.scopeType === "internal") {
-          await safeReply(config.botToken, chat.id, "ℹ️ Agent mode doesn't apply to internal channels — this room is broadcast-only.", message.message_id);
+          await safeReply(config.botToken, chat.id, "ℹ️ Agent mode doesn't apply to internal channels — this room is broadcast-only.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         // Only CST OS admins can change agent mode (it changes which AI leads the room)
         const cstUser = await resolveCstUserFromTelegram(from.id);
         if (!cstUser || cstUser.role !== "admin") {
-          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can change the agent mode.", message.message_id);
+          await safeReply(config.botToken, chat.id, "❌ Only CST OS admins can change the agent mode.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const target = (argText || "").toLowerCase().trim();
         if (target !== "arima" && target !== "eliana" && target !== "1" && target !== "2" && target !== "") {
-          await safeReply(config.botToken, chat.id, "Usage: `/mode arima` (relationship) or `/mode eliana` (BA / requirements). Send `/mode` alone to see the current mode.", message.message_id);
+          await safeReply(config.botToken, chat.id, "Usage: `/mode arima` (relationship) or `/mode eliana` (BA / requirements). Send `/mode` alone to see the current mode.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         // Read current mode from the binding
@@ -683,7 +699,7 @@ export async function POST(req: Request) {
           .limit(1);
         const currentMode = (rows[0] as any)?.agentMode || "arima";
         if (!target) {
-          await safeReply(config.botToken, chat.id, `📌 Current mode: *${currentMode === "eliana" ? "Eliana — Business Analyst" : "ARIMA — Relationship Manager"}*.\n\nSwitch with \`/mode arima\` or \`/mode eliana\`.`, message.message_id);
+          await safeReply(config.botToken, chat.id, `📌 Current mode: *${currentMode === "eliana" ? "Eliana — Business Analyst" : "ARIMA — Relationship Manager"}*.\n\nSwitch with \`/mode arima\` or \`/mode eliana\`.`, message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const next = (target === "eliana" || target === "2") ? "eliana" : "arima";
@@ -693,34 +709,34 @@ export async function POST(req: Request) {
         const banner = next === "eliana"
           ? "✅ Switched to *Eliana* — Business Analyst mode.\n\nEliana will proactively ask clarifying questions to understand the business case before recommending a solution. She references the Tarkie module catalog and existing playbook, and produces a structured requirements summary at the end."
           : "✅ Switched to *ARIMA* — Relationship Manager mode.\n\nARIMA responds when @mentioned and handles day-to-day client communication.";
-        await safeReply(config.botToken, chat.id, banner, message.message_id);
+        await safeReply(config.botToken, chat.id, banner, message.message_id, { bypassFuse: true });
         return NextResponse.json({ ok: true });
       }
 
       if (cmd === "contacts") {
         if (!isGroup) {
-          await safeReply(config.botToken, chat.id, "Run `/contacts` in a bound group.", message.message_id);
+          await safeReply(config.botToken, chat.id, "Run `/contacts` in a bound group.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const current = await getActiveBindingForChat(chat.id);
         if (!current) {
-          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound yet. Run `/bind <token>` first.", message.message_id);
+          await safeReply(config.botToken, chat.id, "ℹ️ This group isn't bound yet. Run `/bind <token>` first.", message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         if (!current.clientProfileId) {
           const reason = current.scopeType === "internal"
             ? "This is an internal channel — no client scope."
             : "Team rooms span multiple accounts, so there's no single contact directory.";
-          await safeReply(config.botToken, chat.id, "`/contacts` only works in a client-bound group. " + reason, message.message_id);
+          await safeReply(config.botToken, chat.id, "`/contacts` only works in a client-bound group. " + reason, message.message_id, { bypassFuse: true });
           return NextResponse.json({ ok: true });
         }
         const reply = await buildContactsDirectory(current.id, current.clientProfileId, current.clientName);
-        await safeReply(config.botToken, chat.id, reply, message.message_id);
+        await safeReply(config.botToken, chat.id, reply, message.message_id, { bypassFuse: true });
         return NextResponse.json({ ok: true });
       }
 
       // Unknown command
-      await safeReply(config.botToken, chat.id, "Unknown command. Try `/help`.", message.message_id);
+      await safeReply(config.botToken, chat.id, "Unknown command. Try `/help`.", message.message_id, { bypassFuse: true });
       return NextResponse.json({ ok: true });
     }
 
