@@ -60,7 +60,7 @@ const HELP_TEXT = (
   "• `/status` — show what client this group is bound to\n" +
   "• `/contacts` — list portal users + team members you can @mention\n" +
   "• `/mode` — see / switch the AI agent for this room (admin only)\n" +
-  "• Just chat normally and I'll respond when @arima'd.\n\n" +
+  "• Just chat normally — in ARIMA mode @-mention me; in Eliana mode she follows the thread.\n\n" +
   "In RM team rooms (or the Super Admin GC):\n" +
   "• `/myaccounts` — list your accounts grouped by health\n" +
   "• `/redaccounts` — flagged-red accounts only\n" +
@@ -342,11 +342,21 @@ export async function POST(req: Request) {
           // Not a valid consent token → fall through to generic help
         }
         const bindingForHelp = isGroup ? await getActiveBindingForChat(chat.id) : null;
+        // Help has to say WHICH agent is leading the room. The two behave
+        // differently — Arima answers when @mentioned, Eliana opens a thread
+        // and treats a reply as an answer to her question — so a help text
+        // that always says "I'm ARIMA, @-mention me" is wrong half the time.
+        const helpMode = (bindingForHelp as any)?.agentMode === "eliana" ? "eliana" : "arima";
+        const whoAmI = helpMode === "eliana"
+          ? "Hi! I'm **Eliana**, the Business Analyst for this room. I'll ask questions to scope "
+            + "a requirement, then write it up as a BRD.\n\n_Switch back with_ `/mode arima`.\n\n"
+          : "Hi! I'm **ARIMA**, the Relationship Manager for this room. @-mention me and I'll "
+            + "respond.\n\n_Switch to the Business Analyst with_ `/mode eliana`.\n\n";
         const replyText = isGroup
           ? bindingForHelp?.scopeType === "internal"
             ? INTERNAL_HELP_TEXT
             : bindingForHelp
-              ? "Hi! I'm ARIMA. This group is bound and ready. Just chat with me normally.\n\n" + HELP_TEXT
+              ? whoAmI + "This group is bound and ready.\n\n" + HELP_TEXT
               : "Hi! I'm ARIMA. This group isn't bound yet. " + HELP_TEXT
           : HELP_TEXT;
         await safeReply(config.botToken, chat.id, String(replyText), message.message_id, { bypassFuse: true });

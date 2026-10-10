@@ -12,6 +12,9 @@ export default auth((req) => {
                      // to sign-in, so without this there is no way to tell from
                      // outside whether a deploy has landed. Returns no secrets.
                      pathname === "/api/version" ||
+                     // Telegram delivery diagnostics — gated on the cron secret
+                     // inside the route itself, not by session.
+                     pathname === "/api/telegram/diag" ||
                      pathname === "/api/telegram/webhook" ||
                      pathname.startsWith("/api/portal/") ||
                      // Pin Validator API: cookie-session auth + per-project
