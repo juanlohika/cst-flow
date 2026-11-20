@@ -11,7 +11,7 @@
  */
 import Link from "next/link";
 import { useEffect } from "react";
-import { MapPin } from "lucide-react";
+import { FileDown, MapPin } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import { QuotaMeter } from "@/components/pin-validator/QuotaMeter";
@@ -49,6 +49,13 @@ export default function AiToolsPage() {
             title="Pin Validator"
             blurb="Generate a Google Sheet of store coordinates, geocode store names, then send a magic link to client validators to confirm the pins. Used per account; activate from an account's hub."
             footer="Activate per account · Magic-link client review"
+          />
+          <ToolCard
+            href="/ai-tools/pdf-compressor"
+            icon={FileDown}
+            title="PDF Compressor"
+            blurb="Shrink scanned PDFs such as signed contracts. A 100 MB phone scan usually becomes about 1.5 MB, with text still readable. No AI used."
+            footer="Upload · compress · download · nothing kept"
           />
           {/* Add more tool cards here as they ship. */}
         </div>

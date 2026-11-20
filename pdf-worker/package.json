@@ -1,0 +1,20 @@
+{
+  "name": "pdf-compress-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloud Run worker that compresses scanned PDFs with Ghostscript for CST OS (AI Tools > PDF Compressor)",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "start": "tsx src/server.ts"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@google-cloud/storage": "^7.14.0",
+    "express": "^4.19.2",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21"
+  }
+}
