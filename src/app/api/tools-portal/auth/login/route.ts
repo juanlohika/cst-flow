@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
-import { STATE_COOKIE, safeNext } from "@/lib/tools-portal/session";
+import { STATE_COOKIE, publicOrigin, safeNext } from "@/lib/tools-portal/session";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const origin = process.env.PUBLIC_BASE_URL?.replace(/\/$/, "") || url.origin;
+  const origin = publicOrigin(req);
   const clientId = process.env.AUTH_GOOGLE_ID;
   if (!clientId) return NextResponse.json({ error: "Google sign-in is not configured." }, { status: 503 });
 

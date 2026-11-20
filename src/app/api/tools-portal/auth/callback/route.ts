@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { OAuth2Client } from "google-auth-library";
-import { PORTAL_COOKIE, SESSION_HOURS, STATE_COOKIE, isAllowedEmail, safeNext, signSession } from "@/lib/tools-portal/session";
+import { PORTAL_COOKIE, SESSION_HOURS, STATE_COOKIE, isAllowedEmail, publicOrigin, safeNext, signSession } from "@/lib/tools-portal/session";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +13,9 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const origin = process.env.PUBLIC_BASE_URL?.replace(/\/$/, "") || url.origin;
+  const origin = publicOrigin(req);
   const fail = (reason: string) => {
-    const r = NextResponse.redirect(`${origin}/tools?error=${encodeURIComponent(reason)}`);
+    const r = new NextResponse(null, { status: 302, headers: { Location: `/tools/pdf-compressor?error=${encodeURIComponent(reason)}` } });
     r.cookies.delete({ name: STATE_COOKIE, path: "/api/tools-portal" });
     return r;
   };
@@ -44,7 +44,7 @@ export async function GET(req: Request) {
     }
 
     console.log(JSON.stringify({ event: "tools_portal_sign_in", email }));
-    const res = NextResponse.redirect(`${origin}${safeNext(saved.n)}`);
+    const res = new NextResponse(null, { status: 302, headers: { Location: safeNext(saved.n) } });
     res.cookies.set(PORTAL_COOKIE, signSession(email, p?.name || email), {
       httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: SESSION_HOURS * 3600,
     });

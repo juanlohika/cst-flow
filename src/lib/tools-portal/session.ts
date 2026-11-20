@@ -88,3 +88,18 @@ export async function getPortalUser(): Promise<PortalUser | null> {
 export function safeNext(next: string | null | undefined): string {
   return next && next.startsWith("/tools") && !next.startsWith("//") ? next : "/tools/pdf-compressor";
 }
+
+/**
+ * Public origin of this app as the browser sees it. Behind App Hosting the
+ * request URL is the container address (0.0.0.0:8080), so prefer the
+ * forwarded host, the same way NextAuth's trustHost does.
+ */
+export function publicOrigin(req: Request): string {
+  const h = req.headers;
+  const host = (h.get("x-forwarded-host") || h.get("host") || "").split(",")[0].trim();
+  if (host && !/^(0\.0\.0\.0|127\.0\.0\.1|localhost)(:|$)/.test(host)) {
+    const proto = (h.get("x-forwarded-proto") || "https").split(",")[0].trim();
+    return `${proto}://${host}`;
+  }
+  return process.env.PUBLIC_BASE_URL?.replace(/\/$/, "") || new URL(req.url).origin;
+}
