@@ -51,11 +51,11 @@ export default function AiToolsPage() {
             footer="Activate per account · Magic-link client review"
           />
           <ToolCard
-            href="/ai-tools/pdf-compressor"
+            href="/tools/pdf-compressor"
             icon={FileDown}
             title="PDF Compressor"
             blurb="Shrink scanned PDFs such as signed contracts. A 100 MB phone scan usually becomes about 1.5 MB, with text still readable. No AI used."
-            footer="Upload · compress · download · nothing kept"
+            footer="Opens the Tools Portal · any @mobileoptima.com or @tarkie.com account, no registration"
           />
           {/* Add more tool cards here as they ship. */}
         </div>

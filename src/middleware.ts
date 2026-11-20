@@ -27,6 +27,11 @@ export default auth((req) => {
                      // and only exposes participant-scoped data after identity
                      // match. Safe to expose without NextAuth.
                      pathname.startsWith("/api/pilot/") ||
+                     // Tools Portal (e.g. PDF Compressor): open to any verified
+                     // company Google account without CST OS registration.
+                     // Each route checks its own portal session cookie.
+                     pathname.startsWith("/api/tools-portal/") ||
+                     pathname.startsWith("/api/tools/") ||
                      /^\/api\/meetings\/[^/]+\/register$/.test(pathname) ||
                      /^\/api\/share\/[^/]+$/.test(pathname);
   const isPublicPage = pathname === "/" ||
@@ -39,7 +44,10 @@ export default auth((req) => {
                       // not NextAuth. Don't bounce through Google sign-in.
                       pathname.startsWith("/pin-validator") ||
                       // Pilot Tracker public portal — QR-token gated.
-                      pathname.startsWith("/pilot/");
+                      pathname.startsWith("/pilot/") ||
+                      // Tools Portal pages: own Google sign-in, domain-gated.
+                      pathname === "/tools" ||
+                      pathname.startsWith("/tools/");
 
   // Allow auth-related paths to bypass middleware
   if (isAuthPage || isAuthApi) {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getPortalUser } from "@/lib/tools-portal/session";
 import { callPdfWorker, type CompressResponse } from "@/lib/pdf-compressor/worker-client";
 
 export const dynamic = "force-dynamic";
@@ -14,8 +14,9 @@ const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
  * the result is deleted by the bucket's 1-day lifecycle rule.
  */
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  // Tools Portal session (any company Google account) or a CST OS session.
+  const user = await getPortalUser();
+  if (!user) return NextResponse.json({ ok: false, error: "Please sign in with your company Google account." }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
   const jobId = typeof body?.jobId === "string" ? body.jobId : "";
@@ -27,7 +28,7 @@ export async function POST(req: Request) {
   const { status, data } = await callPdfWorker<CompressResponse>("/pdf/compress", { jobId, fileName, quality });
   // Metadata only, never file contents.
   console.log(JSON.stringify({
-    event: "pdf_compress", user: session.user.email, fileName, quality, ok: data.ok,
+    event: "pdf_compress", user: user.email, via: user.via, fileName, quality, ok: data.ok,
     originalBytes: data.originalBytes, compressedBytes: data.compressedBytes, ms: Date.now() - started,
   }));
   return NextResponse.json(data, { status });

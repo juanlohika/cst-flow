@@ -1,15 +1,15 @@
 "use client";
 
 /**
- * AI Tools › PDF Compressor.
+ * Tools Portal › PDF Compressor (also linked from AI Tools).
+ * Open to any verified company Google account; no CST OS registration.
  *
  * Shrinks scanned PDFs (signed contracts, certificates) with Ghostscript.
  * No AI. Flow: get a signed upload URL → browser uploads straight to the
  * private temp bucket → worker compresses → browser downloads via a signed URL.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, FileDown, FileText, Loader2, RotateCcw, ShieldCheck, UploadCloud } from "lucide-react";
-import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
+import { AlertCircle, CheckCircle2, FileDown, FileText, LogIn, LogOut, Loader2, RotateCcw, ShieldCheck, UploadCloud } from "lucide-react";
 
 const MAX_MB = 200;
 
@@ -58,8 +58,61 @@ function uploadWithProgress(url: string, file: File, onProgress: (pct: number) =
   });
 }
 
+const SIGN_IN_ERRORS: Record<string, string> = {
+  domain: "Please sign in with your company Google account (@mobileoptima.com or @tarkie.com).",
+  unverified: "This Google account is not verified.",
+  expired: "Your sign-in took too long. Please try again.",
+  cancelled: "Sign-in was cancelled.",
+};
+
+interface PortalUser { email: string; name: string; via: "portal" | "cst-os" }
+
 export default function PdfCompressorPage() {
-  useBreadcrumbs([{ label: "AI Tools", href: "/ai-tools" }, { label: "PDF Compressor" }]);
+  const [me, setMe] = useState<PortalUser | null | undefined>(undefined);
+  const [signInError, setSignInError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const err = new URLSearchParams(window.location.search).get("error");
+    if (err) setSignInError(SIGN_IN_ERRORS[err] || "Sign-in failed. Please try again.");
+    fetch("/api/tools-portal/me", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setMe(d?.user ?? null))
+      .catch(() => setMe(null));
+  }, []);
+
+  async function signOut() {
+    await fetch("/api/tools-portal/auth/logout", { method: "POST" }).catch(() => undefined);
+    setMe(null);
+  }
+
+  if (me === undefined) {
+    return <div className="flex-1 flex items-center justify-center py-24"><Loader2 className="w-6 h-6 animate-spin text-blue-600" /></div>;
+  }
+  if (!me) {
+    return (
+      <div className="flex-1 flex items-center justify-center px-4 py-24">
+        <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center space-y-5 shadow-sm">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><FileDown className="w-6 h-6" /></div>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-bold text-slate-900">PDF Compressor</h1>
+            <p className="text-sm text-slate-500">CST Tools Portal. Sign in with your company Google account to continue. No registration needed.</p>
+          </div>
+          {signInError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{signInError}</div>}
+          <a
+            href="/api/tools-portal/auth/login?next=/tools/pdf-compressor"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+          >
+            <LogIn className="w-4 h-4" /> Sign in with Google
+          </a>
+          <p className="text-xs text-slate-400">For @mobileoptima.com and @tarkie.com accounts only.</p>
+        </div>
+      </div>
+    );
+  }
+  return <Compressor me={me} onSignOut={signOut} />;
+}
+
+function Compressor({ me, onSignOut }: { me: PortalUser; onSignOut: () => void }) {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
@@ -123,7 +176,18 @@ export default function PdfCompressorPage() {
     stage === "processing" ? "Compressing…" : "Compress PDF";
 
   return (
-    <div className="container py-10 space-y-6 max-w-3xl">
+    <div className="w-full max-w-3xl mx-auto px-4 py-10 space-y-6">
+      <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+        <span className="font-semibold uppercase tracking-wider text-blue-600">CST Tools Portal</span>
+        <span className="flex items-center gap-3 min-w-0">
+          <span className="truncate">{me.email}</span>
+          {me.via === "portal" && (
+            <button type="button" onClick={onSignOut} className="inline-flex items-center gap-1 hover:text-slate-900">
+              <LogOut className="w-3.5 h-3.5" /> Sign out
+            </button>
+          )}
+        </span>
+      </div>
       <header className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight text-slate-900">PDF Compressor</h1>
         <p className="text-sm text-slate-500">
@@ -255,7 +319,7 @@ export default function PdfCompressorPage() {
       <div className="flex items-start gap-2 text-xs text-slate-500">
         <ShieldCheck className="w-4 h-4 mt-0.5 flex-shrink-0" />
         <span>
-          Only signed-in CST OS users can use this tool. Files go to a private, temporary Google Cloud folder on our own
+          Only signed-in company Google accounts (@mobileoptima.com, @tarkie.com) can use this tool. Files go to a private, temporary Google Cloud folder on our own
           account. The original is deleted as soon as it is compressed, and the result is deleted automatically within a day.
         </span>
       </div>

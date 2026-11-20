@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getPortalUser } from "@/lib/tools-portal/session";
 import { callPdfWorker, type UploadUrlResponse } from "@/lib/pdf-compressor/worker-client";
 
 export const dynamic = "force-dynamic";
@@ -8,13 +8,14 @@ const MAX_BYTES = 200 * 1024 * 1024;
 
 /**
  * POST /api/tools/pdf-compress/upload-url  { fileName, size }
- * Signed-in CST OS users only. Returns a short-lived signed URL so the browser
+ * Signed-in Tools Portal users (company Google accounts) or CST OS users. Returns a short-lived signed URL so the browser
  * can upload the PDF straight to the private temp bucket (files can be 100 MB+,
  * which cannot pass through this server).
  */
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  // Tools Portal session (any company Google account) or a CST OS session.
+  const user = await getPortalUser();
+  if (!user) return NextResponse.json({ ok: false, error: "Please sign in with your company Google account." }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
   const fileName = typeof body?.fileName === "string" ? body.fileName : "";
