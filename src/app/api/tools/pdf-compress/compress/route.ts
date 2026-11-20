@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getPortalUser } from "@/lib/tools-portal/session";
 import { callPdfWorker, type CompressResponse } from "@/lib/pdf-compressor/worker-client";
+import { logCompression } from "@/lib/pdf-compressor/usage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -31,5 +32,11 @@ export async function POST(req: Request) {
     event: "pdf_compress", user: user.email, via: user.via, fileName, quality, ok: data.ok,
     originalBytes: data.originalBytes, compressedBytes: data.compressedBytes, ms: Date.now() - started,
   }));
+  if (data.ok && typeof data.originalBytes === "number" && typeof data.compressedBytes === "number") {
+    await logCompression({
+      email: user.email, via: user.via, fileName, quality, pages: data.pages,
+      originalBytes: data.originalBytes, compressedBytes: data.compressedBytes,
+    });
+  }
   return NextResponse.json(data, { status });
 }

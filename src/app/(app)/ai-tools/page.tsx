@@ -10,7 +10,7 @@
  * (Eliana, Architect, etc.) they get cards here too.
  */
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { FileDown, MapPin } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
@@ -60,7 +60,50 @@ export default function AiToolsPage() {
           {/* Add more tool cards here as they ship. */}
         </div>
       </section>
+
+      <PdfCompressorUsage />
     </div>
+  );
+}
+
+/** Usage counter for the PDF Compressor (for KPI / usage reporting). */
+function PdfCompressorUsage() {
+  const [stats, setStats] = useState<any>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    fetch("/api/tools/pdf-compress/stats", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then(setStats)
+      .catch(() => setFailed(true));
+  }, []);
+  const mb = (b: number) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${Math.round(b / 1024 ** 2)} MB`);
+  const Block = ({ label, d }: { label: string; d: any }) => (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+      <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="mt-2 flex items-baseline gap-2">
+        <span className="text-3xl font-bold text-slate-900">{d.files.toLocaleString()}</span>
+        <span className="text-sm text-slate-500">files compressed</span>
+      </div>
+      <div className="mt-1 text-xs text-slate-500">
+        {d.users} {d.users === 1 ? "person" : "people"} · {mb(d.originalBytes)} → {mb(d.compressedBytes)}
+        {d.originalBytes > 0 ? ` · ${Math.round((1 - d.compressedBytes / d.originalBytes) * 100)}% smaller` : ""}
+      </div>
+    </div>
+  );
+  return (
+    <section>
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-3">PDF Compressor usage</h2>
+      {failed ? (
+        <p className="text-sm text-slate-500">Usage is not available right now.</p>
+      ) : !stats ? (
+        <p className="text-sm text-slate-400">Loading…</p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Block label="This month" d={stats.thisMonth} />
+          <Block label="All time" d={stats.allTime} />
+        </div>
+      )}
+    </section>
   );
 }
 

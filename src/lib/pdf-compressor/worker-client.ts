@@ -45,12 +45,40 @@ async function identityToken(audience: string, serviceAccountJson: string): Prom
   return String(authHeader).replace(/^Bearer\s+/i, "");
 }
 
+/**
+ * App Hosting env for this backend is managed in the Firebase console, not
+ * apphosting.yaml, so fall back to the deployed worker URL and read the shared
+ * secret straight from Secret Manager (the App Hosting runtime service account
+ * has secretAccessor on pdf-worker-secret; see pdf-worker/deploy.sh).
+ */
+const DEFAULT_WORKER_URL = "https://pdf-compress-worker-h7z76fcjyq-de.a.run.app";
+const SECRET_RESOURCE = "projects/cst-flowdesk/secrets/pdf-worker-secret/versions/latest";
+let cachedSecret: { value: string; at: number } | null = null;
+
+async function workerSecret(): Promise<string | null> {
+  const fromEnv = process.env.PDF_WORKER_SECRET?.trim();
+  if (fromEnv) return fromEnv;
+  if (cachedSecret && Date.now() - cachedSecret.at < 60 * 60 * 1000) return cachedSecret.value;
+  try {
+    const gauth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+    const client = await gauth.getClient();
+    const res: any = await client.request({ url: `https://secretmanager.googleapis.com/v1/${SECRET_RESOURCE}:access` });
+    const value = Buffer.from(res?.data?.payload?.data || "", "base64").toString("utf8").trim();
+    if (!value) return null;
+    cachedSecret = { value, at: Date.now() };
+    return value;
+  } catch (e: any) {
+    console.error(`[pdf-compressor] could not read worker secret from Secret Manager: ${e?.message}`);
+    return null;
+  }
+}
+
 export async function callPdfWorker<T extends { ok: boolean; error?: string }>(
   path: "/pdf/upload-url" | "/pdf/compress",
   body: Record<string, unknown>,
 ): Promise<{ status: number; data: T }> {
-  const workerUrl = process.env.PDF_WORKER_URL?.trim();
-  const secret = process.env.PDF_WORKER_SECRET?.trim();
+  const workerUrl = process.env.PDF_WORKER_URL?.trim() || DEFAULT_WORKER_URL;
+  const secret = await workerSecret();
   if (!workerUrl || !secret) {
     return { status: 503, data: { ok: false, error: "The PDF Compressor is not set up on this server yet." } as T };
   }
