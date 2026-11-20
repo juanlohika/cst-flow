@@ -6,7 +6,7 @@ import ForceLink from "@/components/ui/ForceLink";
 import {
   ChevronLeft, ChevronRight, ChevronDown, MonitorPlay,
   Compass, Zap, Building2, Sparkles, LayoutDashboard, Heart,
-  Workflow, ClipboardList, Clock, Paintbrush, Users, MapPin, Gauge } from "lucide-react";
+  Workflow, ClipboardList, Clock, Paintbrush, Users, MapPin, Gauge, FileDown } from "lucide-react";
 
 const ICON_MAP: Record<string, React.ReactNode> = {
   Sparkles: <Sparkles size={14} />,
@@ -18,6 +18,7 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   Paintbrush: <Paintbrush size={14} />,
   Users: <Users size={14} />,
   MapPin: <MapPin size={14} />,
+  FileDown: <FileDown size={14} />,
 };
 
 interface LeftNavProps {

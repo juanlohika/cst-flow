@@ -40,3 +40,12 @@ environmentVariables:
     value: "https://training-render-worker-h7z76fcjyq-de.a.run.app"
   - variable: TRAINING_RENDER_WORKER_SECRET
     secret: TRAINING_RENDER_WORKER_SECRET
+  # AI Tools > PDF Compressor worker (pdf-worker/, deployed by pdf-worker/deploy.sh)
+  - variable: PDF_WORKER_URL
+    value: "https://pdf-compress-worker-h7z76fcjyq-de.a.run.app"
+    availability:
+      - RUNTIME
+  - variable: PDF_WORKER_SECRET
+    secret: pdf-worker-secret
+    availability:
+      - RUNTIME
